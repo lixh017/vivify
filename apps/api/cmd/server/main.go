@@ -5,6 +5,9 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/db"
 	"github.com/opc/api/internal/handlers"
@@ -13,14 +16,13 @@ import (
 func main() {
 	cfg := config.Load()
 
-	database, err := db.Connect(cfg.DBPath)
+	gormDB, err := gorm.Open(sqlite.Open(cfg.DBPath), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("db connect: %v", err)
+		log.Fatalf("gorm open: %v", err)
 	}
-	defer database.Close()
 
-	if err := db.Migrate(database); err != nil {
-		log.Fatalf("db migrate: %v", err)
+	if err := db.Migrate(gormDB); err != nil {
+		log.Fatalf("migrate: %v", err)
 	}
 
 	r := gin.Default()
