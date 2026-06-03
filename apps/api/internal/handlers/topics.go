@@ -83,7 +83,7 @@ func (h *TopicHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/topics", h.Create)
 	r.GET("/topics", h.List)
 	r.GET("/topics/:id", h.Get)
-	r.PATCH("/topics/:id", h.Update)
+	r.PUT("/topics/:id", h.Update)
 	r.DELETE("/topics/:id", h.Delete)
 }
 

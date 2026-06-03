@@ -76,7 +76,7 @@ export const api = {
     create: (data: Partial<Topic>) =>
       request<Topic>('/topics', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<Topic>) =>
-      request<Topic>(`/topics/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      request<Topic>(`/topics/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: number) =>
       request<void>(`/topics/${id}`, { method: 'DELETE' }),
   },
