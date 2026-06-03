@@ -5,7 +5,7 @@ import "time"
 type KnowledgeDoc struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Title     string    `json:"title"`
-	Path      string    `json:"path"`   // e.g. "ip-style-guide/voice"
+	Path      string    `json:"path"` // e.g. "ip-style-guide/voice"
 	Content   string    `gorm:"type:text" json:"content"`
 	Tags      string    `json:"tags"`
 	DocType   string    `json:"doc_type"` // ip-style/sop/prompt/postmortem/decision/platform-rule
