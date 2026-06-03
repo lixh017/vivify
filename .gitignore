@@ -1,0 +1,47 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node
+node_modules/
+.next/
+out/
+.env
+.env.local
+.env*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+tmp/
+*.test
+*.out
+vendor/
+coverage.txt
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Docker
+.env.docker
+
+# Build artifacts
+dist/
+build/
