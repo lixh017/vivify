@@ -161,7 +161,7 @@ func TestTopicCRUD(t *testing.T) {
 						},
 					},
 					{
-						step: "patch preserves omitted fields", method: "PATCH", path: "/topics/1",
+						step: "patch preserves omitted fields", method: "PUT", path: "/topics/1",
 						body: map[string]any{"title": "Updated", "status": "评估"},
 						want: want{
 							code: http.StatusOK,
@@ -364,13 +364,13 @@ func TestTopicCRUD_NegativeCases(t *testing.T) {
 			wantErrSubstr: "not found",
 		},
 		{
-			name: "update missing", method: "PATCH", path: "/topics/9999",
+			name: "update missing", method: "PUT", path: "/topics/9999",
 			body:          map[string]any{"title": "x"},
 			wantCode:      http.StatusNotFound,
 			wantErrSubstr: "not found",
 		},
 		{
-			name: "update rejects bad status", method: "PATCH", path: "/topics/1",
+			name: "update rejects bad status", method: "PUT", path: "/topics/1",
 			body:          map[string]any{"status": "garbage"},
 			wantCode:      http.StatusBadRequest,
 			wantErrSubstr: "status",
@@ -399,8 +399,8 @@ func TestTopicCRUD_NegativeCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r, db := setupTestRouter(t)
-			// Seed a single topic so PATCH/DELETE-of-missing are distinct from
-			// PATCH/DELETE on a real row.
+			// Seed a single topic so PUT/DELETE-of-missing are distinct from
+			// PUT/DELETE on a real row.
 			db.Create(&models.Topic{Title: "seed", Platform: "抖音", Status: "想法"})
 
 			var w *httptest.ResponseRecorder
