@@ -43,6 +43,9 @@ func main() {
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	knowledgeDocH.RegisterRoutes(r)
 
+	seriesH := handlers.NewSeriesHandler(gormDB)
+	seriesH.RegisterRoutes(r)
+
 	log.Printf("🚀 OPC API listening on :%s", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server: %v", err)
