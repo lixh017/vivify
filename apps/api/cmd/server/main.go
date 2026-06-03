@@ -30,6 +30,13 @@ func main() {
 
 	r.GET("/health", handlers.Health)
 
+	topicH := handlers.NewTopicHandler(gormDB)
+	r.POST("/topics", topicH.Create)
+	r.GET("/topics", topicH.List)
+	r.GET("/topics/:id", topicH.Get)
+	r.PUT("/topics/:id", topicH.Update)
+	r.DELETE("/topics/:id", topicH.Delete)
+
 	log.Printf("🚀 OPC API listening on :%s", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		log.Fatalf("server: %v", err)
