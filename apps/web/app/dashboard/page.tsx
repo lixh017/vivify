@@ -83,6 +83,19 @@ export default function DashboardPage() {
     }
   }
 
+  // deleteItem removes a content item via the API. We optimistically
+  // drop it from the list and roll back on failure.
+  async function deleteItem(id: number) {
+    const previous = items
+    setItems((prev) => prev.filter((it) => it.id !== id))
+    try {
+      await api.contentItems.delete(id)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setItems(previous)
+    }
+  }
+
   async function handlePostmortem(item: ContentItem) {
     setPostmortem({ item, state: { ...INITIAL_MODAL, loading: true } })
     try {
@@ -144,6 +157,7 @@ export default function DashboardPage() {
               平台
             </label>
             <select
+              data-testid="input-test-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -161,6 +175,7 @@ export default function DashboardPage() {
             </label>
             <input
               type="url"
+              data-testid="input-test-platform_url"
               value={form.platform_url}
               onChange={(e) =>
                 setForm({ ...form, platform_url: e.target.value })
@@ -174,6 +189,7 @@ export default function DashboardPage() {
               表现数据
             </label>
             <textarea
+              data-testid="input-test-performance_metrics"
               value={form.performance_metrics}
               onChange={(e) =>
                 setForm({ ...form, performance_metrics: e.target.value })
@@ -185,6 +201,7 @@ export default function DashboardPage() {
           </div>
           <button
             type="submit"
+            data-testid="btn-submit"
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
@@ -210,6 +227,8 @@ export default function DashboardPage() {
           {items.map((item) => (
             <div
               key={item.id}
+              data-testid="list-item"
+              data-content-item-id={item.id}
               className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
@@ -245,6 +264,7 @@ export default function DashboardPage() {
                     {item.platform}
                   </span>
                   <button
+                    data-testid="btn-ai-postmortem"
                     onClick={() => handlePostmortem(item)}
                     disabled={postmortem?.item.id === item.id && postmortem.state.loading}
                     className="px-2.5 md:px-3 py-1 text-xs bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
@@ -252,6 +272,15 @@ export default function DashboardPage() {
                     {postmortem?.item.id === item.id && postmortem.state.loading
                       ? '复盘中...'
                       : 'AI 复盘'}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`btn-delete-${item.id}`}
+                    onClick={() => deleteItem(item.id)}
+                    aria-label="删除"
+                    className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                  >
+                    删除
                   </button>
                 </div>
               </div>

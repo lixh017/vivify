@@ -69,6 +69,21 @@ export default function ScriptsPage() {
     }
   }
 
+  // deleteScript removes a script via the API. We optimistically drop
+  // it from the list and roll back on failure. The scriptId disabling
+  // pattern mirrors the topics page so a fast double-click can't
+  // double-fire a delete.
+  async function deleteScript(id: number) {
+    const previous = scripts
+    setScripts((prev) => prev.filter((s) => s.id !== id))
+    try {
+      await api.scripts.delete(id)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setScripts(previous)
+    }
+  }
+
   // handleHumanize asks Claude to rewrite the current script content
   // in a more human, less "AI-tinted" voice. We confirm first because
   // the action overwrites the textarea. Toast surfaces server failures
@@ -136,6 +151,7 @@ export default function ScriptsPage() {
             <input
               type="text"
               required
+              data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -148,6 +164,7 @@ export default function ScriptsPage() {
               </label>
               <button
                 type="button"
+                data-testid="btn-ai-humanize"
                 onClick={handleHumanize}
                 disabled={humanizing || !form.content.trim()}
                 className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
@@ -158,6 +175,7 @@ export default function ScriptsPage() {
             </div>
             <textarea
               required
+              data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               className="mt-1 w-full px-3 py-2 border border-gray-300 rounded font-mono text-xs md:text-sm"
@@ -169,6 +187,7 @@ export default function ScriptsPage() {
               平台
             </label>
             <select
+              data-testid="input-test-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -182,6 +201,7 @@ export default function ScriptsPage() {
           </div>
           <button
             type="submit"
+            data-testid="btn-submit"
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
@@ -213,6 +233,8 @@ export default function ScriptsPage() {
           {scripts.map((s) => (
             <div
               key={s.id}
+              data-testid="list-item"
+              data-script-id={s.id}
               className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
@@ -233,6 +255,15 @@ export default function ScriptsPage() {
                       {s.word_count} 字
                     </span>
                   )}
+                  <button
+                    type="button"
+                    data-testid={`btn-delete-${s.id}`}
+                    onClick={() => deleteScript(s.id)}
+                    aria-label="删除"
+                    className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                  >
+                    删除
+                  </button>
                 </div>
               </div>
             </div>

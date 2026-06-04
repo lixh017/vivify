@@ -47,9 +47,10 @@ interface KanbanCardProps {
   onMove: (id: number, nextStatus: string) => void
   onStatusChange: (id: number, status: string) => void
   moving: boolean
+  onDelete?: (id: number) => void
 }
 
-function KanbanCard({ topic, onMove, onStatusChange, moving }: KanbanCardProps) {
+function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanCardProps) {
   return (
     <div
       data-testid={`topic-card-${topic.id}`}
@@ -79,20 +80,34 @@ function KanbanCard({ topic, onMove, onStatusChange, moving }: KanbanCardProps) 
           ))}
         </select>
       </div>
-      <button
-        type="button"
-        onClick={() => {
-          // The dropdown above handles the generic case; this shortcut moves
-          // the card to the next column. The column definition supplies the
-          // next status so we don't hardcode ordering in the card itself.
-          const col = KANBAN_COLUMNS.find((c) => c.status === topic.status)
-          if (col?.next) onMove(topic.id, col.next)
-        }}
-        disabled={moving}
-        className="w-full text-xs px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded border border-gray-200 disabled:opacity-50"
-      >
-        →
-      </button>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          onClick={() => {
+            // The dropdown above handles the generic case; this shortcut moves
+            // the card to the next column. The column definition supplies the
+            // next status so we don't hardcode ordering in the card itself.
+            const col = KANBAN_COLUMNS.find((c) => c.status === topic.status)
+            if (col?.next) onMove(topic.id, col.next)
+          }}
+          disabled={moving}
+          className="flex-1 text-xs px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded border border-gray-200 disabled:opacity-50"
+        >
+          →
+        </button>
+        {onDelete && (
+          <button
+            type="button"
+            data-testid={`btn-delete-${topic.id}`}
+            onClick={() => onDelete(topic.id)}
+            disabled={moving}
+            aria-label="删除"
+            className="text-xs px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 disabled:opacity-50"
+          >
+            删除
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -228,6 +243,33 @@ export default function TopicsPage() {
     }
   }
 
+  // deleteTopic removes a topic via the API. We optimistically drop it
+  // from the list and roll back on failure. The movingIds set is used
+  // to disable the card buttons so a fast double-click can't double-fire
+  // a delete + a status change.
+  async function deleteTopic(id: number) {
+    if (movingIds.has(id)) return
+    setMovingIds((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    const previous = topics
+    setTopics((prev) => prev.filter((t) => t.id !== id))
+    try {
+      await api.topics.delete(id)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setTopics(previous)
+    } finally {
+      setMovingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   // Group topics by kanban column. 撰写中 lives in its own bucket so the
   // user can still see and advance in-progress topics; the spec's 4 main
   // columns remain the focus.
@@ -325,7 +367,10 @@ export default function TopicsPage() {
       </div>
 
       {aiModalOpen && (
-        <div className="p-3 md:p-4 bg-purple-50 border border-purple-200 rounded-lg space-y-3">
+        <div
+          data-testid="ai-panel-topics"
+          className="p-3 md:p-4 bg-purple-50 border border-purple-200 rounded-lg space-y-3"
+        >
           <h2 className="font-semibold text-purple-900 text-sm md:text-base">
             AI 选题生成
           </h2>
@@ -336,6 +381,7 @@ export default function TopicsPage() {
               </label>
               <input
                 type="text"
+                data-testid="input-test-ai-seed"
                 value={aiSeed}
                 onChange={(e) => setAiSeed(e.target.value)}
                 placeholder="例如：禅意解压、深夜emo、宅文化..."
@@ -348,6 +394,7 @@ export default function TopicsPage() {
               </label>
               <input
                 type="number"
+                data-testid="input-test-ai-count"
                 min={1}
                 max={20}
                 value={aiCount}
@@ -362,6 +409,8 @@ export default function TopicsPage() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <button
+              type="button"
+              data-testid="btn-ai-topics"
               onClick={handleGenerateTopics}
               disabled={aiLoading}
               className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
@@ -428,6 +477,7 @@ export default function TopicsPage() {
             <input
               type="text"
               required
+              data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -439,6 +489,7 @@ export default function TopicsPage() {
             </label>
             <textarea
               required
+              data-testid="input-test-angle"
               value={form.angle}
               onChange={(e) => setForm({ ...form, angle: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -451,6 +502,7 @@ export default function TopicsPage() {
                 平台
               </label>
               <select
+                data-testid="input-test-platform"
                 value={form.platform}
                 onChange={(e) => setForm({ ...form, platform: e.target.value })}
                 className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -467,6 +519,7 @@ export default function TopicsPage() {
                 状态
               </label>
               <select
+                data-testid="input-test-status"
                 value={form.status}
                 onChange={(e) => setForm({ ...form, status: e.target.value })}
                 className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -481,6 +534,7 @@ export default function TopicsPage() {
           </div>
           <button
             type="submit"
+            data-testid="btn-submit"
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
@@ -531,6 +585,7 @@ export default function TopicsPage() {
                       onMove={moveTopic}
                       onStatusChange={moveTopic}
                       moving={movingIds.has(t.id)}
+                      onDelete={deleteTopic}
                     />
                   ))
                 )}
@@ -556,6 +611,7 @@ export default function TopicsPage() {
                     onMove={moveTopic}
                     onStatusChange={moveTopic}
                     moving={movingIds.has(t.id)}
+                    onDelete={deleteTopic}
                   />
                 ))}
               </div>
@@ -567,6 +623,8 @@ export default function TopicsPage() {
           {topics.map((t) => (
             <div
               key={t.id}
+              data-testid="list-item"
+              data-topic-id={t.id}
               className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
@@ -595,6 +653,16 @@ export default function TopicsPage() {
                       </option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    data-testid={`btn-delete-${t.id}`}
+                    onClick={() => deleteTopic(t.id)}
+                    disabled={movingIds.has(t.id)}
+                    aria-label="删除"
+                    className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 disabled:opacity-50"
+                  >
+                    删除
+                  </button>
                 </div>
               </div>
             </div>

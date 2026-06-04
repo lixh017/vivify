@@ -125,6 +125,19 @@ export default function CalendarPage() {
     }
   }
 
+  // deleteItem removes a content item via the API. We optimistically
+  // drop it from the list and roll back on failure.
+  async function deleteItem(id: number) {
+    const previous = items
+    setItems((prev) => prev.filter((it) => it.id !== id))
+    try {
+      await api.contentItems.delete(id)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setItems(previous)
+    }
+  }
+
   // startEdit populates the inline edit form from the current item.
   // We prefill published_at as well so the user can adjust both at
   // once, which is the common "I just published it, mark it" flow.
@@ -368,7 +381,9 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={item.id}
-                      data-testid={`content-item-${item.id}`}
+                      data-testid="list-item"
+                      data-content-item-id={item.id}
+                      data-content-item-test={`content-item-${item.id}`}
                       className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
                     >
                       <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
@@ -408,6 +423,17 @@ export default function CalendarPage() {
                               className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-200"
                             >
                               编辑
+                            </button>
+                          )}
+                          {!isEditing && (
+                            <button
+                              type="button"
+                              data-testid={`btn-delete-${item.id}`}
+                              onClick={() => deleteItem(item.id)}
+                              aria-label="删除"
+                              className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                            >
+                              删除
                             </button>
                           )}
                         </div>

@@ -121,6 +121,19 @@ export default function KnowledgePage() {
     }
   }
 
+  // deleteDoc removes a knowledge doc via the API. We optimistically
+  // drop it from the list and roll back on failure.
+  async function deleteDoc(id: number) {
+    const previous = docs
+    setDocs((prev) => prev.filter((d) => d.id !== id))
+    try {
+      await api.knowledge.delete(id)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setDocs(previous)
+    }
+  }
+
   async function handleIPSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setIPSubmitting(true)
@@ -314,6 +327,7 @@ export default function KnowledgePage() {
           loading={loading}
           groups={groups}
           sortedKeys={sortedKeys}
+          onDelete={deleteDoc}
         />
       )}
 
@@ -343,6 +357,7 @@ interface DocsTabProps {
   loading: boolean
   groups: Record<string, KnowledgeDoc[]>
   sortedKeys: string[]
+  onDelete: (id: number) => void
 }
 
 function DocsTab({
@@ -354,6 +369,7 @@ function DocsTab({
   loading,
   groups,
   sortedKeys,
+  onDelete,
 }: DocsTabProps) {
   return (
     <>
@@ -369,6 +385,7 @@ function DocsTab({
             <input
               type="text"
               required
+              data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -381,6 +398,7 @@ function DocsTab({
             <input
               type="text"
               required
+              data-testid="input-test-path"
               placeholder="例如: panda/characters/mama"
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
@@ -392,6 +410,7 @@ function DocsTab({
               类型
             </label>
             <select
+              data-testid="input-test-doc_type"
               value={form.doc_type}
               onChange={(e) => setForm({ ...form, doc_type: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -409,6 +428,7 @@ function DocsTab({
             </label>
             <textarea
               required
+              data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
@@ -417,6 +437,7 @@ function DocsTab({
           </div>
           <button
             type="submit"
+            data-testid="btn-submit"
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
@@ -447,6 +468,8 @@ function DocsTab({
                   return (
                     <div
                       key={doc.id}
+                      data-testid="list-item"
+                      data-doc-id={doc.id}
                       className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -474,6 +497,15 @@ function DocsTab({
                             </p>
                           )}
                         </div>
+                        <button
+                          type="button"
+                          data-testid={`btn-delete-${doc.id}`}
+                          onClick={() => onDelete(doc.id)}
+                          aria-label="删除"
+                          className="shrink-0 px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                        >
+                          删除
+                        </button>
                       </div>
                     </div>
                   )
