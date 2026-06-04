@@ -199,6 +199,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    // register creates a new user account and immediately sets the
+    // session cookie. The web UI uses this for first-time setup before
+    // any admin user exists; admin-only invites use a different flow.
+    register: (data: { email: string; password: string; name: string }) =>
+      request<{ user: AuthUser }>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     logout: () => request<void>('/auth/logout', { method: 'POST' }),
     // me returns the current user (resolved from the session cookie)
     // or 401. The web UI uses this to detect an unauthenticated state
