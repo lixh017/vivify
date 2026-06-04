@@ -71,6 +71,12 @@ func main() {
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	knowledgeDocH.RegisterRoutes(r)
 
+	// FTS5 search route must be registered on the same router BEFORE
+	// the CRUD :id route so Gin's trie resolves /knowledge/search to
+	// the search handler rather than treating "search" as :id.
+	knowledgeSearchH := handlers.NewKnowledgeSearchHandler(gormDB)
+	knowledgeSearchH.RegisterRoutes(r)
+
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	seriesH.RegisterRoutes(r)
 

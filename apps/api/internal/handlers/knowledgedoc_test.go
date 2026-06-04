@@ -19,16 +19,52 @@ import (
 // newTestDB so the t.Cleanup hook that closes the underlying *sql.DB is
 // registered exactly once per test. Each test owns its own gin engine and
 // gorm handle so tests stay independent of ordering.
+//
+// The FTS5 shadow table and its sync triggers are also created here so
+// search tests can rely on a fully-wired search surface.
 func setupTestKnowledgeDocRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Helper()
 	gormDB := newTestDB(t)
 	if err := gormDB.AutoMigrate(&models.KnowledgeDoc{}); err != nil {
 		t.Fatalf("automigrate KnowledgeDoc: %v", err)
 	}
+	conn, err := gormDB.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	for _, stmt := range knowledgeFTSTestStmts {
+		if _, err := conn.Exec(stmt); err != nil {
+			t.Fatalf("create FTS surface: %v", err)
+		}
+	}
 	r := gin.New()
 	h := NewKnowledgeDocHandler(gormDB)
 	h.RegisterRoutes(r)
 	return r, gormDB
+}
+
+// knowledgeFTSTestStmts is a copy of the schema applied by
+// db.ensureKnowledgeFTS, kept inline so the test setup can stand on
+// its own without reaching across package boundaries. Statements use
+// IF NOT EXISTS so re-runs are safe.
+var knowledgeFTSTestStmts = []string{
+	`CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_docs_fts USING fts5(
+		title,
+		content,
+		content='knowledge_docs',
+		content_rowid='id',
+		tokenize='trigram'
+	)`,
+	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_ai AFTER INSERT ON knowledge_docs BEGIN
+		INSERT INTO knowledge_docs_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_ad AFTER DELETE ON knowledge_docs BEGIN
+		INSERT INTO knowledge_docs_fts(knowledge_docs_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_au AFTER UPDATE ON knowledge_docs BEGIN
+		INSERT INTO knowledge_docs_fts(knowledge_docs_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+		INSERT INTO knowledge_docs_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+	END`,
 }
 
 func TestKnowledgeDocCreate(t *testing.T) {

@@ -14,10 +14,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # Build a static-ish binary stripped of debug info.
+# The `fts5` build tag is required by mattn/go-sqlite3 to enable the
+# FTS5 full-text search module; without it the knowledge search
+# endpoint returns "no such module: fts5" at runtime.
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags="-s -w" -o /out/opc-api ./cmd/server
+    go build -tags fts5 -trimpath -ldflags="-s -w" -o /out/opc-api ./cmd/server
 
 # ---- runtime stage ----
 # Alpine is small (~5MB) and ships with ca-certificates; sqlite CLI is handy
