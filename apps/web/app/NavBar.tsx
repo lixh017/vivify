@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { api } from '@/lib/api'
 
 interface NavLink {
   href: string
@@ -18,6 +20,22 @@ const NAV_LINKS: NavLink[] = [
 
 export default function NavBar() {
   const [open, setOpen] = useState(false)
+  const router = useRouter()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  async function handleLogout() {
+    setLoggingOut(true)
+    try {
+      await api.auth.logout()
+    } catch {
+      // Even if the server says "not authenticated" (the cookie was
+      // already gone), the UX result is the same: send the user to
+      // /login. We swallow the error so the button is non-blocking.
+    } finally {
+      setLoggingOut(false)
+      router.push('/login')
+    }
+  }
 
   // Close the mobile menu when the viewport grows past the md breakpoint
   // or when the user starts navigating. The resize listener is throttled
@@ -58,6 +76,17 @@ export default function NavBar() {
           </div>
 
           {/* Mobile hamburger button — hidden on desktop */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            data-testid="btn-logout"
+            aria-label="登出"
+            className="hidden md:inline-flex text-sm px-3 py-1.5 rounded text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {loggingOut ? '登出中…' : '登出'}
+          </button>
+
           <button
             type="button"
             aria-label="切换导航菜单"
@@ -114,6 +143,15 @@ export default function NavBar() {
                 {link.icon} {link.label}
               </a>
             ))}
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              data-testid="btn-logout-mobile"
+              className="w-full text-left px-3 py-2 rounded text-base font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            >
+              {loggingOut ? '登出中…' : '登出'}
+            </button>
           </div>
         )}
       </div>

@@ -21,16 +21,20 @@ import (
 // intentionally narrow so tests can supply lightweight fakes and so the
 // handler is not coupled to GORM. The interface is defined where it is
 // consumed, per the "accept interfaces, return structs" Go idiom.
+//
+// Phase 2 adds userID to Get/Update/Delete and UserID to the filter
+// so reads and writes are scoped to the caller's rows.
 type ScriptStore interface {
 	Create(ctx context.Context, s *models.Script) error
 	List(ctx context.Context, filter ScriptFilter, page PageRequest) ([]models.Script, int64, error)
-	Get(ctx context.Context, id uint) (*models.Script, error)
-	Update(ctx context.Context, id uint, patch map[string]any) (*models.Script, error)
-	Delete(ctx context.Context, id uint) (int64, error)
+	Get(ctx context.Context, id uint, userID uint) (*models.Script, error)
+	Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Script, error)
+	Delete(ctx context.Context, id uint, userID uint) (int64, error)
 }
 
 // ScriptFilter narrows List results. Zero value means "no filter".
 type ScriptFilter struct {
+	UserID   uint
 	TopicID  uint
 	Platform string
 }
@@ -94,6 +98,8 @@ func (h *ScriptHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
+	// Stamp the owner from the auth context — never trust the request body.
+	s.UserID = UserIDFromContext(c)
 	if err := h.store.Create(c.Request.Context(), &s); err != nil {
 		if isValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -108,7 +114,7 @@ func (h *ScriptHandler) Create(c *gin.Context) {
 
 // List — GET /scripts?topic_id=&platform=&limit=&offset=
 func (h *ScriptHandler) List(c *gin.Context) {
-	filter := ScriptFilter{}
+	filter := ScriptFilter{UserID: UserIDFromContext(c)}
 	if v := c.Query("topic_id"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
@@ -160,7 +166,7 @@ func (h *ScriptHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	s, err := h.store.Get(c.Request.Context(), id)
+	s, err := h.store.Get(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "script not found"})
@@ -193,7 +199,7 @@ func (h *ScriptHandler) Update(c *gin.Context) {
 	delete(patch, "created_at")
 	delete(patch, "updated_at")
 
-	s, err := h.store.Update(c.Request.Context(), id, patch)
+	s, err := h.store.Update(c.Request.Context(), id, patch, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "script not found"})
@@ -218,7 +224,7 @@ func (h *ScriptHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.Delete(c.Request.Context(), id)
+	rows, err := h.store.Delete(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("delete script failed", "err", err.Error(), "id", id, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete script"})
@@ -248,6 +254,9 @@ func (s *gormScriptStore) List(ctx context.Context, f ScriptFilter, p PageReques
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Script{}).Order(
 		clause.OrderByColumn{Column: clause.Column{Name: "created_at"}, Desc: true},
 	)
+	if f.UserID != 0 {
+		q = q.Where("user_id = ?", f.UserID)
+	}
 	if f.TopicID != 0 {
 		q = q.Where("topic_id = ?", f.TopicID)
 	}
@@ -265,9 +274,13 @@ func (s *gormScriptStore) List(ctx context.Context, f ScriptFilter, p PageReques
 	return scripts, total, nil
 }
 
-func (s *gormScriptStore) Get(ctx context.Context, id uint) (*models.Script, error) {
+func (s *gormScriptStore) Get(ctx context.Context, id uint, userID uint) (*models.Script, error) {
 	var sc models.Script
-	if err := s.db.WithContext(withTimeout(ctx)).First(&sc, id).Error; err != nil {
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Script{})
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.First(&sc, id).Error; err != nil {
 		return nil, err
 	}
 	return &sc, nil
@@ -276,11 +289,15 @@ func (s *gormScriptStore) Get(ctx context.Context, id uint) (*models.Script, err
 // Update wraps the read+write in a transaction so concurrent PUTs cannot
 // clobber each other (TOCTOU). Updates uses a map so omitted fields are
 // preserved (PATCH semantics) and GORM skips zero-valued fields.
-func (s *gormScriptStore) Update(ctx context.Context, id uint, patch map[string]any) (*models.Script, error) {
+func (s *gormScriptStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Script, error) {
 	var out *models.Script
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.Script
-		if err := tx.First(&existing, id).Error; err != nil {
+		q := tx.Model(&models.Script{})
+		if userID != 0 {
+			q = q.Where("user_id = ?", userID)
+		}
+		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
 		for k, v := range patch {
@@ -334,7 +351,11 @@ func (s *gormScriptStore) Update(ctx context.Context, id uint, patch map[string]
 // Delete uses Unscoped so a future soft-delete column on the model does
 // not silently change behavior. RowsAffected is returned for the handler
 // to distinguish 404 from 200.
-func (s *gormScriptStore) Delete(ctx context.Context, id uint) (int64, error) {
-	res := s.db.WithContext(withTimeout(ctx)).Unscoped().Delete(&models.Script{}, id)
+func (s *gormScriptStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	res := q.Delete(&models.Script{}, id)
 	return res.RowsAffected, res.Error
 }

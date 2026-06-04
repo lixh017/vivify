@@ -26,7 +26,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 VPS_HOST="${VPS_HOST:-opc-vps}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/opc}"
-SSH_OPTS="${SSH_OPTS:-}"
+# SSH_OPTS is split on whitespace into an array so the empty default
+# (SSH_OPTS unset or empty) expands to zero arguments to ssh/scp —
+# avoids a bare `ssh $SSH_OPTS` that would pass a literal empty arg.
+read -r -a SSH_OPTS_ARR <<< "${SSH_OPTS:-}"
 PUSH_REGISTRY="${PUSH_REGISTRY:-}"
 SKIP_BUILD="${SKIP_BUILD:-}"
 SKIP_HEALTH="${SKIP_HEALTH:-}"
@@ -84,9 +87,13 @@ ship_image_save_load() {
   local tag
   tag="$(date -u +%Y%m%d%H%M%S)"
 
-  docker save "$image:latest" | ssh $SSH_OPTS "$VPS_HOST" \
-    "docker load && docker tag $image:latest $image:$tag && \
-     docker tag $image:latest $image:current"
+  # Pass $image and $tag as positional args (quoted on the local side and
+  # interpolated safely on the remote side) so a future change that
+  # makes $image user-controlled cannot inject shell metacharacters into
+  # the remote command.
+  docker save "$image:latest" | ssh "${SSH_OPTS_ARR[@]}" "$VPS_HOST" \
+    'docker load && docker tag "$1:latest" "$1:$2" && docker tag "$1:latest" "$1:current"' \
+    -- "$image" "$tag"
 }
 
 ship_image_registry() {
@@ -109,21 +116,25 @@ done
 # Ship compose file (+ .env.production if present)
 # ---------------------------------------------------------------------------
 log "Copying $COMPOSE_FILE to $VPS_HOST:$REMOTE_DIR/"
-ssh $SSH_OPTS "$VPS_HOST" "mkdir -p '$REMOTE_DIR'"
-scp $SSH_OPTS "$COMPOSE_FILE" "$VPS_HOST:$REMOTE_DIR/"
+ssh "${SSH_OPTS_ARR[@]}" "$VPS_HOST" "mkdir -p '$REMOTE_DIR'"
+scp "${SSH_OPTS_ARR[@]}" "$COMPOSE_FILE" "$VPS_HOST:$REMOTE_DIR/"
 
 if [[ -f .env.production ]]; then
   log "Copying .env.production to $VPS_HOST:$REMOTE_DIR/"
-  scp $SSH_OPTS .env.production "$VPS_HOST:$REMOTE_DIR/"
+  scp "${SSH_OPTS_ARR[@]}" .env.production "$VPS_HOST:$REMOTE_DIR/"
 fi
 
 # ---------------------------------------------------------------------------
 # Remote restart
 # ---------------------------------------------------------------------------
 log "Restarting stack on $VPS_HOST..."
-ssh $SSH_OPTS "$VPS_HOST" "cd '$REMOTE_DIR' && \
-  docker compose -f $COMPOSE_FILE down && \
-  docker compose -f $COMPOSE_FILE up -d"
+# Use a single-quoted remote command with explicit quoting on the
+# operator-supplied variables ($REMOTE_DIR, $COMPOSE_FILE) so an
+# injection in $COMPOSE_FILE (e.g. COMPOSE_FILE='; rm -rf /') cannot
+# break out of the remote command.
+ssh "${SSH_OPTS_ARR[@]}" "$VPS_HOST" \
+  'cd "$1" && docker compose -f "$2" down && docker compose -f "$2" up -d' \
+  -- "$REMOTE_DIR" "$COMPOSE_FILE"
 
 # ---------------------------------------------------------------------------
 # Health check
@@ -132,7 +143,7 @@ if [[ -z "$SKIP_HEALTH" ]]; then
   log "Waiting for API health endpoint..."
   HEALTH_OK=0
   for attempt in $(seq 1 12); do
-    if ssh $SSH_OPTS "$VPS_HOST" \
+    if ssh "${SSH_OPTS_ARR[@]}" "$VPS_HOST" \
          "curl -fsS --max-time 5 http://localhost:8080/health" >/dev/null 2>&1; then
       HEALTH_OK=1
       break

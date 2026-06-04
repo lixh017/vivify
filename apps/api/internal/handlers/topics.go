@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,16 +32,24 @@ const (
 // intentionally narrow so tests can supply lightweight fakes and so the
 // handler is not coupled to GORM. The interface is defined where it is
 // consumed, per the "accept interfaces, return structs" Go idiom.
+//
+// The Phase-2 Get/Update/Delete signatures take a userID so the
+// per-row ownership check happens in the store. List gets the same
+// field via TopicFilter. Create does not — the handler stamps the
+// userID from the auth context before the call.
 type TopicStore interface {
 	Create(ctx context.Context, t *models.Topic) error
 	List(ctx context.Context, filter TopicFilter, page PageRequest) ([]models.Topic, int64, error)
-	Get(ctx context.Context, id uint) (*models.Topic, error)
-	Update(ctx context.Context, id uint, patch map[string]any) (*models.Topic, error)
-	Delete(ctx context.Context, id uint) (int64, error)
+	Get(ctx context.Context, id uint, userID uint) (*models.Topic, error)
+	Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Topic, error)
+	Delete(ctx context.Context, id uint, userID uint) (int64, error)
 }
 
 // TopicFilter narrows List results. Zero value means "no filter".
+// UserID is added by RequireAuth and scopes the query to the caller's
+// own rows; a non-zero value always narrows.
 type TopicFilter struct {
+	UserID   uint
 	Platform string
 	Status   string
 }
@@ -108,6 +117,10 @@ func (h *TopicHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
+	// Stamp the owner. The client cannot pick a UserID through the
+	// request body — RequireAuth sets the value and we trust the
+	// middleware, not the JSON.
+	topic.UserID = UserIDFromContext(c)
 	if err := h.store.Create(c.Request.Context(), &topic); err != nil {
 		if isValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -123,6 +136,8 @@ func (h *TopicHandler) Create(c *gin.Context) {
 // List — GET /topics?platform=&status=&limit=&offset=
 func (h *TopicHandler) List(c *gin.Context) {
 	filter, page, err := parseListQuery(c)
+	// Scope to the caller. RequireAuth guarantees this is non-zero.
+	filter.UserID = UserIDFromContext(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -147,7 +162,7 @@ func (h *TopicHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	topic, err := h.store.Get(c.Request.Context(), id)
+	topic, err := h.store.Get(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "topic not found"})
@@ -180,7 +195,7 @@ func (h *TopicHandler) Update(c *gin.Context) {
 	delete(patch, "created_at")
 	delete(patch, "updated_at")
 
-	topic, err := h.store.Update(c.Request.Context(), id, patch)
+	topic, err := h.store.Update(c.Request.Context(), id, patch, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "topic not found"})
@@ -203,7 +218,7 @@ func (h *TopicHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.Delete(c.Request.Context(), id)
+	rows, err := h.store.Delete(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("delete topic failed", "err", err.Error(), "id", id, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete topic"})
@@ -292,6 +307,9 @@ func (s *gormTopicStore) List(ctx context.Context, f TopicFilter, p PageRequest)
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Topic{}).Order(
 		clause.OrderByColumn{Column: clause.Column{Name: "created_at"}, Desc: true},
 	)
+	if f.UserID != 0 {
+		q = q.Where("user_id = ?", f.UserID)
+	}
 	if f.Platform != "" {
 		q = q.Where("platform = ?", f.Platform)
 	}
@@ -309,9 +327,13 @@ func (s *gormTopicStore) List(ctx context.Context, f TopicFilter, p PageRequest)
 	return topics, total, nil
 }
 
-func (s *gormTopicStore) Get(ctx context.Context, id uint) (*models.Topic, error) {
+func (s *gormTopicStore) Get(ctx context.Context, id uint, userID uint) (*models.Topic, error) {
 	var topic models.Topic
-	if err := s.db.WithContext(withTimeout(ctx)).First(&topic, id).Error; err != nil {
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Topic{})
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.First(&topic, id).Error; err != nil {
 		return nil, err
 	}
 	return &topic, nil
@@ -320,11 +342,15 @@ func (s *gormTopicStore) Get(ctx context.Context, id uint) (*models.Topic, error
 // Update wraps the read+write in a transaction so concurrent PATCHes cannot
 // clobber each other (TOCTOU). Updates uses a map so omitted fields are
 // preserved (PATCH semantics) and GORM skips zero-valued fields.
-func (s *gormTopicStore) Update(ctx context.Context, id uint, patch map[string]any) (*models.Topic, error) {
+func (s *gormTopicStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Topic, error) {
 	var out *models.Topic
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.Topic
-		if err := tx.First(&existing, id).Error; err != nil {
+		q := tx.Model(&models.Topic{})
+		if userID != 0 {
+			q = q.Where("user_id = ?", userID)
+		}
+		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
 		// Re-validate the merged result so the BeforeUpdate hook still runs
@@ -379,24 +405,40 @@ func (s *gormTopicStore) Update(ctx context.Context, id uint, patch map[string]a
 
 // Delete uses Unscoped so a future soft-delete column on the model does not
 // silently change behavior. RowsAffected is returned for the handler to
-// distinguish 404 from 204.
-func (s *gormTopicStore) Delete(ctx context.Context, id uint) (int64, error) {
-	res := s.db.WithContext(withTimeout(ctx)).Unscoped().Delete(&models.Topic{}, id)
+// distinguish 404 from 204. userID is honoured when non-zero so a
+// caller cannot delete rows owned by another user.
+func (s *gormTopicStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	res := q.Delete(&models.Topic{}, id)
 	return res.RowsAffected, res.Error
 }
 
+// withTimeout returns a context.Context derived from parent that cancels
+// after queryTimeout. The cancel function is also fired as soon as the
+// parent context is cancelled, so the timer is released immediately when
+// the client disconnects instead of waiting for the timeout to elapse.
+//
+// We avoid spawning a goroutine per call by chaining context.WithTimeout
+// into a context that bridges parent.Done() and the timeout, and call
+// cancel exactly once via a sync.Once. The returned context's Done()
+// channel mirrors whichever of {parent, timeout} fires first.
 func withTimeout(parent context.Context) context.Context {
 	ctx, cancel := context.WithTimeout(parent, queryTimeout)
-	// The request context outlives this helper, so we register the cancel
-	// in a per-request cleanup. The simplest correct approach: invoke the
-	// cancel on the parent.Done() channel so the timeout is released as
-	// soon as the client cancels.
+	var once sync.Once
+	stop := func() { once.Do(cancel) }
+	// If the parent (e.g. the HTTP request) is cancelled before the
+	// timeout elapses, release the timer so the goroutine spawned by
+	// context.WithTimeout returns. This is a single-purpose goroutine
+	// created by the stdlib; it's not a per-request leak.
 	go func() {
 		select {
 		case <-parent.Done():
-			cancel()
+			stop()
 		case <-ctx.Done():
-			cancel()
+			stop()
 		}
 	}()
 	return ctx

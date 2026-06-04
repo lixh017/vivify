@@ -15,6 +15,7 @@ import type {
   ListResponse,
   UpdateContentItemPatch,
   IpTemplate,
+  AuthUser,
 } from './types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || ''
@@ -180,6 +181,21 @@ export const api = {
         '/ai/postmortem',
         { method: 'POST', body: JSON.stringify({ content_item_id: contentItemId }) },
       ),
+  },
+  auth: {
+    // login exchanges email+password for an HttpOnly session cookie
+    // (opc_session). The server sets the cookie on the response; the
+    // browser attaches it to subsequent /api/* requests automatically.
+    login: (data: { email: string; password: string }) =>
+      request<{ user: AuthUser }>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    logout: () => request<void>('/auth/logout', { method: 'POST' }),
+    // me returns the current user (resolved from the session cookie)
+    // or 401. The web UI uses this to detect an unauthenticated state
+    // and redirect to /login.
+    me: () => request<{ user: AuthUser }>('/auth/me'),
   },
 }
 

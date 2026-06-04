@@ -2,41 +2,46 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-// NewReadyz returns a /readyz handler that reports the process's ability
-// to serve traffic. The current implementation pings the database with a
-// short timeout — a healthy dependency graph that includes a working DB
-// is the contract we want kubelet / load balancer probes to enforce.
+// Pinger is the minimal capability /readyz needs from a database
+// handle. The production code passes the *sql.DB hidden behind
+// *gorm.DB; tests can supply a fake without depending on a real
+// database. We keep it small (one method) so adapters are trivial.
+type Pinger interface {
+	PingContext(ctx context.Context) error
+}
+
+// readyzTimeout bounds the time the readiness probe is willing to
+// wait for the database. Short by design — a kubelet probe that
+// blocks the goroutine for too long defeats the purpose of the
+// timeout.
+const readyzTimeout = 2 * time.Second
+
+// NewReadyz returns a /readyz handler that reports the process's
+// ability to serve traffic. It pings the supplied Pinger (typically
+// the project's *sql.DB) with a short timeout and returns 200 when
+// the ping succeeds, 503 otherwise.
 //
-// Returns 200 when the DB responds to a ping within the timeout, 503
-// otherwise. The body always carries a JSON status payload so probes
-// that surface it (e.g. a human running curl) can tell *why* the
-// readiness check failed.
-func NewReadyz(gormDB *gorm.DB) gin.HandlerFunc {
+// The detailed error is logged server-side so operators can
+// diagnose the failure; the response body only carries a generic
+// "reason" string so a probe cannot be used to fingerprint driver
+// versions, file paths, or other low-level internals.
+func NewReadyz(pinger Pinger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), readyzTimeout)
 		defer cancel()
 
-		sqlDB, err := gormDB.DB()
-		if err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unready",
-				"reason": "db handle unavailable",
-				"error":  err.Error(),
-			})
-			return
-		}
-		if err := sqlDB.PingContext(ctx); err != nil {
+		if err := pinger.PingContext(ctx); err != nil {
+			slog.WarnContext(c.Request.Context(), "readyz: db ping failed", "error", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status": "unready",
 				"reason": "db ping failed",
-				"error":  err.Error(),
 			})
 			return
 		}

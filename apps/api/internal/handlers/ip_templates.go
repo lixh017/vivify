@@ -52,8 +52,11 @@ type IPTemplate struct {
 // IPTemplateStore is the persistence contract the IPTemplateHandler
 // needs. Defining the interface here (where it is consumed) keeps the
 // handler decoupled from GORM and lets tests supply lightweight fakes.
+//
+// Phase 2 threads userID through ListAll/Create so the IP-template
+// surface only sees and writes the caller's rows.
 type IPTemplateStore interface {
-	ListAll(ctx context.Context) ([]models.KnowledgeDoc, error)
+	ListAll(ctx context.Context, userID uint) ([]models.KnowledgeDoc, error)
 	Create(ctx context.Context, kd *models.KnowledgeDoc) error
 }
 
@@ -95,7 +98,7 @@ func (h *IPTemplateHandler) RegisterRoutes(r gin.IRouter) {
 // second path segment for paths under `ip-style-guide/`. Other paths
 // are ignored: a SOP under `sop/foo` is not an IP template.
 func (h *IPTemplateHandler) List(c *gin.Context) {
-	docs, err := h.store.ListAll(c.Request.Context())
+	docs, err := h.store.ListAll(c.Request.Context(), UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("list knowledge docs for IP templates failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list IP templates"})
@@ -157,8 +160,10 @@ func (h *IPTemplateHandler) Create(c *gin.Context) {
 
 	now := time.Now().UTC()
 	created := 0
+	userID := UserIDFromContext(c)
 	for _, tmpl := range ipTemplateStandardDocs {
 		kd := &models.KnowledgeDoc{
+			UserID:    userID,
 			Title:     name + " - " + docTitleFromPath(tmpl.Path),
 			Path:      "ip-style-guide/" + ipType + "/" + strings.TrimPrefix(tmpl.Path, "ip-style-guide/"),
 			Content:   tmpl.Description,
@@ -214,8 +219,8 @@ func groupDocsByIPType(docs []models.KnowledgeDoc) []IPTemplate {
 	const (
 		// Higher priority wins. We treat the explicit "name" doc as
 		// the most authoritative source for the IP's display name.
-		prioName = 4
-		prioDesc = 3
+		prioName  = 4
+		prioDesc  = 3
 		prioOther = 1
 	)
 	for _, d := range docs {
@@ -321,13 +326,18 @@ func newGormIPTemplateStore(db *gorm.DB) *gormIPTemplateStore {
 	return &gormIPTemplateStore{db: db}
 }
 
-// ListAll returns every knowledge doc. The list endpoint groups in
-// memory, which is fine at Phase 1 scale (hundreds of rows max).
-func (s *gormIPTemplateStore) ListAll(ctx context.Context) ([]models.KnowledgeDoc, error) {
+// ListAll returns every knowledge doc owned by userID. A zero userID
+// returns every row (used by tests and any future admin surface).
+// The list endpoint groups in memory, which is fine at Phase 1 scale
+// (hundreds of rows max).
+func (s *gormIPTemplateStore) ListAll(ctx context.Context, userID uint) ([]models.KnowledgeDoc, error) {
 	var items []models.KnowledgeDoc
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.KnowledgeDoc{}).Order(
 		clause.OrderByColumn{Column: clause.Column{Name: "created_at"}, Desc: true},
 	)
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
 	if err := q.Find(&items).Error; err != nil {
 		return nil, err
 	}

@@ -3,8 +3,11 @@ package models
 import "time"
 
 type Script struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	TopicID          uint      `gorm:"index" json:"topic_id"`
+	ID      uint `gorm:"primaryKey" json:"id"`
+	TopicID uint `gorm:"index" json:"topic_id"`
+	// UserID is the owner of the row (Phase 2 multi-tenancy). See Topic
+	// for the backfill story and index rationale.
+	UserID           uint      `gorm:"index" json:"user_id"`
 	Title            string    `json:"title"`
 	Content          string    `gorm:"type:text" json:"content"`
 	Platform         string    `gorm:"index" json:"platform"`

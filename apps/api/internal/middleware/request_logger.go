@@ -27,7 +27,10 @@ func RequestLogger() gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 
-		attrs := []any{
+		// Build the attribute slice as []slog.Attr directly so the
+		// type checker validates every entry at the call site and
+		// slog.LogAttrs avoids a []any round-trip.
+		attrs := []slog.Attr{
 			slog.String("method", c.Request.Method),
 			slog.String("path", c.Request.URL.Path),
 			slog.Int("status", status),
@@ -46,20 +49,6 @@ func RequestLogger() gin.HandlerFunc {
 		} else if status >= 400 {
 			level = slog.LevelWarn
 		}
-		slog.LogAttrs(c.Request.Context(), level, "http request", asAttrs(attrs)...)
+		slog.LogAttrs(c.Request.Context(), level, "http request", attrs...)
 	}
-}
-
-// asAttrs converts a []any of slog.Attr into the typed slice slog expects.
-// Anything that is not a slog.Attr is dropped — we never construct
-// heterogeneous values at the call site, but the helper keeps the type
-// checker happy if the slice contents change.
-func asAttrs(in []any) []slog.Attr {
-	out := make([]slog.Attr, 0, len(in))
-	for _, v := range in {
-		if a, ok := v.(slog.Attr); ok {
-			out = append(out, a)
-		}
-	}
-	return out
 }

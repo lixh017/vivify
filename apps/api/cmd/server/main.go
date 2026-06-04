@@ -118,13 +118,8 @@ func main() {
 	r.GET("/readyz", handlers.NewReadyz(sqlDB))
 
 	topicH := handlers.NewTopicHandlerFromGorm(gormDB, nil)
-	topicH.RegisterRoutes(r)
-
 	scriptH := handlers.NewScriptHandler(gormDB)
-	scriptH.RegisterRoutes(r)
-
 	contentItemH := handlers.NewContentItemHandler(gormDB)
-	contentItemH.RegisterRoutes(r)
 
 	// FTS5 search route must be registered on the same router BEFORE
 	// the CRUD :id route. Gin's radix tree resolves the static segment
@@ -134,23 +129,15 @@ func main() {
 	// Gin's tie-breaking behaviour — does not silently route search
 	// traffic to the CRUD GET-by-id handler.
 	knowledgeSearchH := handlers.NewKnowledgeSearchHandler(gormDB)
-	knowledgeSearchH.RegisterRoutes(r)
-
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
-	knowledgeDocH.RegisterRoutes(r)
-
 	seriesH := handlers.NewSeriesHandler(gormDB)
-	seriesH.RegisterRoutes(r)
-
 	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
-	aiH.RegisterRoutes(r)
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
 	// handler; there are no overlapping paths with the other
 	// collections.
 	ipTemplateH := handlers.NewIPTemplateHandler(gormDB)
-	ipTemplateH.RegisterRoutes(r)
 
 	// JSON-based data import / export endpoints. Mounted last because
 	// they live at the top-level /export and /import paths and could
@@ -158,7 +145,31 @@ func main() {
 	// stateless beyond the *gorm.DB, so it is safe to construct after
 	// every other handler has registered.
 	importExportH := handlers.NewImportExportHandler(gormDB, nil)
-	importExportH.RegisterRoutes(r)
+
+	// Phase 2 auth handler. Lives on a PUBLIC group — it owns the
+	// /api/auth/* namespace and is the only surface reachable without
+	// a session cookie.
+	authH := handlers.NewAuthHandler(gormDB, slog.Default())
+	authH.RegisterRoutes(r)
+
+	// Protected business surface. Every route in this group runs
+	// through RequireAuth, which resolves the session cookie via
+	// auth.ValidateSession and sets the user_id on the Gin context.
+	// Per-handler user_id filtering is layered on top: the handler
+	// stores the caller and the WHERE clauses scope reads/writes to
+	// the caller's rows. Mounted under /api so the reverse proxy in
+	// nginx.conf can keep /api and the static frontend in separate
+	// paths.
+	apiGroup := r.Group("/api", handlers.NewRequireAuth(gormDB, slog.Default()))
+	topicH.RegisterRoutes(apiGroup)
+	scriptH.RegisterRoutes(apiGroup)
+	contentItemH.RegisterRoutes(apiGroup)
+	knowledgeSearchH.RegisterRoutes(apiGroup)
+	knowledgeDocH.RegisterRoutes(apiGroup)
+	seriesH.RegisterRoutes(apiGroup)
+	aiH.RegisterRoutes(apiGroup)
+	ipTemplateH.RegisterRoutes(apiGroup)
+	importExportH.RegisterRoutes(apiGroup)
 
 	// API reference surface — /openapi.json serves the OpenAPI 3.0
 	// spec embedded at compile time, /docs serves the Swagger UI

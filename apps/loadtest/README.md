@@ -64,3 +64,17 @@ parallel (e.g. with `watch -n 5 curl -s $BASE_URL/metrics | grep
 opc_http_requests_total`) to see the counters climbing in real time.
 This is the manual "did the metrics actually record?" sanity check
 called out in Phase 1.5 Task D.
+
+### Latency semantics
+
+The `opc_http_request_duration_seconds` histogram is observed by the
+`Metrics()` middleware in `internal/middleware/metrics.go`. The
+observation happens after `c.Next()` returns, which means the recorded
+duration includes the full chain downstream of `Metrics()` —
+`RequestLogger`, `gin.Recovery`, CORS, the handler itself, and any
+DB work. The intent is that a panic still produces a latency sample
+(so error-path latency is visible in dashboards). The trade-off is
+that a SLO like "handler latency" will be a few microseconds to
+~100µs higher than the handler-internal timing would suggest; this
+is the cost of observing the full chain and is acceptable for an
+SLO that targets p95 over a 100ms band.

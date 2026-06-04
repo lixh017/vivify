@@ -83,3 +83,13 @@ export type IpTemplate = {
   description: string
   doc_count: number
 }
+
+// Auth user returned by /api/auth/login, /api/auth/register, and
+// /api/auth/me. The hash is never on the wire (the Go model has
+// `json:"-"`) so we don't model it here.
+export type AuthUser = {
+  id: number
+  email: string
+  name: string
+  created_at: string
+}

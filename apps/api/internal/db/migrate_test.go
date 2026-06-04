@@ -111,14 +111,19 @@ func TestMigrateCreatesIndexes(t *testing.T) {
 	want := []string{
 		"idx_topics_platform",
 		"idx_topics_status",
+		"idx_topics_user_id",
 		"idx_scripts_topic_id",
 		"idx_scripts_platform",
+		"idx_scripts_user_id",
 		"idx_content_items_script_id",
 		"idx_content_items_platform",
 		"idx_content_items_scheduled_at",
+		"idx_content_items_user_id",
 		"idx_knowledge_docs_path",
 		"idx_knowledge_docs_doc_type",
+		"idx_knowledge_docs_user_id",
 		"idx_series_ip_id",
+		"idx_series_user_id",
 	}
 
 	rows, err := conn.Query(

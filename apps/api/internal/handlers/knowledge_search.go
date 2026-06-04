@@ -20,7 +20,7 @@ import (
 // backed by a raw *sql.DB (or a GORM handle) without leaking SQL
 // concerns into the HTTP layer.
 type KnowledgeSearchStore interface {
-	Search(ctx context.Context, query string, docType string, page PageRequest) ([]models.KnowledgeDoc, int64, error)
+	Search(ctx context.Context, query string, docType string, page PageRequest, userID uint) ([]models.KnowledgeDoc, int64, error)
 }
 
 // KnowledgeSearchHandler serves GET /knowledge/search. The store field
@@ -54,8 +54,12 @@ func NewKnowledgeSearchHandlerWithStore(store KnowledgeSearchStore, logger *slog
 }
 
 // RegisterRoutes attaches the search route to the given router under
-// the /knowledge namespace. The search route must be registered before
-// /knowledge/:id so Gin's trie does not treat "search" as an :id value.
+// the /knowledge namespace. The search route is a static segment
+// ("/knowledge/search"); Gin's radix tree prefers static segments
+// over the :id wildcard, so it resolves correctly regardless of
+// registration order. We still register the search route before
+// /knowledge/:id in main.go as belt-and-braces against any future
+// router change that loses the static-over-wildcard preference.
 func (h *KnowledgeSearchHandler) RegisterRoutes(r gin.IRouter) {
 	r.GET("/knowledge/search", h.Search)
 }
@@ -99,7 +103,7 @@ func (h *KnowledgeSearchHandler) Search(c *gin.Context) {
 		page.Offset = n
 	}
 
-	items, total, err := h.store.Search(c.Request.Context(), query, docType, page)
+	items, total, err := h.store.Search(c.Request.Context(), query, docType, page, UserIDFromContext(c))
 	if err != nil {
 		// FTS5 syntax errors (malformed MATCH expression) come back as a
 		// sqlite Error with code SQLITE_ERROR. The driver surfaces the
@@ -128,7 +132,10 @@ func (h *KnowledgeSearchHandler) Search(c *gin.Context) {
 // inspect the message text rather than unwrap typed errors so we
 // remain driver-agnostic (both mattn/go-sqlite3 and modernc/sqlite
 // return plain errors). The list of substrings is conservative —
-// adding more is cheap; missing one means a 500 instead of a 400.
+// we only match phrases that uniquely identify an FTS parser
+// failure. The "no such column" phrase was removed because it
+// matches generic schema errors (e.g. a dropped table) which
+// should map to a 500, not a 400.
 func isFTSyntaxError(err error) bool {
 	if err == nil {
 		return false
@@ -137,7 +144,6 @@ func isFTSyntaxError(err error) bool {
 	return strings.Contains(msg, "fts5:") ||
 		strings.Contains(msg, "fts3:") ||
 		strings.Contains(msg, "malformed match expression") ||
-		strings.Contains(msg, "no such column") ||
 		strings.Contains(msg, "unterminated string") ||
 		strings.Contains(msg, "fts5: syntax error")
 }
@@ -165,7 +171,11 @@ func newGormKnowledgeSearchStore(db *gorm.DB) *gormKnowledgeSearchStore {
 // they apply to the final joined result. For Phase 1 this is the
 // simpler shape; if we ever need to paginate the FTS scan itself we
 // can switch to a subquery.
-func (s *gormKnowledgeSearchStore) Search(ctx context.Context, query string, docType string, page PageRequest) ([]models.KnowledgeDoc, int64, error) {
+//
+// userID scopes results to the caller's rows. A non-zero userID adds
+// `AND kd.user_id = ?` to both the count and the item query so a
+// user never sees another user's knowledge base in search results.
+func (s *gormKnowledgeSearchStore) Search(ctx context.Context, query string, docType string, page PageRequest, userID uint) ([]models.KnowledgeDoc, int64, error) {
 	q := s.db.WithContext(withTimeout(ctx))
 
 	// Total count uses the same MATCH expression and any doc_type
@@ -179,6 +189,10 @@ func (s *gormKnowledgeSearchStore) Search(ctx context.Context, query string, doc
 	if docType != "" {
 		countSQL += " AND kd.doc_type = ?"
 		countArgs = append(countArgs, docType)
+	}
+	if userID != 0 {
+		countSQL += " AND kd.user_id = ?"
+		countArgs = append(countArgs, userID)
 	}
 
 	var total int64
@@ -201,6 +215,10 @@ func (s *gormKnowledgeSearchStore) Search(ctx context.Context, query string, doc
 	if docType != "" {
 		sql += " AND kd.doc_type = ?"
 		args = append(args, docType)
+	}
+	if userID != 0 {
+		sql += " AND kd.user_id = ?"
+		args = append(args, userID)
 	}
 	sql += " ORDER BY bm25(fts.knowledge_docs_fts) ASC LIMIT ? OFFSET ?"
 	args = append(args, page.Limit, page.Offset)

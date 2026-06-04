@@ -3,8 +3,11 @@ package models
 import "time"
 
 type ContentItem struct {
-	ID                 uint       `gorm:"primaryKey" json:"id"`
-	ScriptID           uint       `gorm:"index" json:"script_id"`
+	ID       uint `gorm:"primaryKey" json:"id"`
+	ScriptID uint `gorm:"index" json:"script_id"`
+	// UserID is the owner of the row (Phase 2 multi-tenancy). See Topic
+	// for the backfill story and index rationale.
+	UserID             uint       `gorm:"index" json:"user_id"`
 	Platform           string     `gorm:"index" json:"platform"`
 	ScheduledAt        *time.Time `gorm:"index" json:"scheduled_at,omitempty"`
 	PublishedAt        *time.Time `json:"published_at,omitempty"`

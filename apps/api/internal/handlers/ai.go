@@ -334,9 +334,17 @@ func (h *AIHandler) Postmortem(c *gin.Context) {
 	// Walk the FK chain. We do this with three separate First calls
 	// (not Preload joins) so a missing Script or Topic surfaces as
 	// gorm.ErrRecordNotFound on the offending call rather than
-	// silently returning zero values inside a struct.
+	// silently returning zero values inside a struct. Each lookup
+	// scopes by user_id so a caller cannot run a postmortem on
+	// another user's content item (which would still 404 because the
+	// scoped First returns ErrRecordNotFound).
+	userID := UserIDFromContext(c)
 	var ci models.ContentItem
-	if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&ci, req.ContentItemID).Error; err != nil {
+	ciQuery := h.db.WithContext(withTimeout(c.Request.Context())).Model(&models.ContentItem{})
+	if userID != 0 {
+		ciQuery = ciQuery.Where("user_id = ?", userID)
+	}
+	if err := ciQuery.First(&ci, req.ContentItemID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "content item not found"})
 			return

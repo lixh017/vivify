@@ -25,16 +25,16 @@ import (
 type KnowledgeDocStore interface {
 	Create(ctx context.Context, k *models.KnowledgeDoc) error
 	List(ctx context.Context, filter KnowledgeDocFilter, page PageRequest) ([]models.KnowledgeDoc, int64, error)
-	Get(ctx context.Context, id uint) (*models.KnowledgeDoc, error)
-	Update(ctx context.Context, id uint, patch map[string]any) (*models.KnowledgeDoc, error)
-	Delete(ctx context.Context, id uint) (int64, error)
+	Get(ctx context.Context, id uint, userID uint) (*models.KnowledgeDoc, error)
+	Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.KnowledgeDoc, error)
+	Delete(ctx context.Context, id uint, userID uint) (int64, error)
 }
 
 // KnowledgeDocFilter narrows List results. Zero value means "no filter".
-// DocType is the primary task-mandated filter; Tag is a small QoL
-// addition for callers who want to slice by tag without a future
-// many-to-many migration.
+// DocType is the primary task-mandated filter; UserID is the Phase 2
+// owner scope (RequireAuth sets it before List is called).
 type KnowledgeDocFilter struct {
+	UserID  uint
 	DocType string
 }
 
@@ -90,6 +90,7 @@ func (h *KnowledgeDocHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
+	kd.UserID = UserIDFromContext(c)
 	if err := h.store.Create(c.Request.Context(), &kd); err != nil {
 		if isValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -108,6 +109,7 @@ func (h *KnowledgeDocHandler) Create(c *gin.Context) {
 // any non-empty string, so we do not validate against a closed enum.
 func (h *KnowledgeDocHandler) List(c *gin.Context) {
 	filter := KnowledgeDocFilter{
+		UserID:  UserIDFromContext(c),
 		DocType: strings.TrimSpace(c.Query("doc_type")),
 	}
 
@@ -152,7 +154,7 @@ func (h *KnowledgeDocHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	kd, err := h.store.Get(c.Request.Context(), id)
+	kd, err := h.store.Get(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "knowledge doc not found"})
@@ -185,7 +187,7 @@ func (h *KnowledgeDocHandler) Update(c *gin.Context) {
 	delete(patch, "created_at")
 	delete(patch, "updated_at")
 
-	kd, err := h.store.Update(c.Request.Context(), id, patch)
+	kd, err := h.store.Update(c.Request.Context(), id, patch, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "knowledge doc not found"})
@@ -209,7 +211,7 @@ func (h *KnowledgeDocHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.Delete(c.Request.Context(), id)
+	rows, err := h.store.Delete(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("delete knowledge doc failed", "err", err.Error(), "id", id, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete knowledge doc"})
@@ -241,6 +243,9 @@ func (s *gormKnowledgeDocStore) List(ctx context.Context, f KnowledgeDocFilter, 
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.KnowledgeDoc{}).Order(
 		clause.OrderByColumn{Column: clause.Column{Name: "created_at"}, Desc: true},
 	)
+	if f.UserID != 0 {
+		q = q.Where("user_id = ?", f.UserID)
+	}
 	if f.DocType != "" {
 		q = q.Where("doc_type = ?", f.DocType)
 	}
@@ -255,9 +260,13 @@ func (s *gormKnowledgeDocStore) List(ctx context.Context, f KnowledgeDocFilter, 
 	return items, total, nil
 }
 
-func (s *gormKnowledgeDocStore) Get(ctx context.Context, id uint) (*models.KnowledgeDoc, error) {
+func (s *gormKnowledgeDocStore) Get(ctx context.Context, id uint, userID uint) (*models.KnowledgeDoc, error) {
 	var kd models.KnowledgeDoc
-	if err := s.db.WithContext(withTimeout(ctx)).First(&kd, id).Error; err != nil {
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.KnowledgeDoc{})
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.First(&kd, id).Error; err != nil {
 		return nil, err
 	}
 	return &kd, nil
@@ -266,11 +275,15 @@ func (s *gormKnowledgeDocStore) Get(ctx context.Context, id uint) (*models.Knowl
 // Update wraps the read+write in a transaction so concurrent PUTs cannot
 // clobber each other (TOCTOU). Updates uses a map so omitted fields are
 // preserved (PUT semantics) and GORM skips zero-valued fields.
-func (s *gormKnowledgeDocStore) Update(ctx context.Context, id uint, patch map[string]any) (*models.KnowledgeDoc, error) {
+func (s *gormKnowledgeDocStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.KnowledgeDoc, error) {
 	var out *models.KnowledgeDoc
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.KnowledgeDoc
-		if err := tx.First(&existing, id).Error; err != nil {
+		q := tx.Model(&models.KnowledgeDoc{})
+		if userID != 0 {
+			q = q.Where("user_id = ?", userID)
+		}
+		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
 		for k, v := range patch {
@@ -309,7 +322,11 @@ func (s *gormKnowledgeDocStore) Update(ctx context.Context, id uint, patch map[s
 // Delete uses Unscoped so a future soft-delete column on the model does
 // not silently change behavior. RowsAffected is returned for the handler
 // to distinguish 404 from 200.
-func (s *gormKnowledgeDocStore) Delete(ctx context.Context, id uint) (int64, error) {
-	res := s.db.WithContext(withTimeout(ctx)).Unscoped().Delete(&models.KnowledgeDoc{}, id)
+func (s *gormKnowledgeDocStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	res := q.Delete(&models.KnowledgeDoc{}, id)
 	return res.RowsAffected, res.Error
 }

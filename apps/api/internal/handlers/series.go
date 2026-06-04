@@ -23,16 +23,17 @@ import (
 type SeriesStore interface {
 	Create(ctx context.Context, s *models.Series) error
 	List(ctx context.Context, filter SeriesFilter, page PageRequest) ([]models.Series, int64, error)
-	Get(ctx context.Context, id uint) (*models.Series, error)
-	Update(ctx context.Context, id uint, patch map[string]any) (*models.Series, error)
-	Delete(ctx context.Context, id uint) (int64, error)
+	Get(ctx context.Context, id uint, userID uint) (*models.Series, error)
+	Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Series, error)
+	Delete(ctx context.Context, id uint, userID uint) (int64, error)
 }
 
 // SeriesFilter narrows List results. Zero value means "no filter".
 // IPID is a small QoL addition: a list-by-ip query is the common case
 // once the IPProfile model lands in Phase 2.
 type SeriesFilter struct {
-	IPID uint
+	UserID uint
+	IPID   uint
 }
 
 // SeriesHandler exposes the series REST surface. The store field is an
@@ -92,6 +93,7 @@ func (h *SeriesHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
+	s.UserID = UserIDFromContext(c)
 	if err := h.store.Create(c.Request.Context(), &s); err != nil {
 		h.logger.Error("create series failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create series"})
@@ -102,12 +104,11 @@ func (h *SeriesHandler) Create(c *gin.Context) {
 
 // List — GET /series?ip_id=&limit=&offset=
 //
-// Order is by id ascending (Series has no timestamps) so the first
-// inserted series is first. Once Phase 2 adds an updated_at column
-// this ordering should switch to "updated_at desc" for consistency
-// with the other handlers.
+// Order is by updated_at desc (newest touch first) so the listing
+// matches the other handlers. id is the secondary key so ties resolve
+// deterministically across pages.
 func (h *SeriesHandler) List(c *gin.Context) {
-	filter := SeriesFilter{}
+	filter := SeriesFilter{UserID: UserIDFromContext(c)}
 	if v := c.Query("ip_id"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
@@ -158,7 +159,7 @@ func (h *SeriesHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	s, err := h.store.Get(c.Request.Context(), id)
+	s, err := h.store.Get(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "series not found"})
@@ -189,7 +190,7 @@ func (h *SeriesHandler) Update(c *gin.Context) {
 	// Strip the primary key; the URL owns the identity.
 	delete(patch, "id")
 
-	s, err := h.store.Update(c.Request.Context(), id, patch)
+	s, err := h.store.Update(c.Request.Context(), id, patch, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "series not found"})
@@ -209,7 +210,7 @@ func (h *SeriesHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.Delete(c.Request.Context(), id)
+	rows, err := h.store.Delete(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("delete series failed", "err", err.Error(), "id", id, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete series"})
@@ -237,8 +238,11 @@ func (s *gormSeriesStore) Create(ctx context.Context, sr *models.Series) error {
 
 func (s *gormSeriesStore) List(ctx context.Context, f SeriesFilter, p PageRequest) ([]models.Series, int64, error) {
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Series{}).Order(
-		clause.OrderByColumn{Column: clause.Column{Name: "id"}, Desc: false},
-	)
+		clause.OrderByColumn{Column: clause.Column{Name: "updated_at"}, Desc: true},
+	).Order(clause.OrderByColumn{Column: clause.Column{Name: "id"}, Desc: false})
+	if f.UserID != 0 {
+		q = q.Where("user_id = ?", f.UserID)
+	}
 	if f.IPID != 0 {
 		q = q.Where("ip_id = ?", f.IPID)
 	}
@@ -253,9 +257,13 @@ func (s *gormSeriesStore) List(ctx context.Context, f SeriesFilter, p PageReques
 	return items, total, nil
 }
 
-func (s *gormSeriesStore) Get(ctx context.Context, id uint) (*models.Series, error) {
+func (s *gormSeriesStore) Get(ctx context.Context, id uint, userID uint) (*models.Series, error) {
 	var sr models.Series
-	if err := s.db.WithContext(withTimeout(ctx)).First(&sr, id).Error; err != nil {
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Series{})
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.First(&sr, id).Error; err != nil {
 		return nil, err
 	}
 	return &sr, nil
@@ -265,11 +273,15 @@ func (s *gormSeriesStore) Get(ctx context.Context, id uint) (*models.Series, err
 // cannot clobber each other (TOCTOU). Updates uses a map so omitted
 // fields are preserved (PUT semantics) and GORM skips zero-valued
 // fields.
-func (s *gormSeriesStore) Update(ctx context.Context, id uint, patch map[string]any) (*models.Series, error) {
+func (s *gormSeriesStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Series, error) {
 	var out *models.Series
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.Series
-		if err := tx.First(&existing, id).Error; err != nil {
+		q := tx.Model(&models.Series{})
+		if userID != 0 {
+			q = q.Where("user_id = ?", userID)
+		}
+		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
 		for k, v := range patch {
@@ -303,7 +315,11 @@ func (s *gormSeriesStore) Update(ctx context.Context, id uint, patch map[string]
 // Delete uses Unscoped so a future soft-delete column on the model
 // does not silently change behavior. RowsAffected is returned for the
 // handler to distinguish 404 from 200.
-func (s *gormSeriesStore) Delete(ctx context.Context, id uint) (int64, error) {
-	res := s.db.WithContext(withTimeout(ctx)).Unscoped().Delete(&models.Series{}, id)
+func (s *gormSeriesStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	res := q.Delete(&models.Series{}, id)
 	return res.RowsAffected, res.Error
 }

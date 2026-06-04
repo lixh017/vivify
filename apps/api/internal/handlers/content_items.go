@@ -41,16 +41,20 @@ func parseTimeString(s string) (*time.Time, error) {
 // and so the handler is not coupled to GORM. The interface is defined
 // where it is consumed, per the "accept interfaces, return structs" Go
 // idiom.
+//
+// Phase 2 adds userID to Get/Update/Delete and UserID to the filter
+// so reads and writes are scoped to the caller's rows.
 type ContentItemStore interface {
 	Create(ctx context.Context, c *models.ContentItem) error
 	List(ctx context.Context, filter ContentItemFilter, page PageRequest) ([]models.ContentItem, int64, error)
-	Get(ctx context.Context, id uint) (*models.ContentItem, error)
-	Update(ctx context.Context, id uint, patch map[string]any) (*models.ContentItem, error)
-	Delete(ctx context.Context, id uint) (int64, error)
+	Get(ctx context.Context, id uint, userID uint) (*models.ContentItem, error)
+	Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.ContentItem, error)
+	Delete(ctx context.Context, id uint, userID uint) (int64, error)
 }
 
 // ContentItemFilter narrows List results. Zero value means "no filter".
 type ContentItemFilter struct {
+	UserID   uint
 	ScriptID uint
 	Platform string
 }
@@ -109,6 +113,8 @@ func (h *ContentItemHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
+	// Stamp the owner. The body never carries a user_id.
+	ci.UserID = UserIDFromContext(c)
 	if err := h.store.Create(c.Request.Context(), &ci); err != nil {
 		if isValidationError(err) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -123,7 +129,7 @@ func (h *ContentItemHandler) Create(c *gin.Context) {
 
 // List — GET /content-items?script_id=&platform=&limit=&offset=
 func (h *ContentItemHandler) List(c *gin.Context) {
-	filter := ContentItemFilter{}
+	filter := ContentItemFilter{UserID: UserIDFromContext(c)}
 	if v := c.Query("script_id"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
@@ -175,7 +181,7 @@ func (h *ContentItemHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ci, err := h.store.Get(c.Request.Context(), id)
+	ci, err := h.store.Get(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "content item not found"})
@@ -207,7 +213,7 @@ func (h *ContentItemHandler) Update(c *gin.Context) {
 	delete(patch, "id")
 	delete(patch, "created_at")
 
-	ci, err := h.store.Update(c.Request.Context(), id, patch)
+	ci, err := h.store.Update(c.Request.Context(), id, patch, UserIDFromContext(c))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "content item not found"})
@@ -233,7 +239,7 @@ func (h *ContentItemHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.Delete(c.Request.Context(), id)
+	rows, err := h.store.Delete(c.Request.Context(), id, UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("delete content item failed", "err", err.Error(), "id", id, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete content item"})
@@ -265,6 +271,9 @@ func (s *gormContentItemStore) List(ctx context.Context, f ContentItemFilter, p 
 	q := s.db.WithContext(withTimeout(ctx)).Model(&models.ContentItem{}).Order(
 		clause.OrderByColumn{Column: clause.Column{Name: "created_at"}, Desc: true},
 	)
+	if f.UserID != 0 {
+		q = q.Where("user_id = ?", f.UserID)
+	}
 	if f.ScriptID != 0 {
 		q = q.Where("script_id = ?", f.ScriptID)
 	}
@@ -282,9 +291,13 @@ func (s *gormContentItemStore) List(ctx context.Context, f ContentItemFilter, p 
 	return items, total, nil
 }
 
-func (s *gormContentItemStore) Get(ctx context.Context, id uint) (*models.ContentItem, error) {
+func (s *gormContentItemStore) Get(ctx context.Context, id uint, userID uint) (*models.ContentItem, error) {
 	var ci models.ContentItem
-	if err := s.db.WithContext(withTimeout(ctx)).First(&ci, id).Error; err != nil {
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.ContentItem{})
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.First(&ci, id).Error; err != nil {
 		return nil, err
 	}
 	return &ci, nil
@@ -295,11 +308,15 @@ func (s *gormContentItemStore) Get(ctx context.Context, id uint) (*models.Conten
 // preserved (PUT semantics) and GORM skips zero-valued fields. Nullable
 // *time.Time fields are handled explicitly: nil clears the value, a
 // non-nil value updates it.
-func (s *gormContentItemStore) Update(ctx context.Context, id uint, patch map[string]any) (*models.ContentItem, error) {
+func (s *gormContentItemStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.ContentItem, error) {
 	var out *models.ContentItem
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.ContentItem
-		if err := tx.First(&existing, id).Error; err != nil {
+		q := tx.Model(&models.ContentItem{})
+		if userID != 0 {
+			q = q.Where("user_id = ?", userID)
+		}
+		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
 		for k, v := range patch {
@@ -359,7 +376,11 @@ func (s *gormContentItemStore) Update(ctx context.Context, id uint, patch map[st
 // Delete uses Unscoped so a future soft-delete column on the model does
 // not silently change behavior. RowsAffected is returned for the handler
 // to distinguish 404 from 200.
-func (s *gormContentItemStore) Delete(ctx context.Context, id uint) (int64, error) {
-	res := s.db.WithContext(withTimeout(ctx)).Unscoped().Delete(&models.ContentItem{}, id)
+func (s *gormContentItemStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	res := q.Delete(&models.ContentItem{}, id)
 	return res.RowsAffected, res.Error
 }

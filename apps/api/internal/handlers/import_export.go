@@ -30,9 +30,9 @@ type ExportEnvelope struct {
 // straight back in, but we also accept the raw {"items": [...]} shape
 // for clients that build the payload by hand.
 type importEnvelope struct {
-	Version    int             `json:"version"`
-	ExportedAt time.Time       `json:"exported_at"`
-	Type       string          `json:"type"`
+	Version    int               `json:"version"`
+	ExportedAt time.Time         `json:"exported_at"`
+	Type       string            `json:"type"`
 	Items      []json.RawMessage `json:"items"`
 }
 
@@ -48,7 +48,7 @@ type importErrorItem struct {
 
 // importResponse is the body of a successful /import call.
 type importResponse struct {
-	Imported int              `json:"imported"`
+	Imported int               `json:"imported"`
 	Errors   []importErrorItem `json:"errors"`
 }
 
@@ -70,9 +70,14 @@ const (
 // handler uses. They are kept separate from the per-entity CRUD
 // stores so we can pull only the fields we need for a snapshot
 // without coupling the type system to all four entity models.
+//
+// Phase 2 threads userID through so that the export only contains
+// the caller's rows and the import stamps new rows with the
+// caller's UserID. userID=0 is treated as "no scope" (used by tests
+// and any future admin/CLI export that should see everything).
 type exporter interface {
-	exportAll(ctx context.Context) ([]any, error)
-	importAll(ctx context.Context, raw []json.RawMessage) (importResult, error)
+	exportAll(ctx context.Context, userID uint) ([]any, error)
+	importAll(ctx context.Context, raw []json.RawMessage, userID uint) (importResult, error)
 }
 
 type importResult struct {
@@ -133,8 +138,9 @@ func (h *ImportExportHandler) Export(c *gin.Context) {
 	// dispatch model into the wire format prematurely.
 	if t == exportTypeAll {
 		items := make([]any, 0, 256)
+		userID := UserIDFromContext(c)
 		for _, k := range []string{exportTypeTopic, exportTypeScript, exportTypeContent, exportTypeKnowledge} {
-			rows, err := h.registry[k].exportAll(c.Request.Context())
+			rows, err := h.registry[k].exportAll(c.Request.Context(), userID)
 			if err != nil {
 				h.logger.Error("export all failed", "type", k, "err", err.Error(), "request_id", c.GetString("request_id"))
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to export " + k})
@@ -151,7 +157,7 @@ func (h *ImportExportHandler) Export(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be one of: topic, script, content_item, knowledge, all"})
 		return
 	}
-	rows, err := exp.exportAll(c.Request.Context())
+	rows, err := exp.exportAll(c.Request.Context(), UserIDFromContext(c))
 	if err != nil {
 		h.logger.Error("export failed", "type", t, "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to export " + t})
@@ -203,7 +209,7 @@ func (h *ImportExportHandler) Import(c *gin.Context) {
 		return
 	}
 
-	res, err := exp.importAll(c.Request.Context(), env.Items)
+	res, err := exp.importAll(c.Request.Context(), env.Items, UserIDFromContext(c))
 	if err != nil {
 		// importAll only returns a non-nil error for catastrophic
 		// failures (e.g. context cancelled, gorm pool closed). Per-row
@@ -272,9 +278,13 @@ type topicExporter struct{ db *gorm.DB }
 
 func newTopicExporter(db *gorm.DB) *topicExporter { return &topicExporter{db: db} }
 
-func (e *topicExporter) exportAll(ctx context.Context) ([]any, error) {
+func (e *topicExporter) exportAll(ctx context.Context, userID uint) ([]any, error) {
 	var rows []models.Topic
-	if err := e.db.WithContext(withTimeout(ctx)).Order("id ASC").Find(&rows).Error; err != nil {
+	q := e.db.WithContext(withTimeout(ctx)).Order("id ASC")
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]any, 0, len(rows))
@@ -284,7 +294,7 @@ func (e *topicExporter) exportAll(ctx context.Context) ([]any, error) {
 	return out, nil
 }
 
-func (e *topicExporter) importAll(ctx context.Context, raw []json.RawMessage) (importResult, error) {
+func (e *topicExporter) importAll(ctx context.Context, raw []json.RawMessage, userID uint) (importResult, error) {
 	var res importResult
 	for i, msg := range raw {
 		var t models.Topic
@@ -298,6 +308,10 @@ func (e *topicExporter) importAll(ctx context.Context, raw []json.RawMessage) (i
 		t.ID = 0
 		t.CreatedAt = time.Time{}
 		t.UpdatedAt = time.Time{}
+		// Stamp the caller as the owner of every freshly imported
+		// row. The exported payload is trusted enough to copy content
+		// from, but ownership must always come from the auth context.
+		t.UserID = userID
 		if err := e.db.WithContext(withTimeout(ctx)).Create(&t).Error; err != nil {
 			res.Errors = append(res.Errors, importErrorItem{Index: i, Message: err.Error()})
 			continue
@@ -312,9 +326,13 @@ type scriptExporter struct{ db *gorm.DB }
 
 func newScriptExporter(db *gorm.DB) *scriptExporter { return &scriptExporter{db: db} }
 
-func (e *scriptExporter) exportAll(ctx context.Context) ([]any, error) {
+func (e *scriptExporter) exportAll(ctx context.Context, userID uint) ([]any, error) {
 	var rows []models.Script
-	if err := e.db.WithContext(withTimeout(ctx)).Order("id ASC").Find(&rows).Error; err != nil {
+	q := e.db.WithContext(withTimeout(ctx)).Order("id ASC")
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]any, 0, len(rows))
@@ -324,7 +342,7 @@ func (e *scriptExporter) exportAll(ctx context.Context) ([]any, error) {
 	return out, nil
 }
 
-func (e *scriptExporter) importAll(ctx context.Context, raw []json.RawMessage) (importResult, error) {
+func (e *scriptExporter) importAll(ctx context.Context, raw []json.RawMessage, userID uint) (importResult, error) {
 	var res importResult
 	for i, msg := range raw {
 		var s models.Script
@@ -335,6 +353,7 @@ func (e *scriptExporter) importAll(ctx context.Context, raw []json.RawMessage) (
 		s.ID = 0
 		s.CreatedAt = time.Time{}
 		s.UpdatedAt = time.Time{}
+		s.UserID = userID
 		if err := e.db.WithContext(withTimeout(ctx)).Create(&s).Error; err != nil {
 			res.Errors = append(res.Errors, importErrorItem{Index: i, Message: err.Error()})
 			continue
@@ -351,9 +370,13 @@ func newContentItemExporter(db *gorm.DB) *contentItemExporter {
 	return &contentItemExporter{db: db}
 }
 
-func (e *contentItemExporter) exportAll(ctx context.Context) ([]any, error) {
+func (e *contentItemExporter) exportAll(ctx context.Context, userID uint) ([]any, error) {
 	var rows []models.ContentItem
-	if err := e.db.WithContext(withTimeout(ctx)).Order("id ASC").Find(&rows).Error; err != nil {
+	q := e.db.WithContext(withTimeout(ctx)).Order("id ASC")
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]any, 0, len(rows))
@@ -363,7 +386,7 @@ func (e *contentItemExporter) exportAll(ctx context.Context) ([]any, error) {
 	return out, nil
 }
 
-func (e *contentItemExporter) importAll(ctx context.Context, raw []json.RawMessage) (importResult, error) {
+func (e *contentItemExporter) importAll(ctx context.Context, raw []json.RawMessage, userID uint) (importResult, error) {
 	var res importResult
 	for i, msg := range raw {
 		var ci models.ContentItem
@@ -373,6 +396,7 @@ func (e *contentItemExporter) importAll(ctx context.Context, raw []json.RawMessa
 		}
 		ci.ID = 0
 		ci.CreatedAt = time.Time{}
+		ci.UserID = userID
 		if err := e.db.WithContext(withTimeout(ctx)).Create(&ci).Error; err != nil {
 			res.Errors = append(res.Errors, importErrorItem{Index: i, Message: err.Error()})
 			continue
@@ -387,9 +411,13 @@ type knowledgeExporter struct{ db *gorm.DB }
 
 func newKnowledgeExporter(db *gorm.DB) *knowledgeExporter { return &knowledgeExporter{db: db} }
 
-func (e *knowledgeExporter) exportAll(ctx context.Context) ([]any, error) {
+func (e *knowledgeExporter) exportAll(ctx context.Context, userID uint) ([]any, error) {
 	var rows []models.KnowledgeDoc
-	if err := e.db.WithContext(withTimeout(ctx)).Order("id ASC").Find(&rows).Error; err != nil {
+	q := e.db.WithContext(withTimeout(ctx)).Order("id ASC")
+	if userID != 0 {
+		q = q.Where("user_id = ?", userID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]any, 0, len(rows))
@@ -399,7 +427,7 @@ func (e *knowledgeExporter) exportAll(ctx context.Context) ([]any, error) {
 	return out, nil
 }
 
-func (e *knowledgeExporter) importAll(ctx context.Context, raw []json.RawMessage) (importResult, error) {
+func (e *knowledgeExporter) importAll(ctx context.Context, raw []json.RawMessage, userID uint) (importResult, error) {
 	var res importResult
 	for i, msg := range raw {
 		var kd models.KnowledgeDoc
@@ -410,6 +438,7 @@ func (e *knowledgeExporter) importAll(ctx context.Context, raw []json.RawMessage
 		kd.ID = 0
 		kd.CreatedAt = time.Time{}
 		kd.UpdatedAt = time.Time{}
+		kd.UserID = userID
 		if err := e.db.WithContext(withTimeout(ctx)).Create(&kd).Error; err != nil {
 			res.Errors = append(res.Errors, importErrorItem{Index: i, Message: err.Error()})
 			continue

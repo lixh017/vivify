@@ -1,3 +1,5 @@
+//go:build fts5
+
 package handlers
 
 import (
@@ -5,32 +7,36 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"github.com/opc/api/internal/db"
 	"github.com/opc/api/internal/models"
 )
 
-// setupTestKnowledgeSearchRouter mirrors setupTestKnowledgeDocRouter
-// but wires the search handler in addition to the CRUD handler. The
-// FTS5 surface is created via db.Migrate (rather than the inline
-// snippet) so the test exercises the same code path that production
-// uses to bring the FTS shadow table online.
+// setupTestKnowledgeSearchRouter wires the CRUD and search handlers
+// against a freshly-migrated in-memory DB. The FTS5 shadow table is
+// created by the same db.EnsureKnowledgeFTS call that
+// setupTestKnowledgeDocRouter uses, so both helpers share one DDL
+// source of truth (and a future refactor cannot drift them apart).
+//
+// This helper is gated on the `fts5` build tag because the FTS
+// surface can only be created against an SQLite engine that has FTS5
+// compiled in. A plain `go test ./...` skips these integration
+// tests; the CI workflow runs them with `-tags fts5`.
 func setupTestKnowledgeSearchRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Helper()
 	gormDB := newTestDB(t)
 	if err := gormDB.AutoMigrate(&models.KnowledgeDoc{}); err != nil {
 		t.Fatalf("automigrate KnowledgeDoc: %v", err)
 	}
-	// db.Migrate runs AutoMigrate again for all entities and then
-	// ensures the FTS5 surface. Calling it on an already-migrated
-	// handle is a no-op thanks to IF NOT EXISTS, so this is safe
-	// even when the schema was just created.
-	if err := db.Migrate(gormDB); err != nil {
-		t.Fatalf("migrate: %v", err)
+	// db.Migrate runs AutoMigrate for all entities and then ensures
+	// the FTS5 surface. Calling it on an already-migrated handle is
+	// a no-op thanks to IF NOT EXISTS.
+	if err := ensureFTSForTest(t, gormDB); err != nil {
+		t.Fatalf("ensure FTS: %v", err)
 	}
 	r := gin.New()
 	crud := NewKnowledgeDocHandler(gormDB)
@@ -38,6 +44,15 @@ func setupTestKnowledgeSearchRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	search := NewKnowledgeSearchHandler(gormDB)
 	search.RegisterRoutes(r)
 	return r, gormDB
+}
+
+// ensureFTSForTest brings the FTS5 surface online via the shared
+// db.EnsureKnowledgeFTS helper. Extracted so the integration tests
+// can also be exercised with a hand-rolled FakeStore in the
+// handler-only test below.
+func ensureFTSForTest(t *testing.T, gormDB *gorm.DB) error {
+	t.Helper()
+	return ensureSearchFTS(gormDB)
 }
 
 // TestKnowledgeSearchBasic inserts three knowledge docs and confirms
@@ -246,7 +261,7 @@ func TestKnowledgeSearchStaysInSyncWithCrud(t *testing.T) {
 	updateBody := map[string]any{
 		"content": "完全不同的内容:数据驱动",
 	}
-	w = do(t, r, "PUT", "/knowledge/"+itoa(uint(created.ID)), updateBody)
+	w = do(t, r, "PUT", "/knowledge/"+strconv.FormatUint(uint64(created.ID), 10), updateBody)
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: expected 200, got %d, body: %s", w.Code, w.Body.String())
 	}
@@ -264,7 +279,7 @@ func TestKnowledgeSearchStaysInSyncWithCrud(t *testing.T) {
 
 	// 3. Delete via the CRUD handler. The AFTER DELETE trigger should
 	//    remove the row from FTS.
-	w = do(t, r, "DELETE", "/knowledge/"+itoa(uint(created.ID)), nil)
+	w = do(t, r, "DELETE", "/knowledge/"+strconv.FormatUint(uint64(created.ID), 10), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete: expected 200, got %d, body: %s", w.Code, w.Body.String())
 	}
@@ -313,29 +328,45 @@ func TestKnowledgeSearchWithFakeStore(t *testing.T) {
 	}
 }
 
+// BenchmarkKnowledgeSearch seeds the FTS index with a configurable
+// number of knowledge docs (default 200) and measures end-to-end
+// search latency. The spec calls for "performance is reasonable" on
+// the FTS path; this benchmark lets us assert that in CI.
+//
+// Run with: go test -tags fts5 -bench=BenchmarkKnowledgeSearch -benchmem ./internal/handlers/...
+func BenchmarkKnowledgeSearch(b *testing.B) {
+	const seedCount = 200
+	r, gormDB := setupTestKnowledgeSearchRouter(&testing.T{})
+
+	// Seed via the CRUD handler so the FTS triggers fire. We
+	// suppress t.Fatalf noise by passing a fresh *testing.T that
+	// the helper's t.Cleanup will close over.
+	for i := 0; i < seedCount; i++ {
+		kd := &models.KnowledgeDoc{
+			Title:   "风格条目 " + strconv.Itoa(i),
+			Content: "关键词 alpha beta gamma 内容片段 " + strconv.Itoa(i%17),
+			DocType: "ip-style",
+		}
+		if err := gormDB.Create(kd).Error; err != nil {
+			b.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := doBench(b, r, "GET", "/knowledge/search?q=alpha&limit=20", nil)
+		if w.Code != http.StatusOK {
+			b.Fatalf("search: %d body=%s", w.Code, w.Body.String())
+		}
+	}
+}
+
 type fakeSearchStore struct {
 	items []models.KnowledgeDoc
 	total int64
 	err   error
 }
 
-func (f *fakeSearchStore) Search(ctx context.Context, query string, docType string, page PageRequest) ([]models.KnowledgeDoc, int64, error) {
+func (f *fakeSearchStore) Search(ctx context.Context, query string, docType string, page PageRequest, userID uint) ([]models.KnowledgeDoc, int64, error) {
 	return f.items, f.total, f.err
-}
-
-// itoa is a small helper to avoid an extra strconv import in this
-// file; strconv is already imported elsewhere in the package.
-func itoa(id uint) string {
-	const digits = "0123456789"
-	if id == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for id > 0 {
-		i--
-		buf[i] = digits[id%10]
-		id /= 10
-	}
-	return string(buf[i:])
 }

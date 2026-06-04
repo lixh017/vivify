@@ -260,8 +260,8 @@ func TestIPTemplateCreateListsBack(t *testing.T) {
 
 func TestIPTypeFromPath(t *testing.T) {
 	cases := []struct {
-		path  string
-		want  string
+		path   string
+		want   string
 		wantOK bool
 	}{
 		{"ip-style-guide/熊猫/style", "熊猫", true},

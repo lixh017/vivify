@@ -164,3 +164,109 @@ jobs:
           DOCKER_BUILDKIT: "1"
           COMPOSE_DOCKER_CLI_BUILD: "1"
         run: docker compose build --progress=plain
+
+  # ------------------------------------------------------------------
+  # loadtest — exercise the API with k6 against a freshly-built
+  # binary and assert on the SLOs from the Phase 1.5 spec.
+  # ------------------------------------------------------------------
+  # We do not run a k6 job in parallel with docker-build because the
+  # load test is the longest single job in the pipeline (~100s) and
+  # burning it on a docker regression is wasteful. The job boots the
+  # API from a freshly-built binary on a temp SQLite path, waits for
+  # /healthz to return 200, runs k6 via the official container
+  # image (no system k6 install needed), and tears the server down.
+  # ------------------------------------------------------------------
+  loadtest:
+    name: Load test (k6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [backend-test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Build API binary
+        working-directory: apps/api
+        run: |
+          mkdir -p ../bin
+          go build -tags fts5 -trimpath -o ../bin/opc-api ./cmd/server
+
+      # Boot the API on an ephemeral port with a temp DB. The
+      # `&` backgrounds the process; the `pid` file is used for
+      # the teardown step so we don't rely on pgrep heuristics.
+      - name: Start API server
+        working-directory: apps/api
+        env:
+          # Use a non-default port to avoid clashing with any
+          # other listener on the runner image.
+          PORT: "48080"
+          DB_PATH: "${{ runner.temp }}/opc-loadtest.db"
+          LOG_LEVEL: "warn"
+          # Empty key — /ai/topics is expected to 503 fast; the
+          # k6 thresholds are scoped to latency, not status.
+          ANTHROPIC_API_KEY: ""
+        run: |
+          rm -f "$DB_PATH"
+          ../bin/opc-api &
+          echo $! > api.pid
+
+      - name: Wait for /healthz
+        run: |
+          # Poll /healthz for up to 30s. Fail the job if the
+          # server never becomes reachable — that's a real bug
+          # we want CI to surface, not paper over with a longer
+          # timeout.
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:48080/healthz || true)
+            if [ "$status" = "200" ]; then
+              echo "API healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API did not become healthy within 30s"
+          exit 1
+
+      # The official k6 image ships with the xk6-output-json
+      # extension already available. We mount the repo so the
+      # script can read apps/loadtest/k6-basic.js, and emit a
+      # JSON summary that operators can download as an artifact.
+      - name: Run k6
+        run: |
+          docker run --rm --network host \
+            -v "${{ github.workspace }}:/scripts:ro" \
+            -v "${{ runner.temp }}/k6-summary:/summary" \
+            -w /scripts \
+            grafana/k6:latest run \
+              --summary-export=/summary/loadtest-summary.json \
+              -e BASE_URL=http://localhost:48080 \
+              apps/loadtest/k6-basic.js
+
+      # Best-effort teardown — kill the API even if k6 failed
+      # so the runner doesn't leak the process. `kill -0`
+      # confirms the pid is still ours before sending SIGTERM.
+      - name: Teardown API server
+        if: always()
+        working-directory: apps/api
+        run: |
+          if [ -f api.pid ]; then
+            pid=$(cat api.pid)
+            if kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+            fi
+            rm -f api.pid
+          fi
+
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-loadtest-summary
+          path: ${{ runner.temp }}/k6-summary/loadtest-summary.json
+          if-no-files-found: warn

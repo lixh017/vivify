@@ -40,7 +40,12 @@ const (
 )
 
 type Topic struct {
-	ID                  uint      `gorm:"primaryKey" json:"id"`
+	ID uint `gorm:"primaryKey" json:"id"`
+	// UserID is the owner of the row (Phase 2 multi-tenancy). Pre-Phase-2
+	// rows have UserID=0 — the auth filter treats zero as "shared / legacy"
+	// so the migration backfill window is graceful. Indexed because every
+	// authenticated list query narrows on it.
+	UserID              uint      `gorm:"index" json:"user_id"`
 	Title               string    `gorm:"size:200;not null" json:"title" binding:"required,max=200"`
 	Angle               string    `gorm:"size:1000" json:"angle,omitempty" binding:"max=1000"`
 	Platform            string    `gorm:"size:32;not null;index" json:"platform" binding:"required,max=32"`

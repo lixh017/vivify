@@ -33,17 +33,27 @@ var httpRequestsTotal = promauto.NewCounterVec(
 	[]string{"method", "path", "status"},
 )
 
-// HTTP request latency in seconds, partitioned by method and path
-// template. The bucket layout covers the latency band that matters for
-// an SQLite-backed CRUD API — 5ms up to 5s — with denser buckets in
+// HTTP request latency in seconds, partitioned by method, matched
+// route template, and status code. The label set mirrors
+// httpRequestsTotal so SLO dashboards can slice p95 by status
+// (e.g. p95 of 5xx vs 2xx) without joining the two metric families.
+// The bucket layout covers the latency band that matters for an
+// SQLite-backed CRUD API — 5ms up to 5s — with denser buckets in
 // the <100ms range where the SLOs (e.g. /topics p95 < 100ms) live.
+//
+// Cardinality note: the histogram is intentionally restricted to
+// MATCHED routes (c.FullPath() != ""). Unmatched routes (404s) are
+// only counted via httpRequestsTotal, where the URL.Path fallback
+// exists with a documented cardinality trade-off (see below). The
+// histogram carries ~9 buckets per series, so a leaked path label
+// would be far more expensive on the histogram than on the counter.
 var httpRequestDurationSeconds = promauto.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "opc_http_request_duration_seconds",
-		Help:    "HTTP request latency in seconds, labeled by method and path.",
+		Help:    "HTTP request latency in seconds, labeled by method, path, and status code.",
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 	},
-	[]string{"method", "path"},
+	[]string{"method", "path", "status"},
 )
 
 // Metrics returns a gin middleware that records per-request counters
@@ -64,20 +74,31 @@ func Metrics() gin.HandlerFunc {
 		// FullPath returns the route template ("/topics/:id") when
 		// matched, or an empty string for 404s. We fall back to the
 		// concrete path for unmatched routes so 404s still surface in
-		// the metrics — but at the cost of unbounded cardinality if a
-		// scanner hits the service. In practice the path is at least
-		// bounded by the gin router's normalization, and the histogram
-		// does NOT include path (only method/path status), so the
-		// cardinality risk is acceptable for a single-process service.
+		// the counter — at the cost of unbounded cardinality if a
+		// scanner hits the service. This trade-off is acceptable for
+		// a single-process service because:
+		//   1) The histogram is gated on a matched route, so a leaked
+		//      path label only inflates the counter (cheap) and not
+		//      the histogram (expensive: ~10 buckets per series).
+		//   2) Operators who care can drop the 404 fallback in a
+		//      follow-up; the bounded route-template label is the
+		//      default in real usage.
 		path := c.FullPath()
+		method := c.Request.Method
+		status := strconv.Itoa(c.Writer.Status())
+
+		// Counter records everything (matched + 404 fallback).
 		if path == "" {
 			path = c.Request.URL.Path
 		}
-
-		status := strconv.Itoa(c.Writer.Status())
-		method := c.Request.Method
-
 		httpRequestsTotal.WithLabelValues(method, path, status).Inc()
-		httpRequestDurationSeconds.WithLabelValues(method, path).Observe(time.Since(start).Seconds())
+
+		// Histogram is restricted to matched routes only. For 404s
+		// we record nothing on the histogram — the counter series
+		// with the URL.Path label is the operator's signal that a
+		// scan is in progress.
+		if route := c.FullPath(); route != "" {
+			httpRequestDurationSeconds.WithLabelValues(method, route, status).Observe(time.Since(start).Seconds())
+		}
 	}
 }
