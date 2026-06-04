@@ -3,24 +3,95 @@ package agents
 import (
 	"context"
 	"fmt"
+	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+)
+
+// Default model + max-tokens for the OPC MCP server. Other tools
+// (e.g. viral deconstruction) can override these per-call through
+// CompleteOptions.
+const (
+	DefaultModel     = anthropic.ModelClaudeSonnet4_5
+	DefaultMaxTokens = 4096
+	DefaultTimeout   = 60 * time.Second
 )
 
 // Claude wraps the Anthropic SDK and exposes prompt builders and a
 // Complete method used by the OPC MCP server for AI-assisted tasks
 // (topic generation, script humanization, viral deconstruction).
 type Claude struct {
-	client anthropic.Client
+	client        anthropic.Client
+	keyConfigured bool         // false when constructed with empty API key (dev mode)
+	override      CompleteFunc // optional test override; nil in production
+	model         anthropic.Model
+	maxTokens     int64
+	timeout       time.Duration
+}
+
+// CompleteFunc lets tests inject a fake response without making a
+// real network call. Production code never sets this.
+type CompleteFunc func(ctx context.Context, prompt string) (string, error)
+
+// CompleteOptions tunes a single Complete call. Zero values fall
+// back to the Claude-constructor defaults. Use this when a specific
+// tool needs a larger token budget or a different model.
+type CompleteOptions struct {
+	Model     anthropic.Model
+	MaxTokens int64
+	Timeout   time.Duration
 }
 
 // NewClaude constructs a Claude agent from an Anthropic API key.
-// An empty key is allowed at construction time; failures happen at
-// Complete-time.
+// An empty key is rejected at construction so misconfiguration is
+// caught at boot, not at first request. Use NewClaudeWithOverride
+// for tests.
 func NewClaude(apiKey string) *Claude {
+	return NewClaudeWithOptions(apiKey, CompleteOptions{})
+}
+
+// NewClaudeWithOptions is like NewClaude but lets the caller
+// override the model / max-tokens / timeout. Pass a CompleteOptions
+// with all zero fields to get the same behaviour as NewClaude.
+//
+// An empty API key is allowed (dev mode): the returned Claude will
+// have a nil client and Complete() will surface a clear "no API key"
+// error at call time. This matches main.go's "empty key is OK during
+// dev" contract and avoids taking the whole server down for a config
+// issue. Tests that need a real call should use NewClaudeWithOverride.
+func NewClaudeWithOptions(apiKey string, opts CompleteOptions) *Claude {
+	c := &Claude{
+		model:     DefaultModel,
+		maxTokens: DefaultMaxTokens,
+		timeout:   DefaultTimeout,
+	}
+	if apiKey != "" {
+		c.client = anthropic.NewClient(option.WithAPIKey(apiKey))
+		c.keyConfigured = true
+	}
+	if opts.Model != "" {
+		c.model = opts.Model
+	}
+	if opts.MaxTokens > 0 {
+		c.maxTokens = opts.MaxTokens
+	}
+	if opts.Timeout > 0 {
+		c.timeout = opts.Timeout
+	}
+	return c
+}
+
+// NewClaudeWithOverride constructs a Claude agent that bypasses the
+// Anthropic SDK entirely and uses the provided function as the
+// completion source. Intended for tests; production code should
+// always use NewClaude. The override bypasses the API-key check.
+func NewClaudeWithOverride(fn CompleteFunc) *Claude {
 	return &Claude{
-		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
+		override:  fn,
+		model:     DefaultModel,
+		maxTokens: DefaultMaxTokens,
+		timeout:   DefaultTimeout,
 	}
 }
 
@@ -66,13 +137,24 @@ func (c *Claude) HumanizeScriptPrompt(script string) string {
 	)
 }
 
-// Complete sends a single user-turn prompt to Claude (claude-sonnet-4-5)
-// and returns the first text content block. Network/auth errors are
-// returned to the caller as-is for surfacing.
+// Complete sends a single user-turn prompt to Claude and returns
+// the first text content block. A per-call timeout is applied (see
+// CompleteOptions) so a hung Anthropic call cannot pin a request
+// goroutine indefinitely; callers can still impose a tighter
+// deadline through ctx. Network/auth errors are returned to the
+// caller as-is for surfacing.
 func (c *Claude) Complete(ctx context.Context, prompt string) (string, error) {
+	if c.override != nil {
+		return c.override(ctx, prompt)
+	}
+	if !c.keyConfigured {
+		return "", fmt.Errorf("claude complete: no Anthropic API key configured (set ANTHROPIC_API_KEY)")
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 	resp, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_5,
-		MaxTokens: 4096,
+		Model:     c.model,
+		MaxTokens: c.maxTokens,
 		Messages: []anthropic.MessageParam{
 			{
 				Role: anthropic.MessageParamRoleUser,
