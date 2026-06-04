@@ -13,8 +13,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/agents"
 	"github.com/opc/api/internal/models"
 )
+
+// demoModeHeader is set on responses served from canned data so the
+// frontend (and curl users) can tell the difference between a real
+// Claude call and a demo response. The header name is fixed across
+// all three /ai/* endpoints for grep-ability.
+const demoModeHeader = "X-Demo-Mode"
+
+// demoQueryParam is the query-string flag that forces demo mode even
+// when an API key is configured. Useful for sales/investor demos
+// where the operator wants predictable output regardless of whether
+// the key is set.
+const demoQueryParam = "demo"
 
 // aiTimeout caps the time a single /ai/* call can spend waiting on
 // the Claude SDK. The default is generous (60s) to allow for slow
@@ -31,12 +44,17 @@ const maxAIResultBytes = 1 << 20
 
 // AIClient is the contract the AI handler needs from a Claude-like
 // agent. Defined here (consumer side) so tests can inject fakes
-// without pulling in the Anthropic SDK.
+// without pulling in the Anthropic SDK. The demo-mode methods
+// (IsDemoMode / DemoResponse) let the handler short-circuit to
+// pre-canned data when no API key is configured or when the caller
+// passes ?demo=true.
 type AIClient interface {
 	GenerateTopicsPrompt(seed, platform string, count int) string
 	HumanizeScriptPrompt(script string) string
 	PostmortemPrompt(title, script, metrics, topicAngle string) string
 	Complete(ctx context.Context, prompt string) (string, error)
+	IsDemoMode(forceDemo bool) bool
+	DemoResponse(op agents.DemoOperation, seed int) (string, error)
 }
 
 // AIHandler exposes AI-assisted endpoints. The /ai/topics endpoint
@@ -97,6 +115,25 @@ type generateTopicsResponse struct {
 	Topics []generatedTopic `json:"topics"`
 }
 
+// isDemoRequest returns true when the caller asked for demo mode
+// via ?demo=true (or 1/yes). We accept a small set of truthy
+// spellings so the operator can use whichever form is convenient
+// from curl or the browser address bar.
+func isDemoRequest(c *gin.Context) bool {
+	switch strings.ToLower(c.Query(demoQueryParam)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// markDemoResponse stamps the X-Demo-Mode header on the response so
+// the frontend (and curl users) can tell a canned response apart
+// from a real Claude call.
+func markDemoResponse(c *gin.Context) {
+	c.Writer.Header().Set(demoModeHeader, "true")
+}
+
 // GenerateTopics — POST /ai/topics
 //
 // Body: {seed, platform, count}
@@ -128,6 +165,28 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 		// Hard cap to keep token usage bounded. Claude's prompt does not
 		// impose a limit and a runaway "give me 500" would burn budget.
 		req.Count = 20
+	}
+
+	// Demo mode: short-circuit to the pre-canned topics JSON. We
+	// build the prompt anyway (deterministic, no API call) so a
+	// future test that asserts on the prompt still sees it. The
+	// canned response is parsed through the same parser path as a
+	// real response so any regression in parseTopics surfaces here
+	// too.
+	demo := h.claude.IsDemoMode(isDemoRequest(c))
+	if demo {
+		raw, _ := h.claude.DemoResponse(agents.DemoOpTopics, len(req.Seed))
+		topics, err := parseTopics(raw)
+		if err != nil {
+			h.logger.Error("ai demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "AI demo response could not be parsed: " + err.Error(),
+			})
+			return
+		}
+		markDemoResponse(c)
+		c.JSON(http.StatusOK, generateTopicsResponse{Topics: topics})
+		return
 	}
 
 	prompt := h.claude.GenerateTopicsPrompt(req.Seed, req.Platform, req.Count)
@@ -249,6 +308,17 @@ func (h *AIHandler) HumanizeScript(c *gin.Context) {
 		return
 	}
 
+	// Demo mode: return one of the pre-canned humanized scripts.
+	// We seed the picker with the script length so the same input
+	// gets the same canned output during a demo (predictable for
+	// the operator) but varies across different inputs.
+	if h.claude.IsDemoMode(isDemoRequest(c)) {
+		raw, _ := h.claude.DemoResponse(agents.DemoOpHumanize, len(req.Script))
+		markDemoResponse(c)
+		c.JSON(http.StatusOK, humanizeResponse{Humanized: raw})
+		return
+	}
+
 	prompt := h.claude.HumanizeScriptPrompt(req.Script)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
@@ -313,13 +383,6 @@ type postmortemResponse struct {
 // for the prompt. Topic lookup failure is non-fatal: the prompt
 // degrades gracefully with an empty topic_angle.
 func (h *AIHandler) Postmortem(c *gin.Context) {
-	if h.db == nil {
-		// Defensive: the handler was wired without a DB. This should
-		// never happen in production (main.go always passes one), but
-		// failing fast here is better than panicking deep in a query.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "postmortem requires database access"})
-		return
-	}
 	var req postmortemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("invalid postmortem body", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -328,6 +391,27 @@ func (h *AIHandler) Postmortem(c *gin.Context) {
 	}
 	if req.ContentItemID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "content_item_id is required"})
+		return
+	}
+
+	// Demo mode: short-circuit to the canned postmortem JSON BEFORE
+	// any DB lookup. This means a demo works even if the ContentItem
+	// row does not exist locally, which is what the sales team wants
+	// when running on a freshly-cloned dev box. We still validate
+	// the request body so a malformed call still returns 400.
+	if h.claude.IsDemoMode(isDemoRequest(c)) {
+		raw, _ := h.claude.DemoResponse(agents.DemoOpPostmortem, int(req.ContentItemID))
+		structured := parsePostmortemStructured(raw)
+		markDemoResponse(c)
+		c.JSON(http.StatusOK, postmortemResponse{Report: raw, Structured: structured})
+		return
+	}
+
+	if h.db == nil {
+		// Defensive: the handler was wired without a DB. This should
+		// never happen in production (main.go always passes one), but
+		// failing fast here is better than panicking deep in a query.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "postmortem requires database access"})
 		return
 	}
 

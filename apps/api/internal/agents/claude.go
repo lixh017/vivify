@@ -86,12 +86,18 @@ func NewClaudeWithOptions(apiKey string, opts CompleteOptions) *Claude {
 // Anthropic SDK entirely and uses the provided function as the
 // completion source. Intended for tests; production code should
 // always use NewClaude. The override bypasses the API-key check.
+//
+// keyConfigured is set to true so tests that exercise the real
+// "Complete" path are NOT silently rerouted into demo mode. Tests
+// that specifically want to exercise the demo path should construct
+// the agent via NewClaude("") instead.
 func NewClaudeWithOverride(fn CompleteFunc) *Claude {
 	return &Claude{
-		override:  fn,
-		model:     DefaultModel,
-		maxTokens: DefaultMaxTokens,
-		timeout:   DefaultTimeout,
+		override:      fn,
+		keyConfigured: true,
+		model:         DefaultModel,
+		maxTokens:     DefaultMaxTokens,
+		timeout:       DefaultTimeout,
 	}
 }
 

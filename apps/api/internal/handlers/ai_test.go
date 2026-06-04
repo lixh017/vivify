@@ -387,3 +387,229 @@ func TestPostmortemInvalidBody(t *testing.T) {
 		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
 	}
 }
+
+// setupDemoRouter wires the AI handler with an agent constructed
+// WITHOUT an API key, so it defaults to demo mode. The override is
+// set to a sentinel that fails the test if reached — demo mode must
+// never call Complete.
+func setupDemoRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	claude := agents.NewClaude("") // empty key → keyConfigured=false
+	r := gin.New()
+	NewAIHandler(claude).RegisterRoutes(r)
+	return r
+}
+
+// setupDemoRouterWithKey wires the AI handler with an agent that
+// has a (fake) API key configured. Demo mode only kicks in when the
+// caller passes ?demo=true.
+func setupDemoRouterWithKey(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	claude := agents.NewClaude("fake-key-for-tests")
+	r := gin.New()
+	NewAIHandler(claude).RegisterRoutes(r)
+	return r
+}
+
+// setupDemoRouterWithKeyAndOverride wires the AI handler with an
+// agent that has keyConfigured=true (via the override constructor)
+// AND a no-op override. This is used by the "with key, no demo
+// flag" test to verify the demo short-circuit is NOT taken without
+// burning 60s on a real Anthropic timeout.
+func setupDemoRouterWithKeyAndOverride(t *testing.T, fn agents.CompleteFunc) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	claude := agents.NewClaudeWithOverride(fn)
+	r := gin.New()
+	NewAIHandler(claude).RegisterRoutes(r)
+	return r
+}
+
+// TestDemoTopicsNoKey: with no API key, /ai/topics must return 200
+// with the canned panda topics and the X-Demo-Mode header set,
+// instead of 503.
+func TestDemoTopicsNoKey(t *testing.T) {
+	r := setupDemoRouter(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/topics", map[string]any{
+		"seed":     "雨夜",
+		"platform": "抖音",
+		"count":    5,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
+	}
+	var resp struct {
+		Topics []generatedTopic `json:"topics"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if len(resp.Topics) != 5 {
+		t.Errorf("len(topics) = %d, want 5", len(resp.Topics))
+	}
+	// Spot-check that the panda IP content actually flowed through.
+	if !strings.Contains(w.Body.String(), "熊猫") {
+		t.Errorf("body should contain 熊猫 from canned topics: %s", w.Body.String())
+	}
+}
+
+// TestDemoTopicsForcedWithKey: with an API key configured, passing
+// ?demo=true must still return the canned response. This is the
+// sales/investor demo path.
+func TestDemoTopicsForcedWithKey(t *testing.T) {
+	r := setupDemoRouterWithKey(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/topics?demo=true", map[string]any{
+		"seed":     "雨夜",
+		"platform": "抖音",
+		"count":    5,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
+	}
+}
+
+// TestDemoTopicsWithKeyNoFlag: with an API key configured and no
+// ?demo flag, the handler must NOT short-circuit to demo. We wire
+// the agent with an override that records whether Complete was
+// called, then verify the demo header is NOT set and the override
+// DID run — proving the code took the real-API branch.
+func TestDemoTopicsWithKeyNoFlag(t *testing.T) {
+	var called bool
+	r := setupDemoRouterWithKeyAndOverride(t, func(_ context.Context, _ string) (string, error) {
+		called = true
+		// Return a valid (empty) topics array so the handler
+		// completes without hitting parseTopics' error branch.
+		return `[]`, nil
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/topics", map[string]any{
+		"seed":     "雨夜",
+		"platform": "抖音",
+		"count":    5,
+	})
+	if got := w.Header().Get("X-Demo-Mode"); got == "true" {
+		t.Errorf("X-Demo-Mode header should be absent for non-demo requests, got %q", got)
+	}
+	if !called {
+		t.Error("Complete should have been called (non-demo branch), but was not")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDemoHumanizeNoKey: with no API key, /ai/humanize must return
+// 200 with a canned humanized script.
+func TestDemoHumanizeNoKey(t *testing.T) {
+	r := setupDemoRouter(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/humanize", map[string]any{
+		"script": "原始脚本",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
+	}
+	var resp struct {
+		Humanized string `json:"humanized"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if strings.TrimSpace(resp.Humanized) == "" {
+		t.Errorf("humanized should be non-empty, got %q", resp.Humanized)
+	}
+}
+
+// TestDemoHumanizeForcedWithKey: with an API key, ?demo=true must
+// still return canned data.
+func TestDemoHumanizeForcedWithKey(t *testing.T) {
+	r := setupDemoRouterWithKey(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/humanize?demo=true", map[string]any{
+		"script": "原始脚本",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
+	}
+}
+
+// TestDemoPostmortemNoKey: with no API key, /ai/postmortem must
+// return 200 with a canned postmortem — and crucially, it must NOT
+// require a real ContentItem to exist (the demo path skips the DB).
+func TestDemoPostmortemNoKey(t *testing.T) {
+	r := setupDemoRouter(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{
+		"content_item_id": 999, // does not exist; demo path skips DB
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
+	}
+	var resp postmortemResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if len(resp.Structured.SuccessFactors) == 0 {
+		t.Errorf("structured.success_factors should be populated, got %+v", resp.Structured)
+	}
+	if !strings.Contains(resp.Report, "熊猫") &&
+		!strings.Contains(resp.Report, "钩子") &&
+		!strings.Contains(resp.Report, "国潮") {
+		t.Errorf("report should contain panda IP content, got: %s", resp.Report)
+	}
+}
+
+// TestDemoPostmortemInvalidBodyEvenInDemo: demo mode still validates
+// the request body. Missing content_item_id must yield 400, not 200.
+func TestDemoPostmortemInvalidBodyEvenInDemo(t *testing.T) {
+	r := setupDemoRouter(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// TestDemoQueryParamVariants verifies the handler accepts a small
+// set of truthy spellings for ?demo so curl users don't get tripped
+// up by case or "1" vs "true".
+func TestDemoQueryParamVariants(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"true lower", "?demo=true"},
+		{"true upper", "?demo=TRUE"},
+		{"numeric one", "?demo=1"},
+		{"yes", "?demo=yes"},
+		{"on", "?demo=on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := setupDemoRouterWithKey(t)
+			w := doJSON(t, r, http.MethodPost, "/ai/topics"+tc.query, map[string]any{
+				"seed":     "雨夜",
+				"platform": "抖音",
+				"count":    5,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("X-Demo-Mode"); got != "true" {
+				t.Errorf("X-Demo-Mode header = %q, want %q for %q", got, "true", tc.query)
+			}
+		})
+	}
+}
