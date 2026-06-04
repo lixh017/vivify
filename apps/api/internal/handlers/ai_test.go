@@ -142,3 +142,58 @@ var errAIUnavailable = &aiTestError{msg: "claude complete: no Anthropic API key 
 type aiTestError struct{ msg string }
 
 func (e *aiTestError) Error() string { return e.msg }
+
+// TestHumanizeScriptSuccess: override returns a rewritten script and
+// the handler must echo it back unchanged in the humanized field.
+func TestHumanizeScriptSuccess(t *testing.T) {
+	r := setupAITestRouter(t, func(_ context.Context, _ string) (string, error) {
+		return "这是改写后的版本...", nil
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/humanize", map[string]any{
+		"script": "原始 AI 痕迹明显的脚本内容",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Humanized string `json:"humanized"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if resp.Humanized != "这是改写后的版本..." {
+		t.Errorf("humanized = %q, want %q", resp.Humanized, "这是改写后的版本...")
+	}
+}
+
+// TestHumanizeScriptNoAPIKey: when the agent returns a "no API key"
+// error, the handler must surface 503 with a clear message.
+func TestHumanizeScriptNoAPIKey(t *testing.T) {
+	r := setupAITestRouter(t, func(_ context.Context, _ string) (string, error) {
+		return "", errAIUnavailable
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/humanize", map[string]any{
+		"script": "some script",
+	})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "API key") && !strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") {
+		t.Errorf("body should mention API key, got: %s", w.Body.String())
+	}
+}
+
+// TestHumanizeScriptInvalidBody: missing or empty script must yield
+// 400, not 500.
+func TestHumanizeScriptInvalidBody(t *testing.T) {
+	r := setupAITestRouter(t, func(_ context.Context, _ string) (string, error) {
+		t.Error("claude should not be called for invalid body")
+		return "", nil
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/humanize", map[string]any{
+		"script": "   ",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+}

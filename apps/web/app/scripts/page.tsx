@@ -26,6 +26,8 @@ export default function ScriptsPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [filterPlatform, setFilterPlatform] = useState<string>('')
+  const [humanizing, setHumanizing] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
   async function loadScripts() {
     setLoading(true)
@@ -64,6 +66,31 @@ export default function ScriptsPage() {
       setError(err instanceof Error ? err.message : '创建失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // handleHumanize asks Claude to rewrite the current script content
+  // in a more human, less "AI-tinted" voice. We confirm first because
+  // the action overwrites the textarea. Toast surfaces server failures
+  // (e.g. 503 when no API key is configured).
+  async function handleHumanize() {
+    const content = form.content.trim()
+    if (!content) {
+      setToast('请先输入脚本内容')
+      return
+    }
+    if (!window.confirm('会改写当前内容,继续?')) {
+      return
+    }
+    setHumanizing(true)
+    setToast(null)
+    try {
+      const res = await api.ai.humanize({ script: content })
+      setForm((prev) => ({ ...prev, content: res.humanized }))
+    } catch (err: unknown) {
+      setToast(err instanceof Error ? err.message : 'AI 拟人化失败')
+    } finally {
+      setHumanizing(false)
     }
   }
 
@@ -115,9 +142,20 @@ export default function ScriptsPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
-              内容 (Markdown)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-700">
+                内容 (Markdown)
+              </label>
+              <button
+                type="button"
+                onClick={handleHumanize}
+                disabled={humanizing || !form.content.trim()}
+                className="px-3 py-1 text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+                title="调用 Claude 把当前内容改写得不像 AI 写的"
+              >
+                {humanizing ? '拟人化中...' : 'AI 拟人化'}
+              </button>
+            </div>
             <textarea
               required
               value={form.content}
@@ -155,6 +193,12 @@ export default function ScriptsPage() {
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
           {error}
+        </div>
+      )}
+
+      {toast && (
+        <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded">
+          {toast}
         </div>
       )}
 

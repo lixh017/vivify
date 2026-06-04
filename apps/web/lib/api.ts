@@ -144,6 +144,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    humanize: (data: { script: string }) =>
+      request<{ humanized: string }>('/ai/humanize', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 }
 

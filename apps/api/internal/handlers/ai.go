@@ -31,6 +31,7 @@ const maxAIResultBytes = 1 << 20
 // without pulling in the Anthropic SDK.
 type AIClient interface {
 	GenerateTopicsPrompt(seed, platform string, count int) string
+	HumanizeScriptPrompt(script string) string
 	Complete(ctx context.Context, prompt string) (string, error)
 }
 
@@ -57,6 +58,7 @@ func NewAIHandler(claude AIClient, logger ...*slog.Logger) *AIHandler {
 // deconstruct viral) will be added here.
 func (h *AIHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/topics", h.GenerateTopics)
+	r.POST("/ai/humanize", h.HumanizeScript)
 }
 
 // generateTopicsRequest is the JSON body for POST /ai/topics.
@@ -201,4 +203,64 @@ func parseTopics(raw string) ([]generatedTopic, error) {
 		filtered = append(filtered, t)
 	}
 	return filtered, nil
+}
+
+// humanizeRequest is the JSON body for POST /ai/humanize. The
+// frontend sends the full script body and expects a rewritten
+// version that reads less like AI-generated text.
+type humanizeRequest struct {
+	Script string `json:"script"`
+}
+
+// humanizeResponse wraps the rewritten script. Wrapping (rather
+// than returning a bare string) leaves room for future metadata
+// (model version, original vs. rewritten diff).
+type humanizeResponse struct {
+	Humanized string `json:"humanized"`
+}
+
+// HumanizeScript — POST /ai/humanize
+//
+// Body: {script}
+// 200:  {humanized}
+// 400:  missing/empty script
+// 503:  Claude is not configured (no API key) or returned an error
+func (h *AIHandler) HumanizeScript(c *gin.Context) {
+	var req humanizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("invalid humanize body", "err", err.Error(), "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	req.Script = strings.TrimSpace(req.Script)
+	if req.Script == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "script is required"})
+		return
+	}
+
+	prompt := h.claude.HumanizeScriptPrompt(req.Script)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
+	defer cancel()
+
+	humanized, err := h.claude.Complete(ctx, prompt)
+	if err != nil {
+		// Distinguish "Claude is not configured" from generic failures
+		// so the frontend can show a useful hint. The agents package
+		// uses the literal phrase "no Anthropic API key" — match on it.
+		if strings.Contains(err.Error(), "API key") {
+			h.logger.Warn("humanize: no API key configured", "request_id", c.GetString("request_id"))
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
+			})
+			return
+		}
+		h.logger.Error("humanize complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI service failed: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, humanizeResponse{Humanized: humanized})
 }
