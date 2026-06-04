@@ -59,8 +59,15 @@ func Connect(dbPath string) (*gorm.DB, error) {
 
 // connectGorm 打开 GORM 连接的辅助函数。
 // 主要在测试中复用,生产环境应该通过 Connect。
+//
+// TranslateError 打开后,driver 层的约束错误会被翻译成可移植的
+// gorm sentinel(例如 SQLite/Postgres 的 unique 违例都映射到
+// gorm.ErrDuplicatedKey)。Phase 2 注册流程依赖这个翻译来处理
+// 邮箱重复时的 409 路径,而不必硬编码 SQLite 的英文错误字符串。
 func connectGorm(dbPath string) (*gorm.DB, error) {
-	gormDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	gormDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		TranslateError: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("gorm open: %w", err)
 	}

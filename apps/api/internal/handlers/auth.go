@@ -184,6 +184,28 @@ func toUserResponse(u models.User) userResponse {
 	}
 }
 
+// bindErrorClass classifies a body-binding error into a stable short
+// label so we can log the *kind* of failure (syntax vs type mismatch
+// vs EOF vs other) without echoing the raw err.Error() string, which
+// for a json.UnmarshalTypeError can include the offending JSON
+// fragment from the request body. The auth endpoints take an email
+// and a password; both are sensitive enough that we should not log
+// arbitrary fragments of either, even on a 400 path.
+func bindErrorClass(err error) string {
+	var syntaxErr *json.SyntaxError
+	var unmarshalErr *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syntaxErr):
+		return "json_syntax"
+	case errors.As(err, &unmarshalErr):
+		return "json_type_mismatch"
+	case errors.Is(err, io.EOF):
+		return "empty_body"
+	default:
+		return "validation"
+	}
+}
+
 // Login — POST /api/auth/login
 //
 // Body: {email, password}
@@ -199,7 +221,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Same parser-error hiding the other handlers use — see topics.go.
-		h.logger.Warn("invalid login body", "err", err.Error(), "request_id", c.GetString("request_id"))
+		// We log only the *class* of the binding error (json_syntax /
+		// json_type_mismatch / empty_body / validation) rather than
+		// err.Error(), because the raw bcrypt/json error string can
+		// include the raw value the client sent in the email or
+		// password fields (for a type mismatch, json.UnmarshalTypeError
+		// formats the offending JSON token). Even a 400-only leak of
+		// the typed-wrong password into the log is worth avoiding.
+		h.logger.Warn("invalid login body", "class", bindErrorClass(err), "request_id", c.GetString("request_id"))
 		msg := "invalid request body"
 		var syntaxErr *json.SyntaxError
 		var unmarshalErr *json.UnmarshalTypeError
@@ -279,7 +308,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("invalid register body", "err", err.Error(), "request_id", c.GetString("request_id"))
+		// Same scrubbing rationale as Login: log the class, not the raw
+		// err.Error(), so the password/email tokens never reach the log
+		// even on the 400 path.
+		h.logger.Warn("invalid register body", "class", bindErrorClass(err), "request_id", c.GetString("request_id"))
 		msg := "invalid request body"
 		var syntaxErr *json.SyntaxError
 		var unmarshalErr *json.UnmarshalTypeError
@@ -312,12 +344,38 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		PasswordHash: hash,
 		Name:         req.Name,
 	}
+	// Pre-insert dedup check: doing this here keeps the 409 path
+	// deterministic across drivers (SQLite, Postgres, MySQL) rather
+	// than coupling to a driver-specific error text. The unique index
+	// on users.email is still the source of truth — if two requests
+	// race past this check, the Create below will fail and we map the
+	// gorm.ErrDuplicatedKey return into the same 409. Either path lands
+	// in the same response, but the common case stays cheap and
+	// portable.
+	var existing models.User
+	dedupErr := h.db.WithContext(c.Request.Context()).
+		Select("id").
+		Where("email = ?", req.Email).
+		First(&existing).Error
+	switch {
+	case dedupErr == nil:
+		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+		return
+	case errors.Is(dedupErr, gorm.ErrRecordNotFound):
+		// happy path — proceed to Create
+	default:
+		h.logger.Error("register dedup lookup failed", "err", dedupErr.Error(), "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "registration failed"})
+		return
+	}
 	if err := h.db.WithContext(c.Request.Context()).Create(&u).Error; err != nil {
-		// Unique-email violation: gorm surfaces this as a wrapped error
-		// whose text contains "UNIQUE constraint failed: users.email".
-		// We match on the table+column rather than a sentinel type so
-		// we do not have to import the SQLite driver here.
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") && strings.Contains(err.Error(), "users.email") {
+		// Race-safety net: another request may have inserted the same
+		// email between our dedup lookup and this Create. gorm.Config
+		// has TranslateError enabled, so the driver-specific unique
+		// constraint violation is surfaced as the portable
+		// gorm.ErrDuplicatedKey sentinel — we no longer match on the
+		// SQLite-only "UNIQUE constraint failed" English text.
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
 			return
 		}

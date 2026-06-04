@@ -24,7 +24,14 @@ import (
 func newAuthTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	gormDB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	gormDB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		// Production uses TranslateError so the duplicate-email path
+		// in Register can rely on gorm.ErrDuplicatedKey instead of
+		// matching on the SQLite-specific "UNIQUE constraint failed"
+		// English text. Mirror that here so the test surface matches
+		// the production surface.
+		TranslateError: true,
+	})
 	if err != nil {
 		t.Fatalf("gorm open: %v", err)
 	}
@@ -309,6 +316,45 @@ func TestAuthRegisterDuplicateEmail(t *testing.T) {
 	second := doJSON(t, r, http.MethodPost, "/api/auth/register", body)
 	if second.Code != http.StatusConflict {
 		t.Fatalf("second register code = %d, want 409; body: %s", second.Code, second.Body.String())
+	}
+}
+
+// TestAuthRegisterEmailCaseInsensitive guards the case-normalization
+// path on the registration handler: the handler lowercases the email
+// before persistence, so two registrations that differ only in case
+// (FRANK@... vs frank@...) must collapse to one row, and the second
+// request must 409 instead of producing a duplicate user. This
+// complements the strict-equality dedup test by exercising the normal
+// way users actually type the same email twice — with different caps.
+func TestAuthRegisterEmailCaseInsensitive(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	t.Setenv("REGISTRATION_ENABLED", "true")
+
+	first := doJSON(t, r, http.MethodPost, "/api/auth/register", map[string]any{
+		"email":    "Mixed.Case@example.com",
+		"password": "hunter2",
+		"name":     "Mixed",
+	})
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first register code = %d, want 201; body: %s", first.Code, first.Body.String())
+	}
+	second := doJSON(t, r, http.MethodPost, "/api/auth/register", map[string]any{
+		"email":    "mixed.case@example.com",
+		"password": "different",
+		"name":     "Lower",
+	})
+	if second.Code != http.StatusConflict {
+		t.Fatalf("case-variant register code = %d, want 409; body: %s", second.Code, second.Body.String())
+	}
+	// And the same caps-variation must let us log in with the lowercased
+	// email — the canonical stored form. This catches a regression where
+	// the dedup path is fixed but the lookup path is not.
+	loginW := doJSON(t, r, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "MIXED.case@example.com",
+		"password": "hunter2",
+	})
+	if loginW.Code != http.StatusOK {
+		t.Errorf("login (uppercase variant) code = %d, want 200; body: %s", loginW.Code, loginW.Body.String())
 	}
 }
 

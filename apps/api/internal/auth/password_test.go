@@ -93,3 +93,51 @@ func TestHashIsNotDeterministic(t *testing.T) {
 		t.Errorf("two hashes of the same plaintext are identical: %q", h1)
 	}
 }
+
+// TestBcryptCostOverride exercises the configurable-cost path so operators
+// can verify the OPC_BCRYPT_COST knob is wired up end-to-end. We do not
+// drive it through the env var (CurrentBcryptCost caches the value on
+// first call and the production process resolves it once) because that
+// would leak state across the entire test binary; instead, we use the
+// SetBcryptCost helper, which is the same code path the env-var
+// resolution lands on internally.
+func TestBcryptCostOverride(t *testing.T) {
+	prev := CurrentBcryptCost()
+	t.Cleanup(func() { SetBcryptCost(prev) })
+
+	SetBcryptCost(6) // low enough to keep the test fast
+	if got := CurrentBcryptCost(); got != 6 {
+		t.Fatalf("CurrentBcryptCost after SetBcryptCost(6) = %d, want 6", got)
+	}
+	hash, err := HashPassword("hunter2")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	// We do not crack the hash to assert the cost; the contract is
+	// "uses the configured cost", and CurrentBcryptCost above is the
+	// declarative half of the assertion. We do confirm round-tripping
+	// still works at the lower cost so the operator override path is
+	// truly end-to-end.
+	if err := VerifyPassword(hash, "hunter2"); err != nil {
+		t.Errorf("VerifyPassword: %v", err)
+	}
+}
+
+// TestBcryptCostClamping covers the misconfiguration safety net: a cost
+// below MinCost falls back to DefaultCost, and a cost above MaxCost is
+// clamped to MaxCost. Without these guards a typo in OPC_BCRYPT_COST
+// could either weaken hashes silently or wedge the process behind a
+// multi-minute hash.
+func TestBcryptCostClamping(t *testing.T) {
+	prev := CurrentBcryptCost()
+	t.Cleanup(func() { SetBcryptCost(prev) })
+
+	SetBcryptCost(1) // below MinCost
+	if got := CurrentBcryptCost(); got < 4 {
+		t.Errorf("low-cost clamp: CurrentBcryptCost = %d, want >= bcrypt.MinCost (4)", got)
+	}
+	SetBcryptCost(99) // above MaxCost
+	if got := CurrentBcryptCost(); got > 31 {
+		t.Errorf("high-cost clamp: CurrentBcryptCost = %d, want <= bcrypt.MaxCost (31)", got)
+	}
+}
