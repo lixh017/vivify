@@ -4,10 +4,10 @@ import "time"
 
 type Script struct {
 	ID               uint      `gorm:"primaryKey" json:"id"`
-	TopicID          uint      `json:"topic_id"`
+	TopicID          uint      `gorm:"index" json:"topic_id"`
 	Title            string    `json:"title"`
 	Content          string    `gorm:"type:text" json:"content"`
-	Platform         string    `json:"platform"`
+	Platform         string    `gorm:"index" json:"platform"`
 	StyleFingerprint string    `gorm:"type:text" json:"style_fingerprint"` // JSON
 	Tags             string    `json:"tags"`
 	WordCount        int       `json:"word_count"`

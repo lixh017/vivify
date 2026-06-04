@@ -10,8 +10,6 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
 	"github.com/opc/api/internal/config"
@@ -23,9 +21,9 @@ import (
 func main() {
 	cfg := config.Load()
 
-	gormDB, err := gorm.Open(sqlite.Open(cfg.DBPath), &gorm.Config{})
+	gormDB, err := db.Connect(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("gorm open: %v", err)
+		log.Fatalf("db connect: %v", err)
 	}
 
 	if err := db.Migrate(gormDB); err != nil {
