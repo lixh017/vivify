@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"github.com/opc/api/internal/agents"
@@ -93,7 +92,11 @@ func main() {
 	// the middleware to avoid observing scrapes.
 	r.Use(middleware.Metrics())
 	r.Use(gin.Recovery())
-	r.Use(cors.Default())
+	// CORS is configured for cookie auth: AllowCredentials: true + a
+	// concrete Allow-Origin (not "*"). The list resolves
+	// NEXT_PUBLIC_API_URL with a loopback dev fallback — see
+	// internal/middleware/cors.go.
+	r.Use(middleware.CORS())
 
 	// /metrics exposes Prometheus text format. Mounted first so it
 	// never flows through the CORS/auth layers (and so a future
