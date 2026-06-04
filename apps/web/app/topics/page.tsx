@@ -5,7 +5,26 @@ import { api, type GeneratedTopic } from '@/lib/api'
 import type { Topic } from '@/lib/types'
 
 const PLATFORMS = ['抖音', '小红书', 'B站', '视频号', 'YouTube']
-const STATUSES = ['idea', 'writing', 'review', 'approved', 'archived']
+
+// Canonical status vocabulary, mirroring the backend's allowedStatuses set
+// (apps/api/internal/models/topic.go). The previous English placeholders
+// ("idea", "writing", ...) would fail backend validation, so we use the
+// Chinese values end-to-end.
+const STATUSES = ['想法', '评估', '待写', '撰写中', '已发布'] as const
+
+// The 4-column kanban view as specified in section 4.9.1 of the IP design.
+// Topics with status "撰写中" are bucketed under 待写 so the columns line up
+// with the spec's 想法 / 评估 / 待写 / 已发布 layout.
+const KANBAN_COLUMNS: { label: string; status: string; next: string | null }[] = [
+  { label: '想法', status: '想法', next: '评估' },
+  { label: '评估', status: '评估', next: '待写' },
+  { label: '待写', status: '待写', next: '撰写中' },
+  { label: '已发布', status: '已发布', next: null },
+]
+
+// "撰写中" doesn't have a dedicated column, so we surface it as a thin row
+// between 待写 and 已发布. It advances to 已发布 when the user moves it.
+const WRITING_STATUS = '撰写中'
 
 interface FormState {
   title: string
@@ -21,6 +40,63 @@ const EMPTY_FORM: FormState = {
   status: STATUSES[0],
 }
 
+type ViewMode = 'kanban' | 'list'
+
+interface KanbanCardProps {
+  topic: Topic
+  onMove: (id: number, nextStatus: string) => void
+  onStatusChange: (id: number, status: string) => void
+  moving: boolean
+}
+
+function KanbanCard({ topic, onMove, onStatusChange, moving }: KanbanCardProps) {
+  return (
+    <div
+      data-testid={`topic-card-${topic.id}`}
+      className="p-3 bg-white rounded-lg shadow-sm border border-gray-200 space-y-2"
+    >
+      <div className="font-semibold text-sm text-gray-900 leading-snug">
+        {topic.title}
+      </div>
+      {topic.angle && (
+        <p className="text-xs text-gray-600 line-clamp-3">{topic.angle}</p>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+          {topic.platform}
+        </span>
+        <select
+          aria-label="更改状态"
+          value={topic.status}
+          disabled={moving}
+          onChange={(e) => onStatusChange(topic.id, e.target.value)}
+          className="text-xs px-1 py-0.5 border border-gray-300 rounded bg-white"
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          // The dropdown above handles the generic case; this shortcut moves
+          // the card to the next column. The column definition supplies the
+          // next status so we don't hardcode ordering in the card itself.
+          const col = KANBAN_COLUMNS.find((c) => c.status === topic.status)
+          if (col?.next) onMove(topic.id, col.next)
+        }}
+        disabled={moving}
+        className="w-full text-xs px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded border border-gray-200 disabled:opacity-50"
+      >
+        →
+      </button>
+    </div>
+  )
+}
+
 export default function TopicsPage() {
   const [topics, setTopics] = useState<Topic[]>([])
   const [loading, setLoading] = useState(true)
@@ -30,6 +106,8 @@ export default function TopicsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [filterPlatform, setFilterPlatform] = useState<string>('')
   const [filterStatus, setFilterStatus] = useState<string>('')
+  const [view, setView] = useState<ViewMode>('kanban')
+  const [movingIds, setMovingIds] = useState<Set<number>>(new Set())
 
   // AI topic generation state. aiModalOpen drives a small inline
   // panel for seed/count; aiResult holds the latest batch; aiError
@@ -122,11 +200,78 @@ export default function TopicsPage() {
     setAiResult(null)
   }
 
+  // moveTopic updates a topic's status with optimistic UI. On failure
+  // we reload the list to reconcile. The `moving` Set keeps buttons
+  // disabled per-card so the user can't double-fire a transition.
+  async function moveTopic(id: number, nextStatus: string) {
+    if (movingIds.has(id)) return
+    setMovingIds((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    const previous = topics
+    setTopics((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, status: nextStatus } : t)),
+    )
+    try {
+      await api.topics.update(id, { status: nextStatus })
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '状态更新失败')
+      setTopics(previous)
+    } finally {
+      setMovingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
+  // Group topics by kanban column. 撰写中 lives in its own bucket so the
+  // user can still see and advance in-progress topics; the spec's 4 main
+  // columns remain the focus.
+  const grouped = KANBAN_COLUMNS.map((col) => ({
+    ...col,
+    topics: topics.filter((t) => t.status === col.status),
+  }))
+  const writingInProgress = topics.filter((t) => t.status === WRITING_STATUS)
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-3xl font-bold">📋 选题</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <div
+            role="tablist"
+            aria-label="视图切换"
+            className="inline-flex rounded-lg border border-gray-300 overflow-hidden"
+          >
+            <button
+              role="tab"
+              aria-selected={view === 'kanban'}
+              onClick={() => setView('kanban')}
+              className={`px-3 py-2 text-sm ${
+                view === 'kanban'
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              看板
+            </button>
+            <button
+              role="tab"
+              aria-selected={view === 'list'}
+              onClick={() => setView('list')}
+              className={`px-3 py-2 text-sm border-l border-gray-300 ${
+                view === 'list'
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              列表
+            </button>
+          </div>
           <button
             onClick={() => {
               setAiModalOpen((v) => !v)
@@ -350,6 +495,67 @@ export default function TopicsPage() {
         <div className="p-4 bg-white rounded-lg shadow text-gray-500 text-center">
           还没有数据
         </div>
+      ) : view === 'kanban' ? (
+        <div className="space-y-4">
+          <div
+            data-testid="kanban-board"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"
+          >
+            {grouped.map((col) => (
+              <div
+                key={col.status}
+                data-testid={`kanban-column-${col.label}`}
+                className="bg-gray-50 rounded-lg p-3 min-h-[200px] space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="font-semibold text-gray-800">{col.label}</h2>
+                  <span className="text-xs text-gray-500">
+                    {col.topics.length}
+                  </span>
+                </div>
+                {col.topics.length === 0 ? (
+                  <div className="text-xs text-gray-400 italic py-2">
+                    暂无
+                  </div>
+                ) : (
+                  col.topics.map((t) => (
+                    <KanbanCard
+                      key={t.id}
+                      topic={t}
+                      onMove={moveTopic}
+                      onStatusChange={moveTopic}
+                      moving={movingIds.has(t.id)}
+                    />
+                  ))
+                )}
+              </div>
+            ))}
+          </div>
+          {writingInProgress.length > 0 && (
+            <div
+              data-testid="kanban-writing"
+              className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-amber-900">撰写中</h2>
+                <span className="text-xs text-amber-700">
+                  {writingInProgress.length}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {writingInProgress.map((t) => (
+                  <KanbanCard
+                    key={t.id}
+                    topic={t}
+                    onMove={moveTopic}
+                    onStatusChange={moveTopic}
+                    moving={movingIds.has(t.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="space-y-3">
           {topics.map((t) => (
@@ -357,18 +563,28 @@ export default function TopicsPage() {
               key={t.id}
               className="p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
                   <h2 className="font-semibold text-lg">{t.title}</h2>
                   <p className="text-sm text-gray-600 mt-1">{t.angle}</p>
                 </div>
-                <div className="flex gap-2 text-xs">
+                <div className="flex gap-2 text-xs items-center flex-wrap">
                   <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
                     {t.platform}
                   </span>
-                  <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded">
-                    {t.status}
-                  </span>
+                  <select
+                    aria-label="更改状态"
+                    value={t.status}
+                    disabled={movingIds.has(t.id)}
+                    onChange={(e) => moveTopic(t.id, e.target.value)}
+                    className="px-2 py-1 border border-gray-300 rounded bg-white"
+                  >
+                    {STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>
