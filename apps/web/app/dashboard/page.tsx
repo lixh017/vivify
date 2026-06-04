@@ -113,40 +113,40 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">📊 表现</h1>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-2xl md:text-3xl font-bold">📊 表现</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
         >
           {showForm ? '取消' : '+ 新建记录'}
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="p-4 bg-white rounded-lg shadow">
-          <p className="text-sm text-gray-500">总记录数</p>
-          <p className="text-2xl font-bold mt-1">{totalCount}</p>
+      <div className="grid grid-cols-2 gap-3 md:gap-4">
+        <div className="p-3 md:p-4 bg-white rounded-lg shadow">
+          <p className="text-xs md:text-sm text-gray-500">总记录数</p>
+          <p className="text-xl md:text-2xl font-bold mt-1">{totalCount}</p>
         </div>
-        <div className="p-4 bg-white rounded-lg shadow">
-          <p className="text-sm text-gray-500">含平台链接</p>
-          <p className="text-2xl font-bold mt-1">{withUrlCount}</p>
+        <div className="p-3 md:p-4 bg-white rounded-lg shadow">
+          <p className="text-xs md:text-sm text-gray-500">含平台链接</p>
+          <p className="text-xl md:text-2xl font-bold mt-1">{withUrlCount}</p>
         </div>
       </div>
 
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
         >
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-gray-700">
               平台
             </label>
             <select
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -156,7 +156,7 @@ export default function DashboardPage() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-gray-700">
               平台链接
             </label>
             <input
@@ -166,11 +166,11 @@ export default function DashboardPage() {
                 setForm({ ...form, platform_url: e.target.value })
               }
               placeholder="https://..."
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-gray-700">
               表现数据
             </label>
             <textarea
@@ -179,14 +179,14 @@ export default function DashboardPage() {
                 setForm({ ...form, performance_metrics: e.target.value })
               }
               placeholder="例如: 播放 12k, 点赞 800, 评论 45"
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
               rows={3}
             />
           </div>
           <button
             type="submit"
             disabled={submitting}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -194,15 +194,15 @@ export default function DashboardPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="text-gray-600">Loading...</div>
+        <div className="text-sm text-gray-600">加载中…</div>
       ) : items.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-gray-500 text-center">
+        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
           还没有数据
         </div>
       ) : (
@@ -210,15 +210,15 @@ export default function DashboardPage() {
           {items.map((item) => (
             <div
               key={item.id}
-              className="p-4 bg-white rounded-lg shadow hover:shadow-md"
+              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <p className="text-sm text-gray-600">
+              <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs md:text-sm text-gray-600">
                     Script #{item.script_id}
                   </p>
                   {item.published_at && (
-                    <p className="text-xs text-green-600 mt-1">
+                    <p className="text-xs text-green-600 mt-1 break-all">
                       已发布: {item.published_at}
                     </p>
                   )}
@@ -235,19 +235,19 @@ export default function DashboardPage() {
                     <p className="text-xs text-gray-400 mt-1">无链接</p>
                   )}
                   {item.performance_metrics && (
-                    <p className="text-sm text-gray-700 mt-2 whitespace-pre-wrap">
+                    <p className="text-xs md:text-sm text-gray-700 mt-2 whitespace-pre-wrap">
                       {item.performance_metrics}
                     </p>
                   )}
                 </div>
-                <div className="flex flex-col items-end gap-2">
+                <div className="flex sm:flex-col items-start sm:items-end gap-2">
                   <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
                     {item.platform}
                   </span>
                   <button
                     onClick={() => handlePostmortem(item)}
                     disabled={postmortem?.item.id === item.id && postmortem.state.loading}
-                    className="px-3 py-1 text-xs bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+                    className="px-2.5 md:px-3 py-1 text-xs bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
                   >
                     {postmortem?.item.id === item.id && postmortem.state.loading
                       ? '复盘中...'
@@ -285,15 +285,15 @@ interface PostmortemModalProps {
 function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto"
+        className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="text-lg font-semibold">
+        <div className="p-3 sm:p-4 border-b flex items-center justify-between gap-2">
+          <h2 className="text-base sm:text-lg font-semibold">
             AI 复盘 #{item.id}
             <span className="ml-2 text-xs text-gray-500">({item.platform})</span>
           </h2>
@@ -306,9 +306,9 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="p-3 sm:p-4 space-y-4">
           {state.loading && (
-            <div className="text-gray-600">复盘中，请稍候...</div>
+            <div className="text-sm text-gray-600">复盘中，请稍候...</div>
           )}
 
           {state.error && (
@@ -333,10 +333,10 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
           )}
         </div>
 
-        <div className="p-4 border-t flex justify-end">
+        <div className="p-3 sm:p-4 border-t flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
           >
             关闭
           </button>

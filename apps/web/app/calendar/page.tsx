@@ -2,7 +2,7 @@
 
 import { useEffect, useState, FormEvent } from 'react'
 import { api } from '@/lib/api'
-import type { ContentItem } from '@/lib/types'
+import type { ContentItem, UpdateContentItemPatch } from '@/lib/types'
 
 const PLATFORMS = ['抖音', '小红书', 'B站', '视频号', 'YouTube']
 
@@ -50,8 +50,9 @@ function formatGroupLabel(key: string): string {
 // "YYYY-MM-DDTHH:MM" shape <input type="datetime-local"> expects. The
 // value is rendered in the browser's local timezone, which matches how
 // the user thinks about the date, and we convert back to UTC ISO when
-// submitting.
-function toLocalInput(iso: string | undefined): string {
+// submitting. Accepts null (cleared) and undefined (absent) and treats
+// both as "no value".
+function toLocalInput(iso: string | null | undefined): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (isNaN(d.getTime())) return ''
@@ -188,14 +189,10 @@ export default function CalendarPage() {
     setEditError(null)
 
     // The wire patch uses `null` to clear a nullable timestamp back
-    // to 待定; the typed `Partial<ContentItem>` doesn't model that, so
-    // we widen at the boundary. The Go handler's Update reads
-    // `scheduled_at: nil` to mean "clear", which is what we want.
-    const patch: {
-      platform: string
-      scheduled_at?: string | null
-      published_at?: string | null
-    } = {
+    // to 待定; UpdateContentItemPatch models that explicitly so we
+    // don't need a `Partial<ContentItem>` cast at the boundary. The Go
+    // handler's Update reads `scheduled_at: nil` to mean "clear".
+    const patch: UpdateContentItemPatch = {
       platform: editForm.platform,
     }
     if (editForm.scheduled_at) {
@@ -210,24 +207,23 @@ export default function CalendarPage() {
     }
 
     const previous = items
+    // Round-trip the wire shape directly so the optimistic state mirrors
+    // what the server will return — no `null` -> `undefined` coercion.
     setItems((prev) =>
       prev.map((it) =>
         it.id === item.id
           ? {
               ...it,
               platform: editForm.platform,
-              scheduled_at: patch.scheduled_at ?? undefined,
-              published_at: patch.published_at ?? undefined,
+              scheduled_at: patch.scheduled_at,
+              published_at: patch.published_at,
             }
           : it,
       ),
     )
 
     try {
-      const updated = await api.contentItems.update(
-        item.id,
-        patch as Partial<ContentItem>,
-      )
+      const updated = await api.contentItems.update(item.id, patch)
       setItems((prev) => prev.map((it) => (it.id === item.id ? updated : it)))
       setEditingId(null)
       setEditForm(EMPTY_EDIT)
@@ -258,11 +254,11 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">📅 日历</h1>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-2xl md:text-3xl font-bold">📅 日历</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
         >
           {showForm ? '取消' : '+ 新建排期'}
         </button>
@@ -271,16 +267,20 @@ export default function CalendarPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
         >
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="new-content-platform"
+              className="block text-xs md:text-sm font-medium text-gray-700"
+            >
               平台
             </label>
             <select
+              id="new-content-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -290,8 +290,12 @@ export default function CalendarPage() {
             </select>
           </div>
           <div>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
+            <label
+              htmlFor="new-content-pending"
+              className="flex items-center gap-2 text-xs md:text-sm text-gray-700"
+            >
               <input
+                id="new-content-pending"
                 type="checkbox"
                 checked={form.is_pending}
                 onChange={(e) =>
@@ -302,23 +306,27 @@ export default function CalendarPage() {
             </label>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label
+              htmlFor="new-content-scheduled-at"
+              className="block text-xs md:text-sm font-medium text-gray-700"
+            >
               排期时间
             </label>
             <input
+              id="new-content-scheduled-at"
               type="datetime-local"
               disabled={form.is_pending}
               value={form.scheduled_at}
               onChange={(e) =>
                 setForm({ ...form, scheduled_at: e.target.value })
               }
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded disabled:bg-gray-100"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded disabled:bg-gray-100"
             />
           </div>
           <button
             type="submit"
             disabled={submitting || (!form.is_pending && !form.scheduled_at)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -326,30 +334,30 @@ export default function CalendarPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
           {error}
         </div>
       )}
 
       {editError && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
           {editError}
         </div>
       )}
 
       {loading ? (
-        <div className="text-gray-600">Loading...</div>
+        <div className="text-sm text-gray-600">加载中…</div>
       ) : items.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-gray-500 text-center">
+        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
           还没有数据
         </div>
       ) : (
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
-              <h2 className="text-lg font-semibold text-gray-700">
+              <h2 className="text-base md:text-lg font-semibold text-gray-700">
                 {formatGroupLabel(key)}
-                <span className="ml-2 text-sm text-gray-400">
+                <span className="ml-2 text-xs md:text-sm text-gray-400">
                   ({groups[key].length})
                 </span>
               </h2>
@@ -361,20 +369,20 @@ export default function CalendarPage() {
                     <div
                       key={item.id}
                       data-testid={`content-item-${item.id}`}
-                      className="p-4 bg-white rounded-lg shadow hover:shadow-md"
+                      className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                          <p className="text-sm text-gray-600">
+                      <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs md:text-sm text-gray-600">
                             Script #{item.script_id}
                           </p>
                           {item.scheduled_at && (
-                            <p className="text-xs text-gray-400 mt-1">
+                            <p className="text-xs text-gray-400 mt-1 break-all">
                               {item.scheduled_at}
                             </p>
                           )}
                           {item.published_at && (
-                            <p className="text-xs text-green-600 mt-1">
+                            <p className="text-xs text-green-600 mt-1 break-all">
                               已发布: {item.published_at}
                             </p>
                           )}
@@ -389,7 +397,7 @@ export default function CalendarPage() {
                             </a>
                           )}
                         </div>
-                        <div className="flex flex-col items-end gap-2">
+                        <div className="flex sm:flex-col items-start sm:items-end gap-2">
                           <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
                             {item.platform}
                           </span>
@@ -409,10 +417,14 @@ export default function CalendarPage() {
                         <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-xs font-medium text-gray-600">
+                              <label
+                                htmlFor={`edit-scheduled-at-${item.id}`}
+                                className="block text-xs font-medium text-gray-600"
+                              >
                                 排期时间
                               </label>
                               <input
+                                id={`edit-scheduled-at-${item.id}`}
                                 type="datetime-local"
                                 value={editForm.scheduled_at}
                                 onChange={(e) =>
@@ -421,14 +433,18 @@ export default function CalendarPage() {
                                     scheduled_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-medium text-gray-600">
+                              <label
+                                htmlFor={`edit-published-at-${item.id}`}
+                                className="block text-xs font-medium text-gray-600"
+                              >
                                 发布时间
                               </label>
                               <input
+                                id={`edit-published-at-${item.id}`}
                                 type="datetime-local"
                                 value={editForm.published_at}
                                 onChange={(e) =>
@@ -437,14 +453,18 @@ export default function CalendarPage() {
                                     published_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-medium text-gray-600">
+                              <label
+                                htmlFor={`edit-platform-${item.id}`}
+                                className="block text-xs font-medium text-gray-600"
+                              >
                                 平台
                               </label>
                               <select
+                                id={`edit-platform-${item.id}`}
                                 value={editForm.platform}
                                 onChange={(e) =>
                                   setEditForm({
@@ -452,7 +472,7 @@ export default function CalendarPage() {
                                     platform: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
                               >
                                 {PLATFORMS.map((p) => (
                                   <option key={p} value={p}>
@@ -492,7 +512,7 @@ export default function CalendarPage() {
                               清空排期
                             </button>
                           </div>
-                          <div className="flex gap-2 justify-end">
+                          <div className="flex gap-2 justify-end flex-wrap">
                             <button
                               type="button"
                               onClick={cancelEdit}

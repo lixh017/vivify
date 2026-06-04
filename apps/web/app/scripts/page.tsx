@@ -96,23 +96,23 @@ export default function ScriptsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">📝 脚本</h1>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-2xl md:text-3xl font-bold">📝 脚本</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
         >
           {showForm ? '取消' : '+ 新建脚本'}
         </button>
       </div>
 
       <div className="flex gap-3 items-center">
-        <label className="text-sm text-gray-600">
+        <label className="text-xs md:text-sm text-gray-600 flex items-center gap-2">
           平台:
           <select
             value={filterPlatform}
             onChange={(e) => setFilterPlatform(e.target.value)}
-            className="ml-2 px-2 py-1 border border-gray-300 rounded"
+            className="px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
           >
             <option value="">全部</option>
             {PLATFORMS.map((p) => (
@@ -127,10 +127,10 @@ export default function ScriptsPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
         >
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-gray-700">
               标题
             </label>
             <input
@@ -138,19 +138,19 @@ export default function ScriptsPage() {
               required
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
             />
           </div>
           <div>
-            <div className="flex items-center justify-between">
-              <label className="block text-sm font-medium text-gray-700">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <label className="block text-xs md:text-sm font-medium text-gray-700">
                 内容 (Markdown)
               </label>
               <button
                 type="button"
                 onClick={handleHumanize}
                 disabled={humanizing || !form.content.trim()}
-                className="px-3 py-1 text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+                className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
                 title="调用 Claude 把当前内容改写得不像 AI 写的"
               >
                 {humanizing ? '拟人化中...' : 'AI 拟人化'}
@@ -160,18 +160,18 @@ export default function ScriptsPage() {
               required
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded font-mono text-sm"
+              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded font-mono text-xs md:text-sm"
               rows={10}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-gray-700">
               平台
             </label>
             <select
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -183,7 +183,7 @@ export default function ScriptsPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -191,21 +191,21 @@ export default function ScriptsPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
           {error}
         </div>
       )}
 
       {toast && (
-        <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded">
+        <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-sm">
           {toast}
         </div>
       )}
 
       {loading ? (
-        <div className="text-gray-600">Loading...</div>
+        <div className="text-sm text-gray-600">加载中…</div>
       ) : scripts.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-gray-500 text-center">
+        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
           还没有数据
         </div>
       ) : (
@@ -213,16 +213,18 @@ export default function ScriptsPage() {
           {scripts.map((s) => (
             <div
               key={s.id}
-              className="p-4 bg-white rounded-lg shadow hover:shadow-md"
+              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h2 className="font-semibold text-lg">{s.title}</h2>
-                  <p className="text-sm text-gray-600 mt-1 line-clamp-3 whitespace-pre-wrap font-mono">
+              <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-semibold text-sm md:text-base">
+                    {s.title}
+                  </h2>
+                  <p className="text-xs md:text-sm text-gray-600 mt-1 line-clamp-3 whitespace-pre-wrap font-mono">
                     {s.content}
                   </p>
                 </div>
-                <div className="flex gap-2 text-xs">
+                <div className="flex gap-2 text-xs flex-wrap">
                   <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
                     {s.platform}
                   </span>
