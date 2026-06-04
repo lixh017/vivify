@@ -54,7 +54,7 @@ export default function Home() {
         <p className="font-sans text-lg text-claude-body mt-6 max-w-2xl">
           选题、脚本、素材、知识库 — 一处安放,安静创作.
         </p>
-        <div className="mt-10 flex gap-3">
+        <div className="mt-10 flex gap-3 flex-wrap">
           <a
             href="/topics"
             className="inline-flex items-center justify-center bg-claude-coral text-claude-on-primary px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
@@ -64,6 +64,19 @@ export default function Home() {
           <ScrollToFeaturesLink className="inline-flex items-center justify-center border border-claude-hairline text-claude-ink px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-surface-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-coral focus-visible:ring-offset-2 active:translate-y-px transition-colors">
             了解更多
           </ScrollToFeaturesLink>
+          {/* "Try Demo" — drives the user straight into a no-signup
+              AI experience. Lands on /topics?demo=true which forces
+              every /ai/* call through canned data and surfaces the
+              demo badge. Styled as a tertiary surface chip so it
+              reads as opt-in rather than competing with the primary
+              entry. */}
+          <a
+            href="/topics?demo=true"
+            data-testid="cta-try-demo"
+            className="inline-flex items-center justify-center bg-claude-surface-card text-claude-ink border border-claude-hairline px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-accent-amber focus-visible:ring-offset-2 active:translate-y-px transition-colors"
+          >
+            🎭 Try Demo (no signup)
+          </a>
         </div>
       </section>
 

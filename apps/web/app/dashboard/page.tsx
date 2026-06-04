@@ -28,6 +28,7 @@ interface PostmortemModalState {
   report: string
   structured: PostmortemStructured | null
   error: string | null
+  demo: boolean
 }
 
 const INITIAL_MODAL: PostmortemModalState = {
@@ -35,6 +36,7 @@ const INITIAL_MODAL: PostmortemModalState = {
   report: '',
   structured: null,
   error: null,
+  demo: false,
 }
 
 export default function DashboardPage() {
@@ -102,7 +104,13 @@ export default function DashboardPage() {
       const res = await api.ai.postmortem(item.id)
       setPostmortem({
         item,
-        state: { loading: false, report: res.report, structured: res.structured, error: null },
+        state: {
+          loading: false,
+          report: res.data.report,
+          structured: res.data.structured,
+          error: null,
+          demo: res.demo,
+        },
       })
     } catch (err: unknown) {
       setPostmortem({
@@ -112,6 +120,7 @@ export default function DashboardPage() {
           report: '',
           structured: null,
           error: err instanceof Error ? err.message : 'AI 复盘失败',
+          demo: false,
         },
       })
     }
@@ -343,6 +352,14 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
         </div>
 
         <div className="p-3 sm:p-4 space-y-4">
+          {state.demo && !state.loading && !state.error && (
+            <div
+              data-testid="demo-badge-postmortem"
+              className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-claude-accent-amber/15 text-claude-accent-amber border border-claude-accent-amber/30"
+            >
+              🎭 Demo Mode (no API key)
+            </div>
+          )}
           {state.loading && (
             <div className="text-sm text-claude-body">复盘中，请稍候...</div>
           )}

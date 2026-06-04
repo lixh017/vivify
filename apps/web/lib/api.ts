@@ -51,6 +51,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// AiResult wraps an AI response with the demo-mode flag derived from
+// the X-Demo-Mode response header. UI surfaces can branch on `demo`
+// to render the "🎭 Demo Mode" badge. We intentionally keep this
+// shape narrow (data + demo only) so call sites stay terse.
+export type AiResult<T> = {
+  data: T
+  demo: boolean
+}
+
+// requestAi is request<T>'s sibling for /ai/* endpoints. It exposes
+// the X-Demo-Mode response header so the UI can show the demo badge
+// without re-parsing the response. The signature mirrors request<T>
+// (path + init) plus an optional `demo` flag that appends ?demo=true
+// when the caller wants to force demo mode regardless of server-side
+// API key state.
+async function requestAi<T>(
+  path: string,
+  init?: RequestInit,
+  opts?: { demo?: boolean },
+): Promise<AiResult<T>> {
+  const url = opts?.demo
+    ? `${path}${path.includes('?') ? '&' : '?'}demo=true`
+    : path
+  const res = await fetch(`${BASE}/api${url}`, {
+    ...init,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new ApiError(res.status, body, url)
+  }
+  const demo = res.headers.get('X-Demo-Mode') === 'true'
+  if (res.status === 204) {
+    return { data: undefined as unknown as T, demo }
+  }
+  const data = (await res.json()) as T
+  return { data, demo }
+}
+
+// AiCallOptions is the options bag accepted by every api.ai.* method.
+// Keeping it a single shared type makes it easy to add future flags
+// (e.g. `signal` for AbortController) without touching every call site.
+export type AiCallOptions = {
+  demo?: boolean
+}
+
 export type TopicListParams = {
   platform?: string
   status?: string
@@ -170,24 +217,37 @@ export const api = {
       }),
   },
   ai: {
-    generateTopics: (data: {
-      seed: string
-      platform: string
-      count: number
-    }) =>
-      request<{ topics: GeneratedTopic[] }>('/ai/topics', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    humanize: (data: { script: string }) =>
-      request<{ humanized: string }>('/ai/humanize', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    postmortem: (contentItemId: number) =>
-      request<{ report: string; structured: PostmortemStructured }>(
+    // generateTopics asks Claude for N differentiated topic ideas.
+    // When `options.demo` is true (or the server lacks an API key),
+    // the response carries the X-Demo-Mode header and we surface it
+    // via `AiResult.demo` so the UI can render the demo badge.
+    generateTopics: (
+      data: {
+        seed: string
+        platform: string
+        count: number
+      },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<{ topics: GeneratedTopic[] }>(
+        '/ai/topics',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
+    humanize: (data: { script: string }, options?: AiCallOptions) =>
+      requestAi<{ humanized: string }>(
+        '/ai/humanize',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
+    postmortem: (contentItemId: number, options?: AiCallOptions) =>
+      requestAi<{ report: string; structured: PostmortemStructured }>(
         '/ai/postmortem',
-        { method: 'POST', body: JSON.stringify({ content_item_id: contentItemId }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({ content_item_id: contentItemId }),
+        },
+        options,
       ),
   },
   auth: {

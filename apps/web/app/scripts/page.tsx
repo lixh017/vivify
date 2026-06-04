@@ -101,7 +101,10 @@ export default function ScriptsPage() {
     setToast(null)
     try {
       const res = await api.ai.humanize({ script: content })
-      setForm((prev) => ({ ...prev, content: res.humanized }))
+      setForm((prev) => ({ ...prev, content: res.data.humanized }))
+      if (res.demo) {
+        setToast('🎭 Demo Mode (no API key) — 已使用演示数据')
+      }
     } catch (err: unknown) {
       setToast(err instanceof Error ? err.message : 'AI 拟人化失败')
     } finally {

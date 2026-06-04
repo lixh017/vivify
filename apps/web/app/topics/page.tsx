@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, FormEvent } from 'react'
+import { useEffect, useState, FormEvent, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { api, type GeneratedTopic } from '@/lib/api'
 import type { Topic } from '@/lib/types'
 
@@ -138,6 +139,23 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
 }
 
 export default function TopicsPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-claude-body">加载中…</div>}>
+      <TopicsPageInner />
+    </Suspense>
+  )
+}
+
+function TopicsPageInner() {
+  // demoFromUrl reflects ?demo=true in the address bar. When true we
+  // force every /ai/* call through demo mode regardless of whether
+  // the server has an API key configured. The flag is read on mount
+  // and not reactive — sales demos navigate here directly, they don't
+  // toggle the URL mid-session.
+  const searchParams = useSearchParams()
+  const demoFromUrl =
+    (searchParams.get('demo') || '').toLowerCase() === 'true'
+
   const [topics, setTopics] = useState<Topic[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -158,6 +176,14 @@ export default function TopicsPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState<GeneratedTopic[] | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
+  // aiDemoActive is true when the latest AI response was served
+  // from canned data. The badge below the AI form surfaces this so
+  // the user understands they're looking at demo output. Source of
+  // truth is the X-Demo-Mode response header (read by requestAi in
+  // lib/api.ts) — we never derive it from the request flag because
+  // the server may serve a real response even when the user opted
+  // in (and vice versa, demo mode kicks in when no key is set).
+  const [aiDemoActive, setAiDemoActive] = useState(false)
 
   async function loadTopics() {
     setLoading(true)
@@ -201,6 +227,19 @@ export default function TopicsPage() {
     }
   }
 
+  // When the user lands via /topics?demo=true (the "Try AI Demo"
+  // CTA on the home page), open the AI panel so they immediately
+  // see where the demo lives. We don't auto-fire the request —
+  // the user still picks a seed — but the panel is visible and the
+  // demo badge will show on first response.
+  useEffect(() => {
+    if (demoFromUrl) {
+      setAiModalOpen(true)
+      if (!aiSeed) setAiSeed('熊猫日常')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoFromUrl])
+
   // handleGenerateTopics asks Claude for N differentiated topic
   // ideas and stores the result for rendering. aiModalOpen is left
   // open so the user can tweak the seed and try again.
@@ -212,13 +251,18 @@ export default function TopicsPage() {
     setAiLoading(true)
     setAiError(null)
     setAiResult(null)
+    setAiDemoActive(false)
     try {
-      const res = await api.ai.generateTopics({
-        seed: aiSeed.trim(),
-        platform: filterPlatform || PLATFORMS[0],
-        count: aiCount,
-      })
-      setAiResult(res.topics)
+      const res = await api.ai.generateTopics(
+        {
+          seed: aiSeed.trim(),
+          platform: filterPlatform || PLATFORMS[0],
+          count: aiCount,
+        },
+        { demo: demoFromUrl },
+      )
+      setAiResult(res.data.topics)
+      setAiDemoActive(res.demo)
     } catch (err: unknown) {
       setAiError(err instanceof Error ? err.message : 'AI 生成失败')
     } finally {
@@ -463,6 +507,14 @@ export default function TopicsPage() {
           {aiError && (
             <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-xs md:text-sm">
               {aiError}
+            </div>
+          )}
+          {aiDemoActive && !aiError && (
+            <div
+              data-testid="demo-badge-topics"
+              className="inline-flex items-center gap-1.5 px-2 py-1 text-xs md:text-sm font-medium rounded bg-claude-accent-amber/15 text-claude-accent-amber border border-claude-accent-amber/30"
+            >
+              🎭 {demoFromUrl ? 'Demo (you chose this)' : 'Demo Mode (no API key)'}
             </div>
           )}
           {aiResult && aiResult.length > 0 && (
