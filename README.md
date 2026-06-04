@@ -18,6 +18,20 @@ Phase 1：跑"熊猫"AI IP + 5 页面 web UI MVP（内部用）+ MCP server。
 ./scripts/dev.sh up
 ```
 
+### 构建选项
+
+后端默认 build 不包含 FTS5（知识库全文搜索）。要启用：
+
+```bash
+# 启用 FTS5（带搜索功能）
+cd apps/api && go build -tags fts5 -o opc-api ./cmd/server
+
+# 不启用 FTS5（更小的二进制，知识库只能按标题/类型过滤）
+cd apps/api && go build -o opc-api ./cmd/server
+```
+
+测试同理：`go test -tags fts5 ./...`
+
 ## 目录结构
 
 - `apps/web/` — Next.js 前端（5 个页面）
