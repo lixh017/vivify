@@ -20,6 +20,21 @@ const EMPTY_FORM: FormState = {
   is_pending: false,
 }
 
+// EditForm holds the in-flight edit for a single content item. We use
+// `null` for scheduled_at when the user wants to clear the date back
+// to 待定; a populated string holds the wire-format ISO timestamp.
+interface EditForm {
+  scheduled_at: string
+  published_at: string
+  platform: string
+}
+
+const EMPTY_EDIT: EditForm = {
+  scheduled_at: '',
+  published_at: '',
+  platform: PLATFORMS[0],
+}
+
 function groupKey(item: ContentItem): string {
   if (!item.scheduled_at) return PENDING_KEY
   // Take YYYY-MM-DD prefix from ISO timestamp.
@@ -31,6 +46,33 @@ function formatGroupLabel(key: string): string {
   return key
 }
 
+// toLocalInput converts an ISO timestamp (RFC3339) to the
+// "YYYY-MM-DDTHH:MM" shape <input type="datetime-local"> expects. The
+// value is rendered in the browser's local timezone, which matches how
+// the user thinks about the date, and we convert back to UTC ISO when
+// submitting.
+function toLocalInput(iso: string | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// nextMondayAtNine returns a Date for the next Monday at 09:00 local
+// time. If today is Monday, "next Monday" means the *following*
+// Monday — the spec calls for the user to be able to defer work, not
+// for "today, since today happens to be Monday" to be silently
+// selected.
+function nextMondayAtNine(): Date {
+  const d = new Date()
+  d.setHours(9, 0, 0, 0)
+  const day = d.getDay() // 0=Sun, 1=Mon, ...
+  const daysUntilMon = ((8 - day) % 7) || 7
+  d.setDate(d.getDate() + daysUntilMon)
+  return d
+}
+
 export default function CalendarPage() {
   const [items, setItems] = useState<ContentItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -38,6 +80,10 @@ export default function CalendarPage() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT)
+  const [savingIds, setSavingIds] = useState<Set<number>>(new Set())
+  const [editError, setEditError] = useState<string | null>(null)
 
   async function loadItems() {
     setLoading(true)
@@ -75,6 +121,125 @@ export default function CalendarPage() {
       setError(err instanceof Error ? err.message : '创建失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // startEdit populates the inline edit form from the current item.
+  // We prefill published_at as well so the user can adjust both at
+  // once, which is the common "I just published it, mark it" flow.
+  function startEdit(item: ContentItem) {
+    setEditingId(item.id)
+    setEditForm({
+      scheduled_at: toLocalInput(item.scheduled_at),
+      published_at: toLocalInput(item.published_at),
+      platform: item.platform || PLATFORMS[0],
+    })
+    setEditError(null)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditForm(EMPTY_EDIT)
+    setEditError(null)
+  }
+
+  // setQuickDate applies a preset (today at the current wall-clock
+  // time, or next Monday at 09:00) to the scheduled_at field. We don't
+  // auto-save — the user still has to hit "保存" — so accidental
+  // clicks never mutate backend state.
+  function setQuickDate(kind: 'today' | 'nextMonday' | 'clear' | 'markPublished') {
+    if (kind === 'clear') {
+      setEditForm((prev) => ({ ...prev, scheduled_at: '' }))
+      return
+    }
+    if (kind === 'markPublished') {
+      const now = new Date()
+      setEditForm((prev) => ({
+        ...prev,
+        published_at: toLocalInput(now.toISOString()),
+      }))
+      return
+    }
+    const target = kind === 'today' ? new Date() : nextMondayAtNine()
+    // For "today" we keep the current minute so the user doesn't
+    // see the time jump to 09:00 mid-day; for "next Monday" we pin
+    // to 09:00 because that is the conventional planning slot.
+    if (kind === 'nextMonday') {
+      target.setHours(9, 0, 0, 0)
+    }
+    setEditForm((prev) => ({
+      ...prev,
+      scheduled_at: toLocalInput(target.toISOString()),
+    }))
+  }
+
+  // saveEdit persists the inline form. Like moveTopic on the topics
+  // page, we optimistically update the in-memory list and roll back
+  // on failure. The patch object uses `null` to clear
+  // scheduled_at (back to 待定); an empty string for an absent
+  // datetime-local input is treated as "clear".
+  async function saveEdit(item: ContentItem) {
+    if (savingIds.has(item.id)) return
+    setSavingIds((prev) => {
+      const next = new Set(prev)
+      next.add(item.id)
+      return next
+    })
+    setEditError(null)
+
+    // The wire patch uses `null` to clear a nullable timestamp back
+    // to 待定; the typed `Partial<ContentItem>` doesn't model that, so
+    // we widen at the boundary. The Go handler's Update reads
+    // `scheduled_at: nil` to mean "clear", which is what we want.
+    const patch: {
+      platform: string
+      scheduled_at?: string | null
+      published_at?: string | null
+    } = {
+      platform: editForm.platform,
+    }
+    if (editForm.scheduled_at) {
+      patch.scheduled_at = new Date(editForm.scheduled_at).toISOString()
+    } else {
+      patch.scheduled_at = null
+    }
+    if (editForm.published_at) {
+      patch.published_at = new Date(editForm.published_at).toISOString()
+    } else {
+      patch.published_at = null
+    }
+
+    const previous = items
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === item.id
+          ? {
+              ...it,
+              platform: editForm.platform,
+              scheduled_at: patch.scheduled_at ?? undefined,
+              published_at: patch.published_at ?? undefined,
+            }
+          : it,
+      ),
+    )
+
+    try {
+      const updated = await api.contentItems.update(
+        item.id,
+        patch as Partial<ContentItem>,
+      )
+      setItems((prev) => prev.map((it) => (it.id === item.id ? updated : it)))
+      setEditingId(null)
+      setEditForm(EMPTY_EDIT)
+    } catch (err: unknown) {
+      setEditError(err instanceof Error ? err.message : '更新失败')
+      setItems(previous)
+    } finally {
+      setSavingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
     }
   }
 
@@ -166,6 +331,12 @@ export default function CalendarPage() {
         </div>
       )}
 
+      {editError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+          {editError}
+        </div>
+      )}
+
       {loading ? (
         <div className="text-gray-600">Loading...</div>
       ) : items.length === 0 ? (
@@ -183,43 +354,167 @@ export default function CalendarPage() {
                 </span>
               </h2>
               <div className="space-y-2">
-                {groups[key].map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-4 bg-white rounded-lg shadow hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <p className="text-sm text-gray-600">
-                          Script #{item.script_id}
-                        </p>
-                        {item.scheduled_at && (
-                          <p className="text-xs text-gray-400 mt-1">
-                            {item.scheduled_at}
+                {groups[key].map((item) => {
+                  const isEditing = editingId === item.id
+                  const isSaving = savingIds.has(item.id)
+                  return (
+                    <div
+                      key={item.id}
+                      data-testid={`content-item-${item.id}`}
+                      className="p-4 bg-white rounded-lg shadow hover:shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600">
+                            Script #{item.script_id}
                           </p>
-                        )}
-                        {item.published_at && (
-                          <p className="text-xs text-green-600 mt-1">
-                            已发布: {item.published_at}
-                          </p>
-                        )}
-                        {item.platform_url && (
-                          <a
-                            href={item.platform_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-blue-600 hover:underline block mt-1 break-all"
-                          >
-                            {item.platform_url}
-                          </a>
-                        )}
+                          {item.scheduled_at && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              {item.scheduled_at}
+                            </p>
+                          )}
+                          {item.published_at && (
+                            <p className="text-xs text-green-600 mt-1">
+                              已发布: {item.published_at}
+                            </p>
+                          )}
+                          {item.platform_url && (
+                            <a
+                              href={item.platform_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-blue-600 hover:underline block mt-1 break-all"
+                            >
+                              {item.platform_url}
+                            </a>
+                          )}
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                            {item.platform}
+                          </span>
+                          {!isEditing && (
+                            <button
+                              type="button"
+                              onClick={() => startEdit(item)}
+                              className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-200"
+                            >
+                              编辑
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
-                        {item.platform}
-                      </span>
+
+                      {isEditing && (
+                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600">
+                                排期时间
+                              </label>
+                              <input
+                                type="datetime-local"
+                                value={editForm.scheduled_at}
+                                onChange={(e) =>
+                                  setEditForm({
+                                    ...editForm,
+                                    scheduled_at: e.target.value,
+                                  })
+                                }
+                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600">
+                                发布时间
+                              </label>
+                              <input
+                                type="datetime-local"
+                                value={editForm.published_at}
+                                onChange={(e) =>
+                                  setEditForm({
+                                    ...editForm,
+                                    published_at: e.target.value,
+                                  })
+                                }
+                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600">
+                                平台
+                              </label>
+                              <select
+                                value={editForm.platform}
+                                onChange={(e) =>
+                                  setEditForm({
+                                    ...editForm,
+                                    platform: e.target.value,
+                                  })
+                                }
+                                className="mt-1 w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                              >
+                                {PLATFORMS.map((p) => (
+                                  <option key={p} value={p}>
+                                    {p}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setQuickDate('today')}
+                              className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded border border-amber-200 hover:bg-amber-100"
+                            >
+                              设为今天
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setQuickDate('nextMonday')}
+                              className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded border border-amber-200 hover:bg-amber-100"
+                            >
+                              设为下周一 09:00
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setQuickDate('markPublished')}
+                              className="px-2 py-1 text-xs bg-green-50 text-green-800 rounded border border-green-200 hover:bg-green-100"
+                            >
+                              标记为已发布
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setQuickDate('clear')}
+                              className="px-2 py-1 text-xs bg-gray-50 text-gray-700 rounded border border-gray-200 hover:bg-gray-100"
+                            >
+                              清空排期
+                            </button>
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              type="button"
+                              onClick={cancelEdit}
+                              disabled={isSaving}
+                              className="px-3 py-1 text-sm bg-white text-gray-700 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => saveEdit(item)}
+                              disabled={isSaving}
+                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded shadow hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {isSaving ? '保存中...' : '保存'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </section>
           ))}
