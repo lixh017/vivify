@@ -1,0 +1,17 @@
+bin/
+tmp/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.git/
+.idea/
+.vscode/
+*.md
+README.md
+Dockerfile
+.dockerignore
+*.log
+coverage.txt
+*.test
+*.out
