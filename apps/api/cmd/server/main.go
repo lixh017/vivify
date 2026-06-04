@@ -8,9 +8,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/agents"
 	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/db"
 	"github.com/opc/api/internal/handlers"
+	"github.com/opc/api/internal/mcp"
 )
 
 func main() {
@@ -24,6 +26,16 @@ func main() {
 	if err := db.Migrate(gormDB); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+
+	// Initialize the Claude agent. An empty API key is acceptable
+	// during development; Complete() will surface a clear error at
+	// call time.
+	claudeAgent := agents.NewClaude(cfg.AnthropicAPIKey)
+
+	// Construct the MCP server. stdIO listener starts in a later task;
+	// for now we just log the tool surface so operators can verify it.
+	mcpServer := mcp.NewServer(gormDB, claudeAgent)
+	log.Printf("🔌 MCP tools exposed: %v", mcpServer.ListTools())
 
 	r := gin.Default()
 	r.Use(handlers.RequestID())
