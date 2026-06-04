@@ -1,8 +1,13 @@
 'use client'
 
-import { useEffect, useState, FormEvent } from 'react'
+import { useEffect, useRef, useState, FormEvent } from 'react'
 import { api } from '@/lib/api'
 import type { KnowledgeDoc, IpTemplate } from '@/lib/types'
+import type {
+  ExportType,
+  ImportType,
+  ImportResult,
+} from '@/lib/api'
 
 const DOC_TYPES = ['SOP', '人物', '世界观', '历史', '其它']
 
@@ -61,6 +66,12 @@ export default function KnowledgePage() {
   const [ipForm, setIPForm] = useState<IPFormState>(EMPTY_IP_FORM)
   const [ipSubmitting, setIPSubmitting] = useState(false)
   const [selectedIP, setSelectedIP] = useState<string | null>(null)
+  const [importExportNotice, setImportExportNotice] = useState<
+    { kind: 'ok' | 'err'; text: string } | null
+  >(null)
+  const [importing, setImporting] = useState<ImportType | null>(null)
+  const importInputRef = useRef<HTMLInputElement | null>(null)
+  const pendingImportRef = useRef<ImportType | null>(null)
 
   async function loadDocs() {
     setLoading(true)
@@ -143,6 +154,75 @@ export default function KnowledgePage() {
   const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b))
   const ipDocs = selectedIP ? docsForIP(docs, selectedIP) : []
 
+  // Trigger a file download for the chosen export type. We navigate
+  // directly to /export?type=… so the server's Content-Disposition
+  // header does the right thing; doing this via fetch + Blob would
+  // require hand-rolling the same UX (filename, attachment header,
+  // URL revocation) for no upside.
+  function handleExport(type: ExportType) {
+    if (typeof window === 'undefined') return
+    window.location.href = api.importExport.exportURL(type)
+  }
+
+  function handleImportClick(type: ImportType) {
+    pendingImportRef.current = type
+    importInputRef.current?.click()
+  }
+
+  async function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    const type = pendingImportRef.current
+    // Always reset the input value so re-selecting the same file
+    // still fires onChange.
+    e.target.value = ''
+    pendingImportRef.current = null
+    if (!file || !type) return
+    setImporting(type)
+    setImportExportNotice(null)
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text)
+      const items = Array.isArray(parsed?.items) ? parsed.items : null
+      if (!items) {
+        setImportExportNotice({
+          kind: 'err',
+          text: '文件格式错误: 找不到 items 数组',
+        })
+        return
+      }
+      const result: ImportResult = await api.importExport.import(type, {
+        items,
+      })
+      const errCount = result.errors.length
+      if (errCount === 0) {
+        setImportExportNotice({
+          kind: 'ok',
+          text: `导入成功 ${result.imported} 条`,
+        })
+      } else {
+        const first = result.errors[0]
+        setImportExportNotice({
+          kind: 'err',
+          text: `部分失败: 成功 ${result.imported} 条, 失败 ${errCount} 条 (第 ${first.index + 1} 条: ${first.message})`,
+        })
+      }
+      // Reload whatever collection we just touched. The knowledge
+      // page only owns docs, but the import could have hit scripts
+      // or content items; those are owned by other pages so we keep
+      // the reload scoped to docs.
+      if (type === 'knowledge') {
+        await loadDocs()
+      }
+    } catch (err: unknown) {
+      setImportExportNotice({
+        kind: 'err',
+        text: err instanceof Error ? err.message : '导入失败',
+      })
+    } finally {
+      setImporting(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -197,6 +277,32 @@ export default function KnowledgePage() {
           {error}
         </div>
       )}
+
+      {importExportNotice && (
+        <div
+          className={
+            'p-3 rounded border ' +
+            (importExportNotice.kind === 'ok'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+              : 'bg-red-50 border-red-200 text-red-700')
+          }
+        >
+          {importExportNotice.text}
+        </div>
+      )}
+
+      <ImportExportPanel
+        importing={importing}
+        onExport={handleExport}
+        onImport={handleImportClick}
+      />
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportFileChange}
+      />
 
       {tab === 'docs' && (
         <DocsTab
@@ -551,5 +657,79 @@ function IpDetail({ ipType, docs, onBack }: IpDetailProps) {
         </div>
       )}
     </div>
+  )
+}
+
+interface ImportExportPanelProps {
+  importing: ImportType | null
+  onExport: (type: ExportType) => void
+  onImport: (type: ImportType) => void
+}
+
+const EXPORT_TYPES: { value: ExportType; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'topic', label: '选题' },
+  { value: 'script', label: '脚本' },
+  { value: 'content_item', label: '发布记录' },
+  { value: 'knowledge', label: '知识库' },
+]
+
+const IMPORT_TYPES: { value: ImportType; label: string }[] = [
+  { value: 'topic', label: '选题' },
+  { value: 'script', label: '脚本' },
+  { value: 'content_item', label: '发布记录' },
+  { value: 'knowledge', label: '知识库' },
+]
+
+// ImportExportPanel exposes the JSON-based bulk import/export from a
+// single place in the knowledge page. The same handlers work for
+// every entity; we deliberately keep the panel visible at the top so
+// a user doing a backup round-trip (export → download → re-import
+// elsewhere) does not have to dig through per-collection pages.
+function ImportExportPanel({
+  importing,
+  onExport,
+  onImport,
+}: ImportExportPanelProps) {
+  return (
+    <details className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+      <summary className="cursor-pointer text-sm font-medium text-gray-700 select-none">
+        ⚙️ 数据导入 / 导出 (JSON)
+      </summary>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">导出</h3>
+          <div className="flex flex-wrap gap-2">
+            {EXPORT_TYPES.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => onExport(t.value)}
+                className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded hover:bg-gray-100"
+              >
+                导出 {t.label}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">导入</h3>
+          <div className="flex flex-wrap gap-2">
+            {IMPORT_TYPES.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => onImport(t.value)}
+                disabled={importing !== null}
+                className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
+              >
+                {importing === t.value ? '导入中…' : `导入 ${t.label}`}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            导入文件需为导出的 JSON (包含 items 数组)。导入会跳过原 ID 并分配新主键。
+          </p>
+        </section>
+      </div>
+    </details>
   )
 }

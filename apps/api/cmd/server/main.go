@@ -139,6 +139,14 @@ func main() {
 	ipTemplateH := handlers.NewIPTemplateHandler(gormDB)
 	ipTemplateH.RegisterRoutes(r)
 
+	// JSON-based data import / export endpoints. Mounted last because
+	// they live at the top-level /export and /import paths and could
+	// not conflict with the per-entity CRUD routes. The handler is
+	// stateless beyond the *gorm.DB, so it is safe to construct after
+	// every other handler has registered.
+	importExportH := handlers.NewImportExportHandler(gormDB, nil)
+	importExportH.RegisterRoutes(r)
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           r,

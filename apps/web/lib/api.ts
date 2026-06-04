@@ -144,6 +144,22 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+  importExport: {
+    // exportURL returns the URL the browser should hit to download a
+    // JSON snapshot. We expose a URL instead of a Promise<Blob> because
+    // the download UX wants a same-window navigation rather than a
+    // fetch — the server sends Content-Disposition: attachment and the
+    // browser saves the file directly.
+    exportURL: (type: ExportType) => {
+      const t = type === 'all' ? 'all' : type
+      return `${BASE}/api/export?type=${t}`
+    },
+    import: (type: ImportType, body: { items: unknown[] }) =>
+      request<ImportResult>(`/import?type=${type}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+  },
   ai: {
     generateTopics: (data: {
       seed: string
@@ -182,3 +198,11 @@ export type PostmortemStructured = {
 }
 
 export { ApiError }
+
+export type ExportType = 'topic' | 'script' | 'content_item' | 'knowledge' | 'all'
+export type ImportType = 'topic' | 'script' | 'content_item' | 'knowledge'
+
+export interface ImportResult {
+  imported: number
+  errors: { index: number; message: string }[]
+}
