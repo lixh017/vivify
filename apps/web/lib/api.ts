@@ -134,6 +134,24 @@ export const api = {
   series: {
     list: () => request<{ items: { id: number; name: string }[] }>('/series'),
   },
+  ai: {
+    generateTopics: (data: {
+      seed: string
+      platform: string
+      count: number
+    }) =>
+      request<{ topics: GeneratedTopic[] }>('/ai/topics', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  },
+}
+
+export type GeneratedTopic = {
+  title: string
+  angle: string
+  expected_performance: string
+  hook: string
 }
 
 export { ApiError }

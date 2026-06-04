@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -32,10 +37,23 @@ func main() {
 	// call time.
 	claudeAgent := agents.NewClaude(cfg.AnthropicAPIKey)
 
-	// Construct the MCP server. stdIO listener starts in a later task;
-	// for now we just log the tool surface so operators can verify it.
-	mcpServer := mcp.NewServer(gormDB, claudeAgent)
+	// Construct the MCP server. The stdio transport blocks for the
+	// lifetime of the process, so we run it in its own goroutine and
+	// let SIGINT/SIGTERM cancel the context to shut it down cleanly.
+	mcpServer, err := mcp.NewServer(gormDB, claudeAgent)
+	if err != nil {
+		log.Fatalf("mcp server: %v", err)
+	}
 	log.Printf("🔌 MCP tools exposed: %v", mcpServer.ListTools())
+
+	mcpCtx, mcpCancel := context.WithCancel(context.Background())
+	defer mcpCancel()
+	go func() {
+		if err := mcpServer.ServeStdio(mcpCtx); err != nil {
+			log.Printf("mcp stdio: %v", err)
+			mcpCancel()
+		}
+	}()
 
 	r := gin.Default()
 	r.Use(handlers.RequestID())
@@ -58,8 +76,25 @@ func main() {
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	seriesH.RegisterRoutes(r)
 
-	log.Printf("🚀 OPC API listening on :%s", cfg.Port)
-	if err := r.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("server: %v", err)
+	aiH := handlers.NewAIHandler(claudeAgent)
+	aiH.RegisterRoutes(r)
+
+	httpSrv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
 	}
+	go func() {
+		log.Printf("🚀 OPC API listening on :%s", cfg.Port)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server: %v", err)
+		}
+	}()
+
+	// Block on SIGINT / SIGTERM, then cancel MCP, then drain HTTP.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	log.Printf("shutdown: signal received")
+	mcpCancel()
+	_ = httpSrv.Shutdown(context.Background())
 }
