@@ -239,25 +239,25 @@ export default function KnowledgePage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold">📚 知识库</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📚 知识库</h1>
         {tab === 'docs' ? (
           <button
             onClick={() => setShowForm((v) => !v)}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
           >
             {showForm ? '取消' : '+ 新建文档'}
           </button>
         ) : (
           <button
             onClick={() => setShowIPForm((v) => !v)}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-emerald-600 text-white rounded-lg shadow hover:bg-emerald-700"
+            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-success text-claude-on-primary rounded-md hover:opacity-90 transition-opacity"
           >
             {showIPForm ? '取消' : '+ 新建 IP'}
           </button>
         )}
       </div>
 
-      <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
+      <div className="flex gap-2 border-b border-claude-hairline overflow-x-auto">
         <button
           onClick={() => {
             setTab('docs')
@@ -266,8 +266,8 @@ export default function KnowledgePage() {
           className={
             'px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ' +
             (tab === 'docs'
-              ? 'border-blue-600 text-blue-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700')
+              ? 'border-claude-coral text-claude-coral'
+              : 'border-transparent text-claude-muted hover:text-claude-ink')
           }
         >
           文档
@@ -277,8 +277,8 @@ export default function KnowledgePage() {
           className={
             'px-3 md:px-4 py-2 text-xs md:text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ' +
             (tab === 'ip-templates'
-              ? 'border-emerald-600 text-emerald-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700')
+              ? 'border-claude-success text-claude-success'
+              : 'border-transparent text-claude-muted hover:text-claude-ink')
           }
         >
           IP 模板
@@ -286,7 +286,7 @@ export default function KnowledgePage() {
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
@@ -296,8 +296,8 @@ export default function KnowledgePage() {
           className={
             'p-3 rounded border text-sm ' +
             (importExportNotice.kind === 'ok'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-              : 'bg-red-50 border-red-200 text-red-700')
+              ? 'bg-claude-success/10 border-claude-success/30 text-claude-success'
+              : 'bg-claude-surface-card border-claude-error text-claude-error')
           }
         >
           {importExportNotice.text}
@@ -376,10 +376,10 @@ function DocsTab({
       {showForm && (
         <form
           onSubmit={onSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               标题
             </label>
             <input
@@ -388,11 +388,11 @@ function DocsTab({
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               路径
             </label>
             <input
@@ -402,18 +402,18 @@ function DocsTab({
               placeholder="例如: panda/characters/mama"
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               类型
             </label>
             <select
               data-testid="input-test-doc_type"
               value={form.doc_type}
               onChange={(e) => setForm({ ...form, doc_type: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
             >
               {DOC_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -423,7 +423,7 @@ function DocsTab({
             </select>
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               内容
             </label>
             <textarea
@@ -431,7 +431,7 @@ function DocsTab({
               data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               rows={6}
             />
           </div>
@@ -439,7 +439,7 @@ function DocsTab({
             type="submit"
             data-testid="btn-submit"
             disabled={submitting}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -447,18 +447,18 @@ function DocsTab({
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-600">加载中…</div>
+        <div className="text-sm text-claude-body">加载中…</div>
       ) : sortedKeys.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有数据
         </div>
       ) : (
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
-              <h2 className="text-base md:text-lg font-semibold text-gray-700">
+              <h2 className="text-base md:text-lg font-semibold text-claude-ink">
                 {key}
-                <span className="ml-2 text-xs md:text-sm text-gray-400">
+                <span className="ml-2 text-xs md:text-sm text-claude-muted-soft">
                   ({groups[key].length})
                 </span>
               </h2>
@@ -470,19 +470,19 @@ function DocsTab({
                       key={doc.id}
                       data-testid="list-item"
                       data-doc-id={doc.id}
-                      className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+                      className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-sm md:text-base">
+                          <h3 className="font-semibold text-sm md:text-base text-claude-ink">
                             {doc.title}
                           </h3>
                           {segments.length > 0 && (
-                            <p className="text-xs text-gray-500 mt-1 break-all">
+                            <p className="text-xs text-claude-muted mt-1 break-all">
                               {segments.map((seg, i) => (
                                 <span key={i}>
                                   {i > 0 && (
-                                    <span className="mx-1 text-gray-400">
+                                    <span className="mx-1 text-claude-muted-soft">
                                       /
                                     </span>
                                   )}
@@ -492,7 +492,7 @@ function DocsTab({
                             </p>
                           )}
                           {doc.content && (
-                            <p className="text-xs md:text-sm text-gray-600 mt-2 line-clamp-3 whitespace-pre-wrap">
+                            <p className="text-xs md:text-sm text-claude-body mt-2 line-clamp-3 whitespace-pre-wrap">
                               {doc.content}
                             </p>
                           )}
@@ -502,7 +502,7 @@ function DocsTab({
                           data-testid={`btn-delete-${doc.id}`}
                           onClick={() => onDelete(doc.id)}
                           aria-label="删除"
-                          className="shrink-0 px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                          className="shrink-0 px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                         >
                           删除
                         </button>
@@ -547,11 +547,11 @@ function IpTemplatesTab({
       {showForm && (
         <form
           onSubmit={onSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 IP 类型
               </label>
               <input
@@ -560,11 +560,11 @@ function IpTemplatesTab({
                 placeholder="例如: 数字人 / 古装 / 言情"
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               />
             </div>
             <div>
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 名称
               </label>
               <input
@@ -573,12 +573,12 @@ function IpTemplatesTab({
                 placeholder="例如: 云岚"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               简介 (可选)
             </label>
             <textarea
@@ -586,18 +586,18 @@ function IpTemplatesTab({
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
               }
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               rows={2}
             />
           </div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-claude-muted">
             提交后会自动创建 4 份标准文档：风格指南 / 语气调性 / 种子选题 /
             反面清单
           </div>
           <button
             type="submit"
             disabled={submitting}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg shadow hover:bg-emerald-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-success text-claude-on-primary rounded-md hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {submitting ? '提交中...' : '创建 IP 模板'}
           </button>
@@ -607,7 +607,7 @@ function IpTemplatesTab({
       {selectedIP ? (
         <IpDetail ipType={selectedIP} docs={ipDocs} onBack={() => onSelect(null)} />
       ) : templates.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有 IP 模板 — 点击右上角「+ 新建 IP」创建第一个
         </div>
       ) : (
@@ -616,20 +616,20 @@ function IpTemplatesTab({
             <button
               key={tpl.type}
               onClick={() => onSelect(tpl.type)}
-              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md text-left transition-shadow"
+              className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 text-left transition-colors"
             >
               <div className="flex items-baseline justify-between gap-2">
-                <h3 className="font-semibold text-sm md:text-base text-gray-900">
+                <h3 className="font-semibold text-sm md:text-base text-claude-ink">
                   {tpl.name}
                 </h3>
-                <span className="text-xs text-gray-500">{tpl.type}</span>
+                <span className="text-xs text-claude-muted">{tpl.type}</span>
               </div>
               {tpl.description && (
-                <p className="text-xs md:text-sm text-gray-600 mt-2 line-clamp-3">
+                <p className="text-xs md:text-sm text-claude-body mt-2 line-clamp-3">
                   {tpl.description}
                 </p>
               )}
-              <p className="text-xs text-gray-400 mt-2">
+              <p className="text-xs text-claude-muted-soft mt-2">
                 {tpl.doc_count} 份文档
               </p>
             </button>
@@ -652,19 +652,19 @@ function IpDetail({ ipType, docs, onBack }: IpDetailProps) {
       <div className="flex items-center gap-2 md:gap-3 flex-wrap">
         <button
           onClick={onBack}
-          className="px-3 py-1 text-xs md:text-sm bg-gray-100 rounded hover:bg-gray-200"
+          className="px-3 py-1 text-xs md:text-sm bg-claude-surface-soft rounded hover:bg-claude-surface-card text-claude-body border border-claude-hairline"
         >
           ← 返回
         </button>
-        <h2 className="text-lg md:text-xl font-semibold break-all">
+        <h2 className="text-lg md:text-xl font-semibold break-all text-claude-ink">
           {ipType}
         </h2>
-        <span className="text-xs md:text-sm text-gray-500">
+        <span className="text-xs md:text-sm text-claude-muted">
           ({docs.length} 份文档)
         </span>
       </div>
       {docs.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           这个 IP 还没有关联文档
         </div>
       ) : (
@@ -674,18 +674,18 @@ function IpDetail({ ipType, docs, onBack }: IpDetailProps) {
             return (
               <div
                 key={doc.id}
-                className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+                className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
               >
-                <h3 className="font-semibold text-sm md:text-base">
+                <h3 className="font-semibold text-sm md:text-base text-claude-ink">
                   {doc.title}
                 </h3>
                 {segments.length > 0 && (
-                  <p className="text-xs text-gray-500 mt-1 break-all">
+                  <p className="text-xs text-claude-muted mt-1 break-all">
                     {segments.join(' / ')}
                   </p>
                 )}
                 {doc.content && (
-                  <p className="text-xs md:text-sm text-gray-600 mt-2 whitespace-pre-wrap">
+                  <p className="text-xs md:text-sm text-claude-body mt-2 whitespace-pre-wrap">
                     {doc.content}
                   </p>
                 )}
@@ -730,13 +730,13 @@ function ImportExportPanel({
   onImport,
 }: ImportExportPanelProps) {
   return (
-    <details className="p-3 md:p-4 bg-gray-50 border border-gray-200 rounded-lg">
-      <summary className="cursor-pointer text-xs md:text-sm font-medium text-gray-700 select-none">
+    <details className="p-3 md:p-4 bg-claude-surface-soft border border-claude-hairline rounded-lg">
+      <summary className="cursor-pointer text-xs md:text-sm font-medium text-claude-ink select-none">
         ⚙️ 数据导入 / 导出 (JSON)
       </summary>
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
         <section>
-          <h3 className="text-xs md:text-sm font-semibold text-gray-700 mb-2">
+          <h3 className="text-xs md:text-sm font-semibold text-claude-ink mb-2">
             导出
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -744,7 +744,7 @@ function ImportExportPanel({
               <button
                 key={t.value}
                 onClick={() => onExport(t.value)}
-                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-white border border-gray-300 rounded hover:bg-gray-100"
+                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-claude-canvas border border-claude-hairline rounded hover:bg-claude-surface-card text-claude-body"
               >
                 导出 {t.label}
               </button>
@@ -752,7 +752,7 @@ function ImportExportPanel({
           </div>
         </section>
         <section>
-          <h3 className="text-xs md:text-sm font-semibold text-gray-700 mb-2">
+          <h3 className="text-xs md:text-sm font-semibold text-claude-ink mb-2">
             导入
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -761,13 +761,13 @@ function ImportExportPanel({
                 key={t.value}
                 onClick={() => onImport(t.value)}
                 disabled={importing !== null}
-                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
+                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-claude-canvas border border-claude-hairline rounded hover:bg-claude-surface-card text-claude-body disabled:opacity-50"
               >
                 {importing === t.value ? '导入中…' : `导入 ${t.label}`}
               </button>
             ))}
           </div>
-          <p className="mt-2 text-xs text-gray-500">
+          <p className="mt-2 text-xs text-claude-muted">
             导入文件需为导出的 JSON (包含 items 数组)。导入会跳过原 ID 并分配新主键。
           </p>
         </section>

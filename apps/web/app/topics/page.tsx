@@ -282,21 +282,21 @@ export default function TopicsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold">📋 选题</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📋 选题</h1>
         <div className="flex gap-2 flex-wrap">
           <div
             role="tablist"
             aria-label="视图切换"
-            className="inline-flex rounded-lg border border-gray-300 overflow-hidden"
+            className="inline-flex rounded-md border border-claude-hairline overflow-hidden"
           >
             <button
               role="tab"
               aria-selected={view === 'kanban'}
               onClick={() => setView('kanban')}
-              className={`px-2.5 md:px-3 py-1.5 md:py-2 text-xs md:text-sm ${
+              className={`px-2.5 md:px-3 py-1.5 md:py-2 text-xs md:text-sm transition-colors ${
                 view === 'kanban'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                  ? 'bg-claude-ink text-claude-on-dark'
+                  : 'bg-claude-canvas text-claude-body hover:bg-claude-surface-soft'
               }`}
             >
               看板
@@ -305,10 +305,10 @@ export default function TopicsPage() {
               role="tab"
               aria-selected={view === 'list'}
               onClick={() => setView('list')}
-              className={`px-2.5 md:px-3 py-1.5 md:py-2 text-xs md:text-sm border-l border-gray-300 ${
+              className={`px-2.5 md:px-3 py-1.5 md:py-2 text-xs md:text-sm border-l border-claude-hairline transition-colors ${
                 view === 'list'
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                  ? 'bg-claude-ink text-claude-on-dark'
+                  : 'bg-claude-canvas text-claude-body hover:bg-claude-surface-soft'
               }`}
             >
               列表
@@ -319,14 +319,14 @@ export default function TopicsPage() {
               setAiModalOpen((v) => !v)
               setAiError(null)
             }}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-purple-600 text-white rounded-lg shadow hover:bg-purple-700"
+            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded-md hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
             disabled={aiLoading}
           >
             {aiLoading ? '生成中...' : 'AI 生成'}
           </button>
           <button
             onClick={() => setShowForm((v) => !v)}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
           >
             {showForm ? '取消' : '+ 新建'}
           </button>
@@ -334,12 +334,12 @@ export default function TopicsPage() {
       </div>
 
       <div className="flex gap-3 items-center flex-wrap">
-        <label className="text-xs md:text-sm text-gray-600 flex items-center gap-2">
+        <label className="text-xs md:text-sm text-claude-body flex items-center gap-2">
           平台:
           <select
             value={filterPlatform}
             onChange={(e) => setFilterPlatform(e.target.value)}
-            className="px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+            className="px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
           >
             <option value="">全部</option>
             {PLATFORMS.map((p) => (
@@ -349,12 +349,12 @@ export default function TopicsPage() {
             ))}
           </select>
         </label>
-        <label className="text-xs md:text-sm text-gray-600 flex items-center gap-2">
+        <label className="text-xs md:text-sm text-claude-body flex items-center gap-2">
           状态:
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+            className="px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
           >
             <option value="">全部</option>
             {STATUSES.map((s) => (
@@ -369,14 +369,14 @@ export default function TopicsPage() {
       {aiModalOpen && (
         <div
           data-testid="ai-panel-topics"
-          className="p-3 md:p-4 bg-purple-50 border border-purple-200 rounded-lg space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card border border-claude-hairline rounded-lg space-y-3"
         >
-          <h2 className="font-semibold text-purple-900 text-sm md:text-base">
+          <h2 className="font-semibold text-claude-ink text-sm md:text-base">
             AI 选题生成
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2">
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 种子概念
               </label>
               <input
@@ -385,11 +385,11 @@ export default function TopicsPage() {
                 value={aiSeed}
                 onChange={(e) => setAiSeed(e.target.value)}
                 placeholder="例如：禅意解压、深夜emo、宅文化..."
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               />
             </div>
             <div>
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 数量
               </label>
               <input
@@ -399,12 +399,12 @@ export default function TopicsPage() {
                 max={20}
                 value={aiCount}
                 onChange={(e) => setAiCount(parseInt(e.target.value, 10) || 1)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               />
             </div>
           </div>
-          <div className="text-xs md:text-sm text-gray-600">
-            平台：<span className="font-medium">{filterPlatform || PLATFORMS[0]}</span>
+          <div className="text-xs md:text-sm text-claude-body">
+            平台：<span className="font-medium text-claude-ink">{filterPlatform || PLATFORMS[0]}</span>
             {filterPlatform ? '' : '（默认；可用上方筛选器切换）'}
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -413,7 +413,7 @@ export default function TopicsPage() {
               data-testid="btn-ai-topics"
               onClick={handleGenerateTopics}
               disabled={aiLoading}
-              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
             >
               {aiLoading ? '生成中...' : '生成'}
             </button>
@@ -423,39 +423,39 @@ export default function TopicsPage() {
                 setAiError(null)
                 setAiResult(null)
               }}
-              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-white text-gray-700 rounded shadow border border-gray-300 hover:bg-gray-50"
+              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-canvas text-claude-body rounded border border-claude-hairline hover:bg-claude-surface-soft"
             >
               关闭
             </button>
           </div>
           {aiError && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-xs md:text-sm">
+            <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-xs md:text-sm">
               {aiError}
             </div>
           )}
           {aiResult && aiResult.length > 0 && (
             <div className="space-y-2">
-              <div className="text-xs md:text-sm text-gray-600">
+              <div className="text-xs md:text-sm text-claude-body">
                 点击任意选题可填入下方创建表单：
               </div>
               {aiResult.map((t, i) => (
                 <button
                   key={`${t.title}-${i}`}
                   onClick={() => applyGeneratedTopic(t)}
-                  className="w-full text-left p-3 bg-white border border-purple-200 rounded shadow-sm hover:border-purple-500 hover:shadow"
+                  className="w-full text-left p-3 bg-claude-canvas border border-claude-hairline rounded hover:border-claude-coral hover:shadow-claude-soft transition-colors"
                 >
-                  <div className="font-semibold text-sm md:text-base text-gray-900">
+                  <div className="font-semibold text-sm md:text-base text-claude-ink">
                     {t.title}
                   </div>
-                  <div className="text-xs md:text-sm text-gray-700 mt-1">
+                  <div className="text-xs md:text-sm text-claude-body mt-1">
                     {t.angle}
                   </div>
-                  <div className="text-xs text-gray-500 mt-2">
-                    <span className="font-medium">预期：</span>
+                  <div className="text-xs text-claude-muted mt-2">
+                    <span className="font-medium text-claude-ink">预期：</span>
                     {t.expected_performance}
                   </div>
-                  <div className="text-xs text-gray-500">
-                    <span className="font-medium">钩子：</span>
+                  <div className="text-xs text-claude-muted">
+                    <span className="font-medium text-claude-ink">钩子：</span>
                     {t.hook}
                   </div>
                 </button>
@@ -468,10 +468,10 @@ export default function TopicsPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               标题
             </label>
             <input
@@ -480,11 +480,11 @@ export default function TopicsPage() {
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               角度
             </label>
             <textarea
@@ -492,20 +492,20 @@ export default function TopicsPage() {
               data-testid="input-test-angle"
               value={form.angle}
               onChange={(e) => setForm({ ...form, angle: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               rows={3}
             />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 平台
               </label>
               <select
                 data-testid="input-test-platform"
                 value={form.platform}
                 onChange={(e) => setForm({ ...form, platform: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
               >
                 {PLATFORMS.map((p) => (
                   <option key={p} value={p}>
@@ -515,14 +515,14 @@ export default function TopicsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 状态
               </label>
               <select
                 data-testid="input-test-status"
                 value={form.status}
                 onChange={(e) => setForm({ ...form, status: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
               >
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -536,7 +536,7 @@ export default function TopicsPage() {
             type="submit"
             data-testid="btn-submit"
             disabled={submitting}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -544,15 +544,15 @@ export default function TopicsPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-600">加载中…</div>
+        <div className="text-sm text-claude-body">加载中…</div>
       ) : topics.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有数据
         </div>
       ) : view === 'kanban' ? (
@@ -565,16 +565,16 @@ export default function TopicsPage() {
               <div
                 key={col.status}
                 data-testid={`kanban-column-${col.label}`}
-                className="bg-gray-50 rounded-lg p-3 min-h-[200px] space-y-2"
+                className="bg-claude-surface-soft rounded-lg p-3 min-h-[200px] space-y-2 border border-claude-hairline-soft"
               >
                 <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-gray-800">{col.label}</h2>
-                  <span className="text-xs text-gray-500">
+                  <h2 className="font-semibold text-claude-ink">{col.label}</h2>
+                  <span className="text-xs text-claude-muted">
                     {col.topics.length}
                   </span>
                 </div>
                 {col.topics.length === 0 ? (
-                  <div className="text-xs text-gray-400 italic py-2">
+                  <div className="text-xs text-claude-muted-soft italic py-2">
                     暂无
                   </div>
                 ) : (
@@ -595,11 +595,11 @@ export default function TopicsPage() {
           {writingInProgress.length > 0 && (
             <div
               data-testid="kanban-writing"
-              className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2"
+              className="bg-claude-accent-amber/10 border border-claude-accent-amber/30 rounded-lg p-3 space-y-2"
             >
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-amber-900">撰写中</h2>
-                <span className="text-xs text-amber-700">
+                <h2 className="font-semibold text-claude-accent-amber">撰写中</h2>
+                <span className="text-xs text-claude-accent-amber">
                   {writingInProgress.length}
                 </span>
               </div>
@@ -625,19 +625,19 @@ export default function TopicsPage() {
               key={t.id}
               data-testid="list-item"
               data-topic-id={t.id}
-              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+              className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
-                  <h2 className="font-semibold text-sm md:text-base">
+                  <h2 className="font-semibold text-sm md:text-base text-claude-ink">
                     {t.title}
                   </h2>
-                  <p className="text-xs md:text-sm text-gray-600 mt-1">
+                  <p className="text-xs md:text-sm text-claude-body mt-1">
                     {t.angle}
                   </p>
                 </div>
                 <div className="flex gap-2 text-xs items-center flex-wrap">
-                  <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
+                  <span className="px-2 py-1 bg-claude-canvas text-claude-coral rounded">
                     {t.platform}
                   </span>
                   <select
@@ -645,7 +645,7 @@ export default function TopicsPage() {
                     value={t.status}
                     disabled={movingIds.has(t.id)}
                     onChange={(e) => moveTopic(t.id, e.target.value)}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded bg-white"
+                    className="px-2 py-1 text-xs border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
                   >
                     {STATUSES.map((s) => (
                       <option key={s} value={s}>
@@ -659,7 +659,7 @@ export default function TopicsPage() {
                     onClick={() => deleteTopic(t.id)}
                     disabled={movingIds.has(t.id)}
                     aria-label="删除"
-                    className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 disabled:opacity-50"
+                    className="px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline disabled:opacity-50"
                   >
                     删除
                   </button>
