@@ -87,8 +87,21 @@ func main() {
 	r := gin.New()
 	r.Use(handlers.RequestID())
 	r.Use(middleware.RequestLogger())
+	// Metrics middleware runs before Recovery so a panic still
+	// increments the request counter (and the latency histogram
+	// observes the time-to-panic). /metrics itself is excluded by
+	// the middleware to avoid observing scrapes.
+	r.Use(middleware.Metrics())
 	r.Use(gin.Recovery())
 	r.Use(cors.Default())
+
+	// /metrics exposes Prometheus text format. Mounted first so it
+	// never flows through the CORS/auth layers (and so a future
+	// rewrite rule can't accidentally funnel scrape traffic
+	// through a JSON API). promhttp's default handler uses the
+	// package-level gatherer, which already includes the counters
+	// and histograms registered in internal/middleware.
+	r.GET("/metrics", handlers.MetricsHandler())
 
 	// /healthz is a liveness probe — process is up.
 	r.GET("/healthz", handlers.Health)
