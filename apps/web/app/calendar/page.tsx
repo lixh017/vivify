@@ -268,10 +268,10 @@ export default function CalendarPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold">📅 日历</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📅 日历</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
         >
           {showForm ? '取消' : '+ 新建排期'}
         </button>
@@ -280,12 +280,12 @@ export default function CalendarPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div>
             <label
               htmlFor="new-content-platform"
-              className="block text-xs md:text-sm font-medium text-gray-700"
+              className="block text-xs md:text-sm font-medium text-claude-ink"
             >
               平台
             </label>
@@ -293,7 +293,7 @@ export default function CalendarPage() {
               id="new-content-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -305,7 +305,7 @@ export default function CalendarPage() {
           <div>
             <label
               htmlFor="new-content-pending"
-              className="flex items-center gap-2 text-xs md:text-sm text-gray-700"
+              className="flex items-center gap-2 text-xs md:text-sm text-claude-ink"
             >
               <input
                 id="new-content-pending"
@@ -321,7 +321,7 @@ export default function CalendarPage() {
           <div>
             <label
               htmlFor="new-content-scheduled-at"
-              className="block text-xs md:text-sm font-medium text-gray-700"
+              className="block text-xs md:text-sm font-medium text-claude-ink"
             >
               排期时间
             </label>
@@ -333,13 +333,13 @@ export default function CalendarPage() {
               onChange={(e) =>
                 setForm({ ...form, scheduled_at: e.target.value })
               }
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded disabled:bg-gray-100"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink disabled:bg-claude-surface-soft focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <button
             type="submit"
             disabled={submitting || (!form.is_pending && !form.scheduled_at)}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -347,30 +347,30 @@ export default function CalendarPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
 
       {editError && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {editError}
         </div>
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-600">加载中…</div>
+        <div className="text-sm text-claude-body">加载中…</div>
       ) : items.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有数据
         </div>
       ) : (
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
-              <h2 className="text-base md:text-lg font-semibold text-gray-700">
+              <h2 className="text-base md:text-lg font-semibold text-claude-ink">
                 {formatGroupLabel(key)}
-                <span className="ml-2 text-xs md:text-sm text-gray-400">
+                <span className="ml-2 text-xs md:text-sm text-claude-muted-soft">
                   ({groups[key].length})
                 </span>
               </h2>
@@ -384,20 +384,20 @@ export default function CalendarPage() {
                       data-testid="list-item"
                       data-content-item-id={item.id}
                       data-content-item-test={`content-item-${item.id}`}
-                      className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+                      className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
                     >
                       <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs md:text-sm text-gray-600">
+                          <p className="text-xs md:text-sm text-claude-body">
                             Script #{item.script_id}
                           </p>
                           {item.scheduled_at && (
-                            <p className="text-xs text-gray-400 mt-1 break-all">
+                            <p className="text-xs text-claude-muted-soft mt-1 break-all">
                               {item.scheduled_at}
                             </p>
                           )}
                           {item.published_at && (
-                            <p className="text-xs text-green-600 mt-1 break-all">
+                            <p className="text-xs text-claude-success mt-1 break-all">
                               已发布: {item.published_at}
                             </p>
                           )}
@@ -406,21 +406,21 @@ export default function CalendarPage() {
                               href={item.platform_url}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-xs text-blue-600 hover:underline block mt-1 break-all"
+                              className="text-xs text-claude-coral hover:text-claude-coral-active hover:underline block mt-1 break-all"
                             >
                               {item.platform_url}
                             </a>
                           )}
                         </div>
                         <div className="flex sm:flex-col items-start sm:items-end gap-2">
-                          <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                          <span className="px-2 py-1 bg-claude-canvas text-claude-coral rounded text-xs">
                             {item.platform}
                           </span>
                           {!isEditing && (
                             <button
                               type="button"
                               onClick={() => startEdit(item)}
-                              className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded border border-gray-200"
+                              className="px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-body rounded border border-claude-hairline"
                             >
                               编辑
                             </button>
@@ -431,7 +431,7 @@ export default function CalendarPage() {
                               data-testid={`btn-delete-${item.id}`}
                               onClick={() => deleteItem(item.id)}
                               aria-label="删除"
-                              className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                              className="px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                             >
                               删除
                             </button>
@@ -440,12 +440,12 @@ export default function CalendarPage() {
                       </div>
 
                       {isEditing && (
-                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+                        <div className="mt-3 pt-3 border-t border-claude-hairline-soft space-y-3">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <div>
                               <label
                                 htmlFor={`edit-scheduled-at-${item.id}`}
-                                className="block text-xs font-medium text-gray-600"
+                                className="block text-xs font-medium text-claude-body"
                               >
                                 排期时间
                               </label>
@@ -459,13 +459,13 @@ export default function CalendarPage() {
                                     scheduled_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
                               />
                             </div>
                             <div>
                               <label
                                 htmlFor={`edit-published-at-${item.id}`}
-                                className="block text-xs font-medium text-gray-600"
+                                className="block text-xs font-medium text-claude-body"
                               >
                                 发布时间
                               </label>
@@ -479,13 +479,13 @@ export default function CalendarPage() {
                                     published_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
                               />
                             </div>
                             <div>
                               <label
                                 htmlFor={`edit-platform-${item.id}`}
-                                className="block text-xs font-medium text-gray-600"
+                                className="block text-xs font-medium text-claude-body"
                               >
                                 平台
                               </label>
@@ -498,7 +498,7 @@ export default function CalendarPage() {
                                     platform: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
                               >
                                 {PLATFORMS.map((p) => (
                                   <option key={p} value={p}>
@@ -512,28 +512,28 @@ export default function CalendarPage() {
                             <button
                               type="button"
                               onClick={() => setQuickDate('today')}
-                              className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded border border-amber-200 hover:bg-amber-100"
+                              className="px-2 py-1 text-xs bg-claude-surface-soft text-claude-ink rounded border border-claude-hairline hover:bg-claude-surface-card"
                             >
                               设为今天
                             </button>
                             <button
                               type="button"
                               onClick={() => setQuickDate('nextMonday')}
-                              className="px-2 py-1 text-xs bg-amber-50 text-amber-800 rounded border border-amber-200 hover:bg-amber-100"
+                              className="px-2 py-1 text-xs bg-claude-surface-soft text-claude-ink rounded border border-claude-hairline hover:bg-claude-surface-card"
                             >
                               设为下周一 09:00
                             </button>
                             <button
                               type="button"
                               onClick={() => setQuickDate('markPublished')}
-                              className="px-2 py-1 text-xs bg-green-50 text-green-800 rounded border border-green-200 hover:bg-green-100"
+                              className="px-2 py-1 text-xs bg-claude-success/10 text-claude-success rounded border border-claude-hairline hover:bg-claude-success/20"
                             >
                               标记为已发布
                             </button>
                             <button
                               type="button"
                               onClick={() => setQuickDate('clear')}
-                              className="px-2 py-1 text-xs bg-gray-50 text-gray-700 rounded border border-gray-200 hover:bg-gray-100"
+                              className="px-2 py-1 text-xs bg-claude-canvas text-claude-body rounded border border-claude-hairline hover:bg-claude-surface-soft"
                             >
                               清空排期
                             </button>
@@ -543,7 +543,7 @@ export default function CalendarPage() {
                               type="button"
                               onClick={cancelEdit}
                               disabled={isSaving}
-                              className="px-3 py-1 text-sm bg-white text-gray-700 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                              className="px-3 py-1 text-sm bg-claude-canvas text-claude-body rounded border border-claude-hairline hover:bg-claude-surface-soft disabled:opacity-50"
                             >
                               取消
                             </button>
@@ -551,7 +551,7 @@ export default function CalendarPage() {
                               type="button"
                               onClick={() => saveEdit(item)}
                               disabled={isSaving}
-                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded shadow hover:bg-blue-700 disabled:opacity-50"
+                              className="px-3 py-1 text-sm bg-claude-coral text-claude-on-primary rounded hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
                             >
                               {isSaving ? '保存中...' : '保存'}
                             </button>

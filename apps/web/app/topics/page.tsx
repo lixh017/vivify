@@ -54,16 +54,16 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
   return (
     <div
       data-testid={`topic-card-${topic.id}`}
-      className="p-3 bg-white rounded-lg shadow-sm border border-gray-200 space-y-2"
+      className="p-3 bg-claude-surface-card rounded-md border border-claude-hairline space-y-2"
     >
-      <div className="font-semibold text-sm text-gray-900 leading-snug">
+      <div className="font-semibold text-sm text-claude-ink leading-snug">
         {topic.title}
       </div>
       {topic.angle && (
-        <p className="text-xs text-gray-600 line-clamp-3">{topic.angle}</p>
+        <p className="text-xs text-claude-body line-clamp-3">{topic.angle}</p>
       )}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded">
+        <span className="text-xs px-2 py-0.5 bg-claude-canvas text-claude-coral rounded">
           {topic.platform}
         </span>
         <select
@@ -71,7 +71,7 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
           value={topic.status}
           disabled={moving}
           onChange={(e) => onStatusChange(topic.id, e.target.value)}
-          className="text-xs px-1 py-0.5 border border-gray-300 rounded bg-white"
+          className="text-xs px-1 py-0.5 border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
         >
           {STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -91,7 +91,7 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
             if (col?.next) onMove(topic.id, col.next)
           }}
           disabled={moving}
-          className="flex-1 text-xs px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded border border-gray-200 disabled:opacity-50"
+          className="flex-1 text-xs px-2 py-1 bg-claude-canvas hover:bg-claude-surface-soft text-claude-body rounded border border-claude-hairline disabled:opacity-50"
         >
           →
         </button>
@@ -102,7 +102,7 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
             onClick={() => onDelete(topic.id)}
             disabled={moving}
             aria-label="删除"
-            className="text-xs px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 disabled:opacity-50"
+            className="text-xs px-2 py-1 bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline disabled:opacity-50"
           >
             删除
           </button>

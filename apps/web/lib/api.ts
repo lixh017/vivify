@@ -30,6 +30,14 @@ class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}/api${path}`, {
     ...init,
+    // credentials: 'include' is defensively explicit. In the current
+    // same-origin setup (Next.js rewrites /api/* into the Go backend)
+    // cookies are sent because the request shares an origin with the
+    // page. If the API ever moves to a different origin or subdomain
+    // (the CORS scenario), `include` is what tells the browser to
+    // attach the opc_session cookie. Spec calls for cookie-based auth,
+    // so we set it now rather than discover a regression later.
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!res.ok) {

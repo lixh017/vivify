@@ -108,7 +108,7 @@
     font-size: 18px;
     font-weight: 500;
     line-height: 1.4;
-    color: #252523;
+    color: var(--claude-ink);
   }
 
   /* Code text — JetBrains Mono */

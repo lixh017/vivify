@@ -127,40 +127,40 @@ export default function DashboardPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold">📊 表现</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📊 表现</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
         >
           {showForm ? '取消' : '+ 新建记录'}
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:gap-4">
-        <div className="p-3 md:p-4 bg-white rounded-lg shadow">
-          <p className="text-xs md:text-sm text-gray-500">总记录数</p>
-          <p className="text-xl md:text-2xl font-bold mt-1">{totalCount}</p>
+        <div className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline">
+          <p className="text-xs md:text-sm text-claude-muted">总记录数</p>
+          <p className="text-xl md:text-2xl font-bold mt-1 text-claude-ink">{totalCount}</p>
         </div>
-        <div className="p-3 md:p-4 bg-white rounded-lg shadow">
-          <p className="text-xs md:text-sm text-gray-500">含平台链接</p>
-          <p className="text-xl md:text-2xl font-bold mt-1">{withUrlCount}</p>
+        <div className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline">
+          <p className="text-xs md:text-sm text-claude-muted">含平台链接</p>
+          <p className="text-xl md:text-2xl font-bold mt-1 text-claude-ink">{withUrlCount}</p>
         </div>
       </div>
 
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               平台
             </label>
             <select
               data-testid="input-test-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -170,7 +170,7 @@ export default function DashboardPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               平台链接
             </label>
             <input
@@ -181,11 +181,11 @@ export default function DashboardPage() {
                 setForm({ ...form, platform_url: e.target.value })
               }
               placeholder="https://..."
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               表现数据
             </label>
             <textarea
@@ -195,7 +195,7 @@ export default function DashboardPage() {
                 setForm({ ...form, performance_metrics: e.target.value })
               }
               placeholder="例如: 播放 12k, 点赞 800, 评论 45"
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
               rows={3}
             />
           </div>
@@ -203,7 +203,7 @@ export default function DashboardPage() {
             type="submit"
             data-testid="btn-submit"
             disabled={submitting}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -211,15 +211,15 @@ export default function DashboardPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-600">加载中…</div>
+        <div className="text-sm text-claude-body">加载中…</div>
       ) : items.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有数据
         </div>
       ) : (
@@ -229,15 +229,15 @@ export default function DashboardPage() {
               key={item.id}
               data-testid="list-item"
               data-content-item-id={item.id}
-              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+              className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs md:text-sm text-gray-600">
+                  <p className="text-xs md:text-sm text-claude-body">
                     Script #{item.script_id}
                   </p>
                   {item.published_at && (
-                    <p className="text-xs text-green-600 mt-1 break-all">
+                    <p className="text-xs text-claude-success mt-1 break-all">
                       已发布: {item.published_at}
                     </p>
                   )}
@@ -246,28 +246,28 @@ export default function DashboardPage() {
                       href={item.platform_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-xs text-blue-600 hover:underline block mt-1 break-all"
+                      className="text-xs text-claude-coral hover:text-claude-coral-active hover:underline block mt-1 break-all"
                     >
                       {item.platform_url}
                     </a>
                   ) : (
-                    <p className="text-xs text-gray-400 mt-1">无链接</p>
+                    <p className="text-xs text-claude-muted-soft mt-1">无链接</p>
                   )}
                   {item.performance_metrics && (
-                    <p className="text-xs md:text-sm text-gray-700 mt-2 whitespace-pre-wrap">
+                    <p className="text-xs md:text-sm text-claude-ink mt-2 whitespace-pre-wrap">
                       {item.performance_metrics}
                     </p>
                   )}
                 </div>
                 <div className="flex sm:flex-col items-start sm:items-end gap-2">
-                  <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">
+                  <span className="px-2 py-1 bg-claude-canvas text-claude-coral rounded text-xs">
                     {item.platform}
                   </span>
                   <button
                     data-testid="btn-ai-postmortem"
                     onClick={() => handlePostmortem(item)}
                     disabled={postmortem?.item.id === item.id && postmortem.state.loading}
-                    className="px-2.5 md:px-3 py-1 text-xs bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+                    className="px-2.5 md:px-3 py-1 text-xs bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
                   >
                     {postmortem?.item.id === item.id && postmortem.state.loading
                       ? '复盘中...'
@@ -278,7 +278,7 @@ export default function DashboardPage() {
                     data-testid={`btn-delete-${item.id}`}
                     onClick={() => deleteItem(item.id)}
                     aria-label="删除"
-                    className="px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                    className="px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                   >
                     删除
                   </button>
@@ -318,18 +318,18 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto"
+        className="bg-claude-canvas rounded-lg border border-claude-hairline shadow-claude-soft max-w-2xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-3 sm:p-4 border-b flex items-center justify-between gap-2">
-          <h2 className="text-base sm:text-lg font-semibold">
+        <div className="p-3 sm:p-4 border-b border-claude-hairline flex items-center justify-between gap-2">
+          <h2 className="text-base sm:text-lg font-semibold text-claude-ink">
             AI 复盘 #{item.id}
-            <span className="ml-2 text-xs text-gray-500">({item.platform})</span>
+            <span className="ml-2 text-xs text-claude-muted">({item.platform})</span>
           </h2>
           <button
             onClick={onClose}
             aria-label="关闭"
-            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+            className="text-claude-muted-soft hover:text-claude-ink text-2xl leading-none"
           >
             ×
           </button>
@@ -337,11 +337,11 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
 
         <div className="p-3 sm:p-4 space-y-4">
           {state.loading && (
-            <div className="text-sm text-gray-600">复盘中，请稍候...</div>
+            <div className="text-sm text-claude-body">复盘中，请稍候...</div>
           )}
 
           {state.error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+            <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
               {state.error}
             </div>
           )}
@@ -352,20 +352,20 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
 
           {!state.loading && !state.error && state.report && (
             <details className="text-sm">
-              <summary className="cursor-pointer text-gray-600 hover:text-gray-800">
+              <summary className="cursor-pointer text-claude-body hover:text-claude-ink">
                 查看原始报告
               </summary>
-              <pre className="mt-2 p-3 bg-gray-50 rounded whitespace-pre-wrap break-words text-xs">
+              <pre className="mt-2 p-3 bg-claude-surface-card rounded whitespace-pre-wrap break-words text-xs text-claude-ink">
                 {state.report}
               </pre>
             </details>
           )}
         </div>
 
-        <div className="p-3 sm:p-4 border-t flex justify-end">
+        <div className="p-3 sm:p-4 border-t border-claude-hairline flex justify-end">
           <button
             onClick={onClose}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-surface-card text-claude-ink rounded hover:bg-claude-surface-soft border border-claude-hairline"
           >
             关闭
           </button>
@@ -385,10 +385,10 @@ interface PostmortemStructuredViewProps {
 function PostmortemStructuredView({ structured }: PostmortemStructuredViewProps) {
   return (
     <div className="space-y-3">
-      <BucketSection title="成功要素" items={structured.success_factors} accent="bg-emerald-50 text-emerald-800" />
-      <BucketSection title="可复用模式" items={structured.reusable_patterns} accent="bg-blue-50 text-blue-800" />
-      <BucketSection title="数据洞察" items={structured.insights} accent="bg-amber-50 text-amber-800" />
-      <BucketSection title="改进建议" items={structured.suggestions} accent="bg-purple-50 text-purple-800" />
+      <BucketSection title="成功要素" items={structured.success_factors} accent="bg-claude-success/10 text-claude-success" />
+      <BucketSection title="可复用模式" items={structured.reusable_patterns} accent="bg-claude-accent-teal/10 text-claude-accent-teal" />
+      <BucketSection title="数据洞察" items={structured.insights} accent="bg-claude-accent-amber/10 text-claude-accent-amber" />
+      <BucketSection title="改进建议" items={structured.suggestions} accent="bg-claude-coral/10 text-claude-coral" />
     </div>
   )
 }
@@ -406,7 +406,7 @@ function BucketSection({ title, items, accent }: BucketSectionProps) {
       <h3 className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${accent}`}>
         {title}
       </h3>
-      <ul className="mt-2 space-y-1 text-sm text-gray-800 list-disc list-inside">
+      <ul className="mt-2 space-y-1 text-sm text-claude-ink list-disc list-inside">
         {items.map((it, i) => (
           <li key={i}>{it}</li>
         ))}

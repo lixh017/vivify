@@ -112,22 +112,22 @@ export default function ScriptsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold">📝 脚本</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📝 脚本</h1>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700"
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
         >
           {showForm ? '取消' : '+ 新建脚本'}
         </button>
       </div>
 
       <div className="flex gap-3 items-center">
-        <label className="text-xs md:text-sm text-gray-600 flex items-center gap-2">
+        <label className="text-xs md:text-sm text-claude-body flex items-center gap-2">
           平台:
           <select
             value={filterPlatform}
             onChange={(e) => setFilterPlatform(e.target.value)}
-            className="px-2 py-1 text-xs md:text-sm border border-gray-300 rounded"
+            className="px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
           >
             <option value="">全部</option>
             {PLATFORMS.map((p) => (
@@ -142,10 +142,10 @@ export default function ScriptsPage() {
       {showForm && (
         <form
           onSubmit={handleSubmit}
-          className="p-3 md:p-4 bg-white rounded-lg shadow space-y-3"
+          className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline space-y-3"
         >
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               标题
             </label>
             <input
@@ -154,12 +154,12 @@ export default function ScriptsPage() {
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             />
           </div>
           <div>
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <label className="block text-xs md:text-sm font-medium text-gray-700">
+              <label className="block text-xs md:text-sm font-medium text-claude-ink">
                 内容 (Markdown)
               </label>
               <button
@@ -167,7 +167,7 @@ export default function ScriptsPage() {
                 data-testid="btn-ai-humanize"
                 onClick={handleHumanize}
                 disabled={humanizing || !form.content.trim()}
-                className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-purple-600 text-white rounded shadow hover:bg-purple-700 disabled:opacity-50"
+                className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
                 title="调用 Claude 把当前内容改写得不像 AI 写的"
               >
                 {humanizing ? '拟人化中...' : 'AI 拟人化'}
@@ -178,19 +178,19 @@ export default function ScriptsPage() {
               data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded font-mono text-xs md:text-sm"
+              className="mt-1 w-full px-3 py-2 border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono text-xs md:text-sm focus:outline-none focus:ring-2 focus:ring-claude-coral"
               rows={10}
             />
           </div>
           <div>
-            <label className="block text-xs md:text-sm font-medium text-gray-700">
+            <label className="block text-xs md:text-sm font-medium text-claude-ink">
               平台
             </label>
             <select
               data-testid="input-test-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -203,7 +203,7 @@ export default function ScriptsPage() {
             type="submit"
             data-testid="btn-submit"
             disabled={submitting}
-            className="w-full sm:w-auto px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+            className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
             {submitting ? '提交中...' : '保存'}
           </button>
@@ -211,21 +211,21 @@ export default function ScriptsPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
 
       {toast && (
-        <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-sm">
+        <div className="p-3 bg-claude-surface-soft border border-claude-warning text-claude-warning rounded text-sm">
           {toast}
         </div>
       )}
 
       {loading ? (
-        <div className="text-sm text-gray-600">加载中…</div>
+        <div className="text-sm text-claude-body">加载中…</div>
       ) : scripts.length === 0 ? (
-        <div className="p-4 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+        <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
           还没有数据
         </div>
       ) : (
@@ -235,23 +235,23 @@ export default function ScriptsPage() {
               key={s.id}
               data-testid="list-item"
               data-script-id={s.id}
-              className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md"
+              className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline hover:border-claude-coral/50 transition-colors"
             >
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
-                  <h2 className="font-semibold text-sm md:text-base">
+                  <h2 className="font-semibold text-sm md:text-base text-claude-ink">
                     {s.title}
                   </h2>
-                  <p className="text-xs md:text-sm text-gray-600 mt-1 line-clamp-3 whitespace-pre-wrap font-mono">
+                  <p className="text-xs md:text-sm text-claude-body mt-1 line-clamp-3 whitespace-pre-wrap font-mono">
                     {s.content}
                   </p>
                 </div>
                 <div className="flex gap-2 text-xs flex-wrap">
-                  <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded">
+                  <span className="px-2 py-1 bg-claude-canvas text-claude-coral rounded">
                     {s.platform}
                   </span>
                   {s.word_count > 0 && (
-                    <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded">
+                    <span className="px-2 py-1 bg-claude-canvas text-claude-body rounded">
                       {s.word_count} 字
                     </span>
                   )}
@@ -260,7 +260,7 @@ export default function ScriptsPage() {
                     data-testid={`btn-delete-${s.id}`}
                     onClick={() => deleteScript(s.id)}
                     aria-label="删除"
-                    className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200"
+                    className="px-2 py-1 bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                   >
                     删除
                   </button>

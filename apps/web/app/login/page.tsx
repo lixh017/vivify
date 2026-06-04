@@ -71,21 +71,21 @@ function LoginForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <h1 className="text-2xl md:text-3xl font-bold text-center">
+      <h1 className="text-2xl md:text-3xl font-bold text-center text-claude-ink">
         🐼 OPC 登录
       </h1>
-      <p className="text-sm text-gray-500 text-center mt-1">
+      <p className="text-sm text-claude-muted text-center mt-1">
         熊猫 IP 创作控制台
       </p>
       <form
         onSubmit={handleSubmit}
-        className="mt-6 space-y-4 p-4 md:p-6 bg-white rounded-lg shadow"
+        className="mt-6 space-y-4 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline"
         aria-label="登录表单"
       >
         <div>
           <label
             htmlFor="email"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-claude-ink"
           >
             邮箱
           </label>
@@ -98,14 +98,14 @@ function LoginForm() {
             data-testid="input-email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             disabled={submitting}
           />
         </div>
         <div>
           <label
             htmlFor="password"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-claude-ink"
           >
             密码
           </label>
@@ -118,7 +118,7 @@ function LoginForm() {
             data-testid="input-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
             disabled={submitting}
           />
         </div>
@@ -127,7 +127,7 @@ function LoginForm() {
           <div
             role="alert"
             data-testid="login-error"
-            className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm"
+            className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm"
           >
             {error}
           </div>
@@ -137,13 +137,13 @@ function LoginForm() {
           type="submit"
           data-testid="btn-submit"
           disabled={submitting}
-          className="w-full px-4 py-2 text-sm bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 disabled:opacity-50"
+          className="w-full px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
         >
           {submitting ? '登录中…' : '登录'}
         </button>
       </form>
 
-      <p className="mt-4 text-xs text-gray-500 text-center">
+      <p className="mt-4 text-xs text-claude-muted text-center">
         还没有账号？请联系管理员开通。
       </p>
     </div>
@@ -156,13 +156,13 @@ function LoginFormFallback() {
   // serve from the static prerender.
   return (
     <div className="w-full max-w-sm" aria-busy="true">
-      <h1 className="text-2xl md:text-3xl font-bold text-center">
+      <h1 className="text-2xl md:text-3xl font-bold text-center text-claude-ink">
         🐼 OPC 登录
       </h1>
-      <p className="text-sm text-gray-500 text-center mt-1">
+      <p className="text-sm text-claude-muted text-center mt-1">
         熊猫 IP 创作控制台
       </p>
-      <div className="mt-6 p-4 md:p-6 bg-white rounded-lg shadow text-sm text-gray-500 text-center">
+      <div className="mt-6 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
         正在加载登录表单…
       </div>
     </div>
