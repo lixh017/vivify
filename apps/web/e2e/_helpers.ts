@@ -243,4 +243,70 @@ export class ApiClient {
   async dispose() {
     await this.ctx.dispose();
   }
+
+  // register hits the public /api/auth/register endpoint and is
+  // gated by the API's REGISTRATION_ENABLED env var. The Playwright
+  // config sets that env var to 1 so the cross-tenant test can
+  // create two users without poking at the DB directly. Other
+  // specs don't call this; they reset via wipeAll and use the
+  // shared "anonymous" request context.
+  async register(email: string, password: string, name: string) {
+    const res = await this.ctx.post("/auth/register", {
+      data: { email, password, name },
+    });
+    // 409 on duplicate email is fine — the spec can detect that
+    // case via the status and treat it as "already seeded".
+    if (!res.ok() && res.status() !== 409) {
+      throw new Error(
+        `register(${email}) failed: ${res.status()} ${res.statusText()}`,
+      );
+    }
+    return res.status();
+  }
+
+  // login posts to /api/auth/login and returns the session cookie
+  // value. We extract it from the Set-Cookie header because that's
+  // the source of truth the browser will use in the real flow.
+  async login(email: string, password: string): Promise<string> {
+    const res = await this.ctx.post("/auth/login", {
+      data: { email, password },
+    });
+    if (!res.ok()) {
+      throw new Error(
+        `login(${email}) failed: ${res.status()} ${res.statusText()}`,
+      );
+    }
+    const setCookie = res.headers()["set-cookie"] || "";
+    const m = setCookie.match(/opc_session=([^;]+)/);
+    if (!m) {
+      throw new Error(
+        `login(${email}): no opc_session cookie in response (set-cookie=${setCookie})`,
+      );
+    }
+    return m[1];
+  }
+}
+
+// BrowserContext helper for two-user flows. The MultiTenant
+// spec uses two contexts so a topic created by userA's cookies
+// is invisible to userB's cookies — exactly the regression we
+// want to pin. A single shared context would defeat the test
+// because the cookie jar would always be the most-recent login.
+export async function newAuthedContext(
+  browser: import("@playwright/test").Browser,
+  cookieValue: string,
+) {
+  const ctx = await browser.newContext();
+  await ctx.addCookies([
+    {
+      name: "opc_session",
+      value: cookieValue,
+      domain: "localhost",
+      path: "/api",
+      httpOnly: true,
+      secure: false,
+      sameSite: "Lax",
+    },
+  ]);
+  return ctx;
 }

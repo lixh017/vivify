@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -30,6 +31,7 @@ func setupTestContentItemRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		t.Fatalf("automigrate ContentItem: %v", err)
 	}
 	r := gin.New()
+	r.Use(middleware.StubUser(1)) // see StubUser rationale
 	h := NewContentItemHandler(gormDB)
 	h.RegisterRoutes(r)
 	return r, gormDB
@@ -76,10 +78,10 @@ func TestContentItemList(t *testing.T) {
 
 	// Seed two content items directly via gorm to keep the test focused on
 	// List.
-	if err := db.Create(&models.ContentItem{ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}).Error; err != nil {
+	if err := db.Create(&models.ContentItem{UserID: 1, ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}).Error; err != nil {
 		t.Fatalf("seed CI1: %v", err)
 	}
-	if err := db.Create(&models.ContentItem{ScriptID: 1, Platform: "哔哩哔哩", PlatformURL: "u2"}).Error; err != nil {
+	if err := db.Create(&models.ContentItem{UserID: 1, ScriptID: 1, Platform: "哔哩哔哩", PlatformURL: "u2"}).Error; err != nil {
 		t.Fatalf("seed CI2: %v", err)
 	}
 
@@ -103,7 +105,7 @@ func TestContentItemList(t *testing.T) {
 func TestContentItemGet(t *testing.T) {
 	r, db := setupTestContentItemRouter(t)
 
-	ci := &models.ContentItem{ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
+	ci := &models.ContentItem{UserID: 1, ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
 	if err := db.Create(ci).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -137,7 +139,7 @@ func TestContentItemGetNotFound(t *testing.T) {
 func TestContentItemUpdate(t *testing.T) {
 	r, db := setupTestContentItemRouter(t)
 
-	ci := &models.ContentItem{ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
+	ci := &models.ContentItem{UserID: 1, ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
 	if err := db.Create(ci).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestContentItemUpdateNotFound(t *testing.T) {
 func TestContentItemDelete(t *testing.T) {
 	r, db := setupTestContentItemRouter(t)
 
-	ci := &models.ContentItem{ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
+	ci := &models.ContentItem{UserID: 1, ScriptID: 1, Platform: "抖音", PlatformURL: "u1"}
 	if err := db.Create(ci).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}

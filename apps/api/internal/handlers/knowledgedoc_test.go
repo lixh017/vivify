@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/db"
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -36,6 +37,7 @@ func setupTestKnowledgeDocRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		t.Fatalf("create FTS surface: %v", err)
 	}
 	r := gin.New()
+	r.Use(middleware.StubUser(1)) // see StubUser rationale
 	h := NewKnowledgeDocHandler(gormDB)
 	h.RegisterRoutes(r)
 	return r, gormDB
@@ -81,12 +83,14 @@ func TestKnowledgeDocList(t *testing.T) {
 	// Seed two knowledge docs directly via gorm to keep the test focused on
 	// List.
 	if err := db.Create(&models.KnowledgeDoc{
-		Title: "D1", Path: "p1", Content: "c1", Tags: "a", DocType: "ip-style",
+		UserID: 1,
+		Title:  "D1", Path: "p1", Content: "c1", Tags: "a", DocType: "ip-style",
 	}).Error; err != nil {
 		t.Fatalf("seed KD1: %v", err)
 	}
 	if err := db.Create(&models.KnowledgeDoc{
-		Title: "D2", Path: "p2", Content: "c2", Tags: "b", DocType: "sop",
+		UserID: 1,
+		Title:  "D2", Path: "p2", Content: "c2", Tags: "b", DocType: "sop",
 	}).Error; err != nil {
 		t.Fatalf("seed KD2: %v", err)
 	}
@@ -115,10 +119,10 @@ func TestKnowledgeDocListFilterByDocType(t *testing.T) {
 	r, db := setupTestKnowledgeDocRouter(t)
 
 	seeds := []models.KnowledgeDoc{
-		{Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"},
-		{Title: "D2", Path: "p2", Content: "c2", DocType: "sop"},
-		{Title: "D3", Path: "p3", Content: "c3", DocType: "ip-style"},
-		{Title: "D4", Path: "p4", Content: "c4", DocType: "prompt"},
+		{UserID: 1, Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"},
+		{UserID: 1, Title: "D2", Path: "p2", Content: "c2", DocType: "sop"},
+		{UserID: 1, Title: "D3", Path: "p3", Content: "c3", DocType: "ip-style"},
+		{UserID: 1, Title: "D4", Path: "p4", Content: "c4", DocType: "prompt"},
 	}
 	for i := range seeds {
 		if err := db.Create(&seeds[i]).Error; err != nil {
@@ -151,7 +155,7 @@ func TestKnowledgeDocListFilterByDocType(t *testing.T) {
 func TestKnowledgeDocGet(t *testing.T) {
 	r, db := setupTestKnowledgeDocRouter(t)
 
-	kd := &models.KnowledgeDoc{Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
+	kd := &models.KnowledgeDoc{UserID: 1, Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
 	if err := db.Create(kd).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -185,7 +189,7 @@ func TestKnowledgeDocGetNotFound(t *testing.T) {
 func TestKnowledgeDocUpdate(t *testing.T) {
 	r, db := setupTestKnowledgeDocRouter(t)
 
-	kd := &models.KnowledgeDoc{Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
+	kd := &models.KnowledgeDoc{UserID: 1, Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
 	if err := db.Create(kd).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -228,7 +232,7 @@ func TestKnowledgeDocUpdateNotFound(t *testing.T) {
 func TestKnowledgeDocDelete(t *testing.T) {
 	r, db := setupTestKnowledgeDocRouter(t)
 
-	kd := &models.KnowledgeDoc{Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
+	kd := &models.KnowledgeDoc{UserID: 1, Title: "D1", Path: "p1", Content: "c1", DocType: "ip-style"}
 	if err := db.Create(kd).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -39,6 +40,11 @@ func newTestDB(t *testing.T) *gorm.DB {
 func setupTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	gormDB := newTestDB(t)
 	r := gin.New()
+	// Stamp a fake user on every request. The handler tests don't
+	// exercise auth — see internal/middleware.StubUser for the
+	// rationale. Without this, Phase 2's requireUserID guard would
+	// 500 every test.
+	r.Use(middleware.StubUser(1))
 	h := NewTopicHandlerFromGorm(gormDB, nil)
 	h.RegisterRoutes(r)
 	return r, gormDB
@@ -291,7 +297,7 @@ func TestTopicCRUD(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, db := setupTestRouter(t)
 			for _, s := range tc.seeds {
-				db.Create(&models.Topic{Title: s.title, Platform: s.platform, Status: s.status})
+				db.Create(&models.Topic{UserID: 1, Title: s.title, Platform: s.platform, Status: s.status})
 			}
 			steps := tc.steps(t, r, nil)
 			for _, st := range steps {
@@ -400,8 +406,9 @@ func TestTopicCRUD_NegativeCases(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, db := setupTestRouter(t)
 			// Seed a single topic so PUT/DELETE-of-missing are distinct from
-			// PUT/DELETE on a real row.
-			db.Create(&models.Topic{Title: "seed", Platform: "抖音", Status: "想法"})
+			// PUT/DELETE on a real row. UserID matches the StubUser(1) the
+			// router installs.
+			db.Create(&models.Topic{UserID: 1, Title: "seed", Platform: "抖音", Status: "想法"})
 
 			var w *httptest.ResponseRecorder
 			if tc.name == "create with malformed JSON" {

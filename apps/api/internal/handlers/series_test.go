@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -25,6 +26,7 @@ func setupTestSeriesRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		t.Fatalf("automigrate Series: %v", err)
 	}
 	r := gin.New()
+	r.Use(middleware.StubUser(1)) // see StubUser rationale
 	h := NewSeriesHandler(gormDB)
 	h.RegisterRoutes(r)
 	return r, gormDB
@@ -66,10 +68,10 @@ func TestSeriesList(t *testing.T) {
 	r, db := setupTestSeriesRouter(t)
 
 	// Seed two series directly via gorm to keep the test focused on List.
-	if err := db.Create(&models.Series{Name: "S1", Description: "D1", IPID: 1}).Error; err != nil {
+	if err := db.Create(&models.Series{UserID: 1, Name: "S1", Description: "D1", IPID: 1}).Error; err != nil {
 		t.Fatalf("seed S1: %v", err)
 	}
-	if err := db.Create(&models.Series{Name: "S2", Description: "D2", IPID: 1}).Error; err != nil {
+	if err := db.Create(&models.Series{UserID: 1, Name: "S2", Description: "D2", IPID: 1}).Error; err != nil {
 		t.Fatalf("seed S2: %v", err)
 	}
 
@@ -93,7 +95,7 @@ func TestSeriesList(t *testing.T) {
 func TestSeriesGet(t *testing.T) {
 	r, db := setupTestSeriesRouter(t)
 
-	s := &models.Series{Name: "S1", Description: "D1", IPID: 1}
+	s := &models.Series{UserID: 1, Name: "S1", Description: "D1", IPID: 1}
 	if err := db.Create(s).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -127,7 +129,7 @@ func TestSeriesGetNotFound(t *testing.T) {
 func TestSeriesUpdate(t *testing.T) {
 	r, db := setupTestSeriesRouter(t)
 
-	s := &models.Series{Name: "S1", Description: "D1", IPID: 1}
+	s := &models.Series{UserID: 1, Name: "S1", Description: "D1", IPID: 1}
 	if err := db.Create(s).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestSeriesUpdateNotFound(t *testing.T) {
 func TestSeriesDelete(t *testing.T) {
 	r, db := setupTestSeriesRouter(t)
 
-	s := &models.Series{Name: "S1", Description: "D1", IPID: 1}
+	s := &models.Series{UserID: 1, Name: "S1", Description: "D1", IPID: 1}
 	if err := db.Create(s).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}

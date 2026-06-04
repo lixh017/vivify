@@ -258,11 +258,11 @@ func (s *gormSeriesStore) List(ctx context.Context, f SeriesFilter, p PageReques
 }
 
 func (s *gormSeriesStore) Get(ctx context.Context, id uint, userID uint) (*models.Series, error) {
-	var sr models.Series
-	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Series{})
-	if userID != 0 {
-		q = q.Where("user_id = ?", userID)
+	if err := requireUserID(userID); err != nil {
+		return nil, err
 	}
+	var sr models.Series
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Series{}).Where("user_id = ?", userID)
 	if err := q.First(&sr, id).Error; err != nil {
 		return nil, err
 	}
@@ -274,13 +274,13 @@ func (s *gormSeriesStore) Get(ctx context.Context, id uint, userID uint) (*model
 // fields are preserved (PUT semantics) and GORM skips zero-valued
 // fields.
 func (s *gormSeriesStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Series, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	var out *models.Series
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.Series
-		q := tx.Model(&models.Series{})
-		if userID != 0 {
-			q = q.Where("user_id = ?", userID)
-		}
+		q := tx.Model(&models.Series{}).Where("user_id = ?", userID)
 		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
@@ -314,12 +314,13 @@ func (s *gormSeriesStore) Update(ctx context.Context, id uint, patch map[string]
 
 // Delete uses Unscoped so a future soft-delete column on the model
 // does not silently change behavior. RowsAffected is returned for the
-// handler to distinguish 404 from 200.
+// handler to distinguish 404 from 200. userID is required (see
+// requireUserID).
 func (s *gormSeriesStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
-	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
-	if userID != 0 {
-		q = q.Where("user_id = ?", userID)
+	if err := requireUserID(userID); err != nil {
+		return 0, err
 	}
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped().Where("user_id = ?", userID)
 	res := q.Delete(&models.Series{}, id)
 	return res.RowsAffected, res.Error
 }

@@ -275,11 +275,11 @@ func (s *gormScriptStore) List(ctx context.Context, f ScriptFilter, p PageReques
 }
 
 func (s *gormScriptStore) Get(ctx context.Context, id uint, userID uint) (*models.Script, error) {
-	var sc models.Script
-	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Script{})
-	if userID != 0 {
-		q = q.Where("user_id = ?", userID)
+	if err := requireUserID(userID); err != nil {
+		return nil, err
 	}
+	var sc models.Script
+	q := s.db.WithContext(withTimeout(ctx)).Model(&models.Script{}).Where("user_id = ?", userID)
 	if err := q.First(&sc, id).Error; err != nil {
 		return nil, err
 	}
@@ -290,13 +290,13 @@ func (s *gormScriptStore) Get(ctx context.Context, id uint, userID uint) (*model
 // clobber each other (TOCTOU). Updates uses a map so omitted fields are
 // preserved (PATCH semantics) and GORM skips zero-valued fields.
 func (s *gormScriptStore) Update(ctx context.Context, id uint, patch map[string]any, userID uint) (*models.Script, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	var out *models.Script
 	err := s.db.WithContext(withTimeout(ctx)).Transaction(func(tx *gorm.DB) error {
 		var existing models.Script
-		q := tx.Model(&models.Script{})
-		if userID != 0 {
-			q = q.Where("user_id = ?", userID)
-		}
+		q := tx.Model(&models.Script{}).Where("user_id = ?", userID)
 		if err := q.First(&existing, id).Error; err != nil {
 			return err
 		}
@@ -350,12 +350,12 @@ func (s *gormScriptStore) Update(ctx context.Context, id uint, patch map[string]
 
 // Delete uses Unscoped so a future soft-delete column on the model does
 // not silently change behavior. RowsAffected is returned for the handler
-// to distinguish 404 from 200.
+// to distinguish 404 from 200. userID is required (see requireUserID).
 func (s *gormScriptStore) Delete(ctx context.Context, id uint, userID uint) (int64, error) {
-	q := s.db.WithContext(withTimeout(ctx)).Unscoped()
-	if userID != 0 {
-		q = q.Where("user_id = ?", userID)
+	if err := requireUserID(userID); err != nil {
+		return 0, err
 	}
+	q := s.db.WithContext(withTimeout(ctx)).Unscoped().Where("user_id = ?", userID)
 	res := q.Delete(&models.Script{}, id)
 	return res.RowsAffected, res.Error
 }

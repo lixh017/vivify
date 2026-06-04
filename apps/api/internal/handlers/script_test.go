@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -28,6 +29,7 @@ func setupTestScriptRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 		t.Fatalf("automigrate Script: %v", err)
 	}
 	r := gin.New()
+	r.Use(middleware.StubUser(1)) // see StubUser rationale
 	h := NewScriptHandler(gormDB)
 	h.RegisterRoutes(r)
 	return r, gormDB
@@ -72,10 +74,10 @@ func TestScriptList(t *testing.T) {
 	r, db := setupTestScriptRouter(t)
 
 	// Seed two scripts directly via gorm to keep the test focused on List.
-	if err := db.Create(&models.Script{TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}).Error; err != nil {
+	if err := db.Create(&models.Script{UserID: 1, TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}).Error; err != nil {
 		t.Fatalf("seed S1: %v", err)
 	}
-	if err := db.Create(&models.Script{TopicID: 1, Title: "S2", Content: "c2", Platform: "哔哩哔哩"}).Error; err != nil {
+	if err := db.Create(&models.Script{UserID: 1, TopicID: 1, Title: "S2", Content: "c2", Platform: "哔哩哔哩"}).Error; err != nil {
 		t.Fatalf("seed S2: %v", err)
 	}
 
@@ -99,7 +101,7 @@ func TestScriptList(t *testing.T) {
 func TestScriptGet(t *testing.T) {
 	r, db := setupTestScriptRouter(t)
 
-	sc := &models.Script{TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
+	sc := &models.Script{UserID: 1, TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
 	if err := db.Create(sc).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -133,7 +135,7 @@ func TestScriptGetNotFound(t *testing.T) {
 func TestScriptUpdate(t *testing.T) {
 	r, db := setupTestScriptRouter(t)
 
-	sc := &models.Script{TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
+	sc := &models.Script{UserID: 1, TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
 	if err := db.Create(sc).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestScriptUpdateNotFound(t *testing.T) {
 func TestScriptDelete(t *testing.T) {
 	r, db := setupTestScriptRouter(t)
 
-	sc := &models.Script{TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
+	sc := &models.Script{UserID: 1, TopicID: 1, Title: "S1", Content: "c1", Platform: "抖音"}
 	if err := db.Create(sc).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}

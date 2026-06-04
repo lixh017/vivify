@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -26,6 +27,10 @@ func TestKnowledgeRouteOrdering(t *testing.T) {
 		t.Fatalf("automigrate KnowledgeDoc: %v", err)
 	}
 	r := gin.New()
+	// StubUser is needed because the CRUD Get path is now guarded
+	// by requireUserID — without a stamped user, /knowledge/9999
+	// would 500 instead of 404 and mask the route-ordering signal.
+	r.Use(middleware.StubUser(1))
 	// Use the no-FTS path so this test runs without the fts5 build tag.
 	search := NewKnowledgeSearchHandlerWithStore(nil, nil)
 	search.RegisterRoutes(r)

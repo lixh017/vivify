@@ -147,3 +147,22 @@ func UserFromContext(c *gin.Context) (models.User, bool) {
 	u, ok := v.(models.User)
 	return u, ok
 }
+
+// StubUser is a test-only middleware that stamps a synthetic
+// CtxUserID onto the context. It deliberately does NOT touch
+// CtxUser, so handlers that look up the full user (none today, but
+// future ones) still get a "no user" signal. Production code MUST
+// NOT use this — it exists so the per-entity handler unit tests can
+// keep their existing shape (router → handler → response) without
+// spinning up a session-cookie dance on every assertion.
+//
+// The guard introduced by Phase 2 Task 3 (requireUserID) means a
+// test that forgets this middleware now fails loud with a 500
+// rather than silently leaking across tenants — which is exactly
+// the tripwire we wanted.
+func StubUser(userID uint) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(CtxUserID, userID)
+		c.Next()
+	}
+}

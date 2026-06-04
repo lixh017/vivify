@@ -72,7 +72,7 @@ export default defineConfig({
   // test`.
   webServer: [
     {
-      command: `cd ../api && PORT=${PORT_API} DB_PATH=${DB_PATH} GIN_MODE=release ./bin/server`,
+      command: `cd ../api && PORT=${PORT_API} DB_PATH=${DB_PATH} GIN_MODE=release REGISTRATION_ENABLED=1 ./bin/server`,
       url: `${API_URL}/healthz`,
       reuseExistingServer: true,
       timeout: 30_000,
