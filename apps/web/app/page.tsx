@@ -44,7 +44,7 @@ export default function Home() {
   return (
     <>
       {/* Hero */}
-      <section className="max-w-4xl mx-auto px-6 py-24">
+      <section className="max-w-4xl mx-auto px-6 py-section">
         <p className="claude-eyebrow text-claude-muted">
           Phase 1 · 熊猫 IP · Content Studio
         </p>
@@ -57,18 +57,18 @@ export default function Home() {
         <div className="mt-10 flex gap-3">
           <a
             href="/topics"
-            className="inline-flex items-center justify-center bg-claude-coral text-white px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-coral-active transition-colors"
+            className="inline-flex items-center justify-center bg-claude-coral text-claude-on-primary px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
           >
             进入工作室
           </a>
-          <ScrollToFeaturesLink className="inline-flex items-center justify-center border border-claude-hairline text-claude-ink px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-surface-card transition-colors">
+          <ScrollToFeaturesLink className="inline-flex items-center justify-center border border-claude-hairline text-claude-ink px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-surface-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-coral focus-visible:ring-offset-2 active:translate-y-px transition-colors">
             了解更多
           </ScrollToFeaturesLink>
         </div>
       </section>
 
       {/* 5 feature cards */}
-      <section id="features" className="max-w-6xl mx-auto px-6 py-24">
+      <section id="features" className="max-w-6xl mx-auto px-6 py-section">
         <p className="claude-eyebrow text-claude-muted">5 块能力</p>
         <h2 className="mt-4 text-claude-ink">Content Studio,end-to-end.</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
@@ -88,7 +88,7 @@ export default function Home() {
               </p>
               <a
                 href={card.href}
-                className="text-claude-coral text-sm font-medium mt-4 inline-block hover:text-claude-coral-active transition-colors"
+                className="text-claude-coral text-sm font-medium mt-4 inline-block hover:text-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-coral focus-visible:ring-offset-2 rounded-sm transition-colors"
               >
                 去看看 →
               </a>

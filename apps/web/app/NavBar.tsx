@@ -160,7 +160,7 @@ export default function NavBar() {
               <a
                 href="/login"
                 data-testid="btn-login"
-                className="bg-claude-coral text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-claude-coral-active transition-colors"
+                className="bg-claude-coral text-claude-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
               >
                 登录
               </a>
@@ -240,7 +240,7 @@ export default function NavBar() {
               <a
                 href="/login"
                 data-testid="btn-login-mobile"
-                className="block px-3 py-2 rounded-md text-base font-medium bg-claude-coral text-white hover:bg-claude-coral-active transition-colors"
+                className="block px-3 py-2 rounded-md text-base font-medium bg-claude-coral text-claude-on-primary hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
               >
                 登录
               </a>

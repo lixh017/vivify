@@ -1,4 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* First-paint fonts: Inter (UI / sans, weights 400/500/600/700) + Fraunces
+   400 + 600 (display / serif with the opsz axis). Fraunces 300 and 500
+   were dropped from the request — Phase B only renders h1–h4 at weight
+   400, and 600 is the single nav-link weight used by the design system.
+   JetBrains Mono is a small monospace family kept in the request for the
+   .claude-code utility (only paid for when a code block actually
+   renders) — its payload is dwarfed by Inter + Fraunces. */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -111,7 +118,11 @@
     color: var(--claude-ink);
   }
 
-  /* Code text — JetBrains Mono */
+  /* Code text — JetBrains Mono. The Mono family is only used by the
+     .claude-code utility, which is not rendered on the Phase B public
+     pages; the browser will cache the woff2 from the @import at the top
+     of this file but will not pay a layout cost until a code block
+     actually consumes the utility. */
   .claude-code {
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 14px;
