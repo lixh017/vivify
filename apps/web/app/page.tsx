@@ -1,43 +1,101 @@
-interface ShortcutCard {
+import ScrollToFeaturesLink from './ScrollToFeaturesLink'
+
+interface FeatureCard {
   href: string
   icon: string
   title: string
-  subtitle: string
+  description: string
 }
 
-const SHORTCUTS: ShortcutCard[] = [
-  { href: '/topics', icon: '📋', title: '选题', subtitle: 'Kanban' },
-  { href: '/scripts', icon: '📝', title: '脚本', subtitle: '库' },
-  { href: '/calendar', icon: '📅', title: '日历', subtitle: '排期' },
-  { href: '/dashboard', icon: '📊', title: '表现', subtitle: 'Dashboard' },
-  { href: '/knowledge', icon: '📚', title: '知识库', subtitle: 'SOP/笔记' },
+const FEATURES: FeatureCard[] = [
+  {
+    href: '/topics',
+    icon: '📋',
+    title: '选题',
+    description: 'Kanban 视图,状态切换,AI 智能生成',
+  },
+  {
+    href: '/scripts',
+    icon: '📝',
+    title: '脚本',
+    description: 'Markdown 编辑,AI 拟人化改写',
+  },
+  {
+    href: '/calendar',
+    icon: '📅',
+    title: '日历',
+    description: '发布排期,内联日期编辑',
+  },
+  {
+    href: '/dashboard',
+    icon: '📊',
+    title: '表现',
+    description: '数据汇总,爆款 AI 复盘',
+  },
+  {
+    href: '/knowledge',
+    icon: '📚',
+    title: '知识库',
+    description: 'IP 风格指南,SOP 沉淀,FTS5 搜索',
+  },
 ]
 
 export default function Home() {
   return (
-    <div className="space-y-4 md:space-y-6">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold">🐼 OPC 创作控制台</h1>
-        <p className="text-sm md:text-base text-gray-600 mt-1">
-          熊猫 IP · Phase 1
+    <>
+      {/* Hero */}
+      <section className="max-w-4xl mx-auto px-6 py-24">
+        <p className="claude-eyebrow text-claude-muted">
+          Phase 1 · 熊猫 IP · Content Studio
         </p>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
-        {SHORTCUTS.map((card) => (
+        <h1 className="mt-4 text-claude-ink leading-tight">
+          A quiet room for your short video work.
+        </h1>
+        <p className="font-sans text-lg text-claude-body mt-6 max-w-2xl">
+          选题、脚本、素材、知识库 — 一处安放,安静创作.
+        </p>
+        <div className="mt-10 flex gap-3">
           <a
-            key={card.href}
-            href={card.href}
-            className="p-3 md:p-4 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+            href="/topics"
+            className="inline-flex items-center justify-center bg-claude-coral text-white px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-coral-active transition-colors"
           >
-            <h2 className="font-semibold text-sm md:text-base">
-              {card.icon} {card.title}
-            </h2>
-            <p className="text-xs md:text-sm text-gray-500 mt-1">
-              {card.subtitle}
-            </p>
+            进入工作室
           </a>
-        ))}
-      </div>
-    </div>
+          <ScrollToFeaturesLink className="inline-flex items-center justify-center border border-claude-hairline text-claude-ink px-5 py-2.5 rounded-md text-sm font-medium hover:bg-claude-surface-card transition-colors">
+            了解更多
+          </ScrollToFeaturesLink>
+        </div>
+      </section>
+
+      {/* 5 feature cards */}
+      <section id="features" className="max-w-6xl mx-auto px-6 py-24">
+        <p className="claude-eyebrow text-claude-muted">5 块能力</p>
+        <h2 className="mt-4 text-claude-ink">Content Studio,end-to-end.</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
+          {FEATURES.map((card) => (
+            <article
+              key={card.href}
+              className="bg-claude-surface-card rounded-lg p-8 border border-claude-hairline"
+            >
+              <div aria-hidden="true" className="text-3xl">
+                {card.icon}
+              </div>
+              <h3 className="font-serif text-xl text-claude-ink mt-4">
+                {card.title}
+              </h3>
+              <p className="font-sans text-sm text-claude-body mt-2">
+                {card.description}
+              </p>
+              <a
+                href={card.href}
+                className="text-claude-coral text-sm font-medium mt-4 inline-block hover:text-claude-coral-active transition-colors"
+              >
+                去看看 →
+              </a>
+            </article>
+          ))}
+        </div>
+      </section>
+    </>
   )
 }

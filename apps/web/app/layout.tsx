@@ -12,9 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN">
       <body className="bg-claude-canvas text-claude-ink font-sans antialiased">
         <NavBar />
-        <main className="container mx-auto px-3 md:px-6 py-4 md:py-6">
-          {children}
-        </main>
+        <main>{children}</main>
       </body>
     </html>
   )
