@@ -10,8 +10,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/models"
 )
 
 func setupAITestRouter(t *testing.T, override agents.CompleteFunc) *gin.Engine {
@@ -193,6 +196,193 @@ func TestHumanizeScriptInvalidBody(t *testing.T) {
 	w := doJSON(t, r, http.MethodPost, "/ai/humanize", map[string]any{
 		"script": "   ",
 	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+}
+
+// setupPostmortemRouter builds a router with an in-memory sqlite DB
+// seeded with one Topic → Script → ContentItem chain. Tests that
+// need to exercise the 404 path skip the seed and post the id of a
+// row that does not exist.
+func setupPostmortemRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Topic{}, &models.Script{}, &models.ContentItem{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	r := gin.New()
+	return r, db
+}
+
+// newPostmortemRouterWithOverride wires the router with the given
+// override function so each test can supply its own Claude response.
+func newPostmortemRouterWithOverride(db *gorm.DB, fn agents.CompleteFunc) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	claude := agents.NewClaudeWithOverride(fn)
+	r := gin.New()
+	NewAIHandler(claude, db).RegisterRoutes(r)
+	return r
+}
+
+func seedPostmortemFixture(t *testing.T, db *gorm.DB) (topicID, scriptID, itemID uint) {
+	t.Helper()
+	topic := models.Topic{
+		Title:    "测试选题",
+		Angle:    "御宅哲学角度",
+		Platform: "抖音",
+		Status:   "已发布",
+	}
+	if err := db.Create(&topic).Error; err != nil {
+		t.Fatalf("create topic: %v", err)
+	}
+	script := models.Script{
+		TopicID:  topic.ID,
+		Title:    "测试脚本标题",
+		Content:  "测试脚本正文",
+		Platform: "抖音",
+	}
+	if err := db.Create(&script).Error; err != nil {
+		t.Fatalf("create script: %v", err)
+	}
+	ci := models.ContentItem{
+		ScriptID:           script.ID,
+		Platform:           "抖音",
+		PlatformURL:        "https://example.com/v/1",
+		PerformanceMetrics: "播放 12k 点赞 800",
+	}
+	if err := db.Create(&ci).Error; err != nil {
+		t.Fatalf("create content item: %v", err)
+	}
+	return topic.ID, script.ID, ci.ID
+}
+
+// TestPostmortemSuccess: Claude returns a clean JSON object and the
+// handler must echo it as `report` (raw) and `structured` (parsed).
+func TestPostmortemSuccess(t *testing.T) {
+	r, db := setupPostmortemRouter(t)
+	_, _, itemID := seedPostmortemFixture(t, db)
+	overrideResp := `{
+		"success_factors":["强钩子","情绪共鸣"],
+		"reusable_patterns":["开头提问","结尾反转"],
+		"insights":["播放完成率 65% 高于均值"],
+		"suggestions":["下次可以提前 1 秒抛钩子"]
+	}`
+	r2 := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
+		return overrideResp, nil
+	})
+	_ = r
+
+	w := doJSON(t, r2, http.MethodPost, "/ai/postmortem", map[string]any{
+		"content_item_id": itemID,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Report     string `json:"report"`
+		Structured struct {
+			SuccessFactors   []string `json:"success_factors"`
+			ReusablePatterns []string `json:"reusable_patterns"`
+			Insights         []string `json:"insights"`
+			Suggestions      []string `json:"suggestions"`
+		} `json:"structured"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
+	}
+	if resp.Report != overrideResp {
+		t.Errorf("report = %q, want raw response", resp.Report)
+	}
+	if len(resp.Structured.SuccessFactors) != 2 || resp.Structured.SuccessFactors[0] != "强钩子" {
+		t.Errorf("success_factors = %v, want [强钩子 情绪共鸣]", resp.Structured.SuccessFactors)
+	}
+	if len(resp.Structured.ReusablePatterns) != 2 || resp.Structured.ReusablePatterns[1] != "结尾反转" {
+		t.Errorf("reusable_patterns = %v, want [... 结尾反转]", resp.Structured.ReusablePatterns)
+	}
+	if len(resp.Structured.Insights) != 1 {
+		t.Errorf("insights = %v, want 1 entry", resp.Structured.Insights)
+	}
+	if len(resp.Structured.Suggestions) != 1 {
+		t.Errorf("suggestions = %v, want 1 entry", resp.Structured.Suggestions)
+	}
+}
+
+// TestPostmortemStripsMarkdownFence: Claude wraps the JSON in
+// ```json ... ``` fences; the handler must strip the wrapper and
+// still return parsed structured data.
+func TestPostmortemStripsMarkdownFence(t *testing.T) {
+	_, db := setupPostmortemRouter(t)
+	_, _, itemID := seedPostmortemFixture(t, db)
+	wrapped := "```json\n" +
+		`{"success_factors":["A"],"reusable_patterns":["B"],"insights":["C"],"suggestions":["D"]}` +
+		"\n```"
+	r := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
+		return wrapped, nil
+	})
+
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{
+		"content_item_id": itemID,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"success_factors":["A"]`) {
+		t.Errorf("body missing unwrapped success_factors: %s", w.Body.String())
+	}
+}
+
+// TestPostmortemNotFound: posting a content_item_id that does not
+// exist must yield 404, not 500.
+func TestPostmortemNotFound(t *testing.T) {
+	_, db := setupPostmortemRouter(t)
+	r := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
+		t.Error("claude should not be called when content item is missing")
+		return "", nil
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{
+		"content_item_id": 999,
+	})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "not found") {
+		t.Errorf("body should mention not found, got: %s", w.Body.String())
+	}
+}
+
+// TestPostmortemNoAPIKey: when the agent returns a "no API key"
+// error, the handler must surface 503 with a clear message.
+func TestPostmortemNoAPIKey(t *testing.T) {
+	_, db := setupPostmortemRouter(t)
+	_, _, itemID := seedPostmortemFixture(t, db)
+	r := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
+		return "", errAIUnavailable
+	})
+
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{
+		"content_item_id": itemID,
+	})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "API key") && !strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") {
+		t.Errorf("body should mention API key, got: %s", w.Body.String())
+	}
+}
+
+// TestPostmortemInvalidBody: missing content_item_id must yield 400.
+func TestPostmortemInvalidBody(t *testing.T) {
+	_, db := setupPostmortemRouter(t)
+	r := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
+		t.Error("claude should not be called for invalid body")
+		return "", nil
+	})
+	w := doJSON(t, r, http.MethodPost, "/ai/postmortem", map[string]any{})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
 	}

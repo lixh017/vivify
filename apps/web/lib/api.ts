@@ -149,6 +149,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    postmortem: (contentItemId: number) =>
+      request<{ report: string; structured: PostmortemStructured }>(
+        '/ai/postmortem',
+        { method: 'POST', body: JSON.stringify({ content_item_id: contentItemId }) },
+      ),
   },
 }
 
@@ -157,6 +162,13 @@ export type GeneratedTopic = {
   angle: string
   expected_performance: string
   hook: string
+}
+
+export type PostmortemStructured = {
+  success_factors: string[]
+  reusable_patterns: string[]
+  insights: string[]
+  suggestions: string[]
 }
 
 export { ApiError }

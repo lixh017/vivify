@@ -76,7 +76,7 @@ func main() {
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	seriesH.RegisterRoutes(r)
 
-	aiH := handlers.NewAIHandler(claudeAgent)
+	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
 	aiH.RegisterRoutes(r)
 
 	httpSrv := &http.Server{

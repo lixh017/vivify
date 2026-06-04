@@ -35,6 +35,21 @@ func TestHumanizeScriptPrompt(t *testing.T) {
 	}
 }
 
+func TestPostmortemPrompt(t *testing.T) {
+	a := NewClaude("test-key")
+	prompt := a.PostmortemPrompt("爆款标题", "脚本正文", "播放 12k 点赞 800", "御宅哲学角度")
+	for _, want := range []string{"爆款标题", "脚本正文", "播放 12k 点赞 800", "御宅哲学角度"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("postmortem prompt missing %q", want)
+		}
+	}
+	for _, want := range []string{"success_factors", "reusable_patterns", "insights", "suggestions"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("postmortem prompt missing field %q", want)
+		}
+	}
+}
+
 // TestCompleteOverrideSucceeds exercises the success path of the
 // override seam so we catch regressions where the override is
 // silently bypassed. The previous version of this test asserted the

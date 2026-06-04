@@ -137,6 +137,34 @@ func (c *Claude) HumanizeScriptPrompt(script string) string {
 	)
 }
 
+// PostmortemPrompt builds the prompt used to ask Claude to deconstruct
+// a viral content item: why it performed well, what patterns are
+// reusable, what the metrics suggest, and what to try next. The
+// returned prompt is plain text and asks for a JSON object back, but
+// the handler parses best-effort (markdown fence stripping) so a
+// slightly off-shape response still surfaces useful content.
+func (c *Claude) PostmortemPrompt(title, script, metrics, topicAngle string) string {
+	return fmt.Sprintf(
+		`你是 OPC 的"熊猫"IP 爆款复盘助手。
+赛道：治愈 / 御宅 / 哲学 / 国潮。
+
+请基于以下内容做一次结构化复盘：
+- 标题：%s
+- 脚本：%s
+- 表现数据：%s
+- 选题角度：%s
+
+输出一个 JSON 对象，包含四个字段：
+- success_factors（string[]）：成功要素——为什么这条爆了
+- reusable_patterns（string[]）：可复用模式——下次怎么抄
+- insights（string[]）：数据洞察——从指标里读出什么
+- suggestions（string[]）：改进建议——下次怎么做得更好
+
+只用 JSON 输出，不要加多余解释。`,
+		title, script, metrics, topicAngle,
+	)
+}
+
 // Complete sends a single user-turn prompt to Claude and returns
 // the first text content block. A per-call timeout is applied (see
 // CompleteOptions) so a hung Anthropic call cannot pin a request

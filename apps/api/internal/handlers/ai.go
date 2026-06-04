@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"github.com/opc/api/internal/models"
 )
 
 // aiTimeout caps the time a single /ai/* call can spend waiting on
@@ -32,6 +35,7 @@ const maxAIResultBytes = 1 << 20
 type AIClient interface {
 	GenerateTopicsPrompt(seed, platform string, count int) string
 	HumanizeScriptPrompt(script string) string
+	PostmortemPrompt(title, script, metrics, topicAngle string) string
 	Complete(ctx context.Context, prompt string) (string, error)
 }
 
@@ -40,17 +44,23 @@ type AIClient interface {
 // given seed + platform.
 type AIHandler struct {
 	claude AIClient
+	db     *gorm.DB
 	logger *slog.Logger
 }
 
 // NewAIHandler wires an AIHandler. A nil logger falls back to
 // slog.Default() so callers in main.go do not have to plumb one in.
-func NewAIHandler(claude AIClient, logger ...*slog.Logger) *AIHandler {
+// The db is optional: it is only required by the /ai/postmortem
+// endpoint (which needs to look up ContentItem + Script + Topic).
+// Existing callers (tests, MCP wiring) that do not need postmortem
+// can pass nil.
+func NewAIHandler(claude AIClient, db ...*gorm.DB) *AIHandler {
 	l := slog.Default()
-	if len(logger) > 0 && logger[0] != nil {
-		l = logger[0]
+	var d *gorm.DB
+	if len(db) > 0 {
+		d = db[0]
 	}
-	return &AIHandler{claude: claude, logger: l}
+	return &AIHandler{claude: claude, db: d, logger: l}
 }
 
 // RegisterRoutes attaches the AI endpoints to the router. Currently
@@ -59,6 +69,7 @@ func NewAIHandler(claude AIClient, logger ...*slog.Logger) *AIHandler {
 func (h *AIHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/topics", h.GenerateTopics)
 	r.POST("/ai/humanize", h.HumanizeScript)
+	r.POST("/ai/postmortem", h.Postmortem)
 }
 
 // generateTopicsRequest is the JSON body for POST /ai/topics.
@@ -263,4 +274,154 @@ func (h *AIHandler) HumanizeScript(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, humanizeResponse{Humanized: humanized})
+}
+
+// postmortemRequest is the JSON body for POST /ai/postmortem. The
+// handler resolves the ContentItem, walks up to its Script and Topic
+// for context, and feeds the assembled picture to Claude.
+type postmortemRequest struct {
+	ContentItemID uint `json:"content_item_id"`
+}
+
+// postmortemStructured is the best-effort parsed shape Claude is
+// asked to return. All four fields are kept as raw string slices so
+// a Claude response that omits one is harmless (zero value, not an
+// error). The handler returns whatever it can extract alongside the
+// raw report text so the frontend can still show *something* when
+// parsing fails.
+type postmortemStructured struct {
+	SuccessFactors   []string `json:"success_factors"`
+	ReusablePatterns []string `json:"reusable_patterns"`
+	Insights         []string `json:"insights"`
+	Suggestions      []string `json:"suggestions"`
+}
+
+type postmortemResponse struct {
+	Report     string               `json:"report"`
+	Structured postmortemStructured `json:"structured"`
+}
+
+// Postmortem — POST /ai/postmortem
+//
+// Body: {content_item_id}
+// 200:  {report, structured}
+// 400:  invalid body (missing id, id <= 0)
+// 404:  content item not found
+// 503:  Claude is not configured (no API key) or returned an error
+//
+// The handler walks ContentItem → Script → Topic to gather context
+// for the prompt. Topic lookup failure is non-fatal: the prompt
+// degrades gracefully with an empty topic_angle.
+func (h *AIHandler) Postmortem(c *gin.Context) {
+	if h.db == nil {
+		// Defensive: the handler was wired without a DB. This should
+		// never happen in production (main.go always passes one), but
+		// failing fast here is better than panicking deep in a query.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "postmortem requires database access"})
+		return
+	}
+	var req postmortemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("invalid postmortem body", "err", err.Error(), "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.ContentItemID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content_item_id is required"})
+		return
+	}
+
+	// Walk the FK chain. We do this with three separate First calls
+	// (not Preload joins) so a missing Script or Topic surfaces as
+	// gorm.ErrRecordNotFound on the offending call rather than
+	// silently returning zero values inside a struct.
+	var ci models.ContentItem
+	if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&ci, req.ContentItemID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "content item not found"})
+			return
+		}
+		h.logger.Error("postmortem: content item lookup failed", "err", err.Error(), "id", req.ContentItemID, "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up content item"})
+		return
+	}
+
+	var script models.Script
+	if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&script, ci.ScriptID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		h.logger.Error("postmortem: script lookup failed", "err", err.Error(), "script_id", ci.ScriptID, "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up script"})
+		return
+	}
+
+	// Topic is optional context — if the script has none, or the
+	// topic has been deleted, just leave the angle empty.
+	topicAngle := ""
+	if script.ID != 0 && script.TopicID != 0 {
+		var topic models.Topic
+		if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&topic, script.TopicID).Error; err == nil {
+			topicAngle = topic.Angle
+		}
+	}
+
+	prompt := h.claude.PostmortemPrompt(script.Title, script.Content, ci.PerformanceMetrics, topicAngle)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
+	defer cancel()
+
+	report, err := h.claude.Complete(ctx, prompt)
+	if err != nil {
+		if strings.Contains(err.Error(), "API key") {
+			h.logger.Warn("postmortem: no API key configured", "request_id", c.GetString("request_id"))
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
+			})
+			return
+		}
+		h.logger.Error("postmortem complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "AI service failed: " + err.Error(),
+		})
+		return
+	}
+
+	structured := parsePostmortemStructured(report)
+	c.JSON(http.StatusOK, postmortemResponse{Report: report, Structured: structured})
+}
+
+// jsonObjectRE matches a top-level JSON object in a Claude response.
+// The first non-greedy match is used; the caller validates that it
+// parses.
+var jsonObjectRE = regexp.MustCompile(`(?s)\{.*?\}`)
+
+// parsePostmortemStructured extracts the four-field report shape from
+// a raw Claude response. It is lenient about markdown fences and
+// surrounding prose (same approach as parseTopics) and never errors:
+// on parse failure it returns the zero-value struct so the frontend
+// still has the raw `report` text to display.
+func parsePostmortemStructured(raw string) postmortemStructured {
+	if len(raw) > maxAIResultBytes {
+		return postmortemStructured{}
+	}
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```") {
+		if i := strings.Index(cleaned, "\n"); i >= 0 {
+			cleaned = cleaned[i+1:]
+		}
+		if strings.HasSuffix(cleaned, "```") {
+			cleaned = cleaned[:len(cleaned)-3]
+		}
+		cleaned = strings.TrimSpace(cleaned)
+	}
+	if !strings.HasPrefix(cleaned, "{") {
+		loc := jsonObjectRE.FindStringIndex(cleaned)
+		if loc == nil {
+			return postmortemStructured{}
+		}
+		cleaned = cleaned[loc[0]:loc[1]]
+	}
+	var out postmortemStructured
+	if err := json.Unmarshal([]byte(cleaned), &out); err != nil {
+		return postmortemStructured{}
+	}
+	return out
 }
