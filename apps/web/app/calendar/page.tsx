@@ -267,8 +267,15 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📅 日历</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
+            📅 日历
+          </h1>
+          <p className="text-claude-muted text-sm mt-1">
+            发布排期,一目了然
+          </p>
+        </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
@@ -293,7 +300,7 @@ export default function CalendarPage() {
               id="new-content-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -333,7 +340,7 @@ export default function CalendarPage() {
               onChange={(e) =>
                 setForm({ ...form, scheduled_at: e.target.value })
               }
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink disabled:bg-claude-surface-soft focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink disabled:bg-claude-surface-soft focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <button
@@ -347,13 +354,13 @@ export default function CalendarPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
 
       {editError && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {editError}
         </div>
       )}
@@ -368,7 +375,7 @@ export default function CalendarPage() {
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
-              <h2 className="text-base md:text-lg font-semibold text-claude-ink">
+              <h2 className="font-serif text-lg text-claude-ink">
                 {formatGroupLabel(key)}
                 <span className="ml-2 text-xs md:text-sm text-claude-muted-soft">
                   ({groups[key].length})
@@ -459,7 +466,7 @@ export default function CalendarPage() {
                                     scheduled_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
                               />
                             </div>
                             <div>
@@ -479,7 +486,7 @@ export default function CalendarPage() {
                                     published_at: e.target.value,
                                   })
                                 }
-                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                                className="mt-1 w-full px-2 py-1 text-xs md:text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
                               />
                             </div>
                             <div>

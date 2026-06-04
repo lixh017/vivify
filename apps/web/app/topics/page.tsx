@@ -26,6 +26,26 @@ const KANBAN_COLUMNS: { label: string; status: string; next: string | null }[] =
 // between 待写 and 已发布. It advances to 已发布 when the user moves it.
 const WRITING_STATUS = '撰写中'
 
+// statusPillClass maps a status to a (semantic) pill color so the kanban
+// and list views stay legible. The pill uses the warm / cool status tokens
+// from the Claude palette rather than ad-hoc colors.
+function statusPillClass(status: string): string {
+  switch (status) {
+    case '想法':
+      return 'bg-claude-surface-soft text-claude-muted'
+    case '评估':
+      return 'bg-claude-accent-teal/15 text-claude-accent-teal'
+    case '待写':
+      return 'bg-claude-accent-amber/15 text-claude-accent-amber'
+    case '撰写中':
+      return 'bg-claude-accent-amber/20 text-claude-accent-amber'
+    case '已发布':
+      return 'bg-claude-success/15 text-claude-success'
+    default:
+      return 'bg-claude-surface-soft text-claude-muted'
+  }
+}
+
 interface FormState {
   title: string
   angle: string
@@ -65,6 +85,11 @@ function KanbanCard({ topic, onMove, onStatusChange, moving, onDelete }: KanbanC
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs px-2 py-0.5 bg-claude-canvas text-claude-coral rounded">
           {topic.platform}
+        </span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(topic.status)}`}
+        >
+          {topic.status}
         </span>
         <select
           aria-label="更改状态"
@@ -281,8 +306,15 @@ export default function TopicsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📋 选题</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
+            📋 选题
+          </h1>
+          <p className="text-claude-muted text-sm mt-1">
+            从想法到发布,一处管理
+          </p>
+        </div>
         <div className="flex gap-2 flex-wrap">
           <div
             role="tablist"
@@ -319,10 +351,10 @@ export default function TopicsPage() {
               setAiModalOpen((v) => !v)
               setAiError(null)
             }}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded-md hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
+            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-accent-amber text-white rounded-md hover:opacity-90 disabled:opacity-50 transition-opacity"
             disabled={aiLoading}
           >
-            {aiLoading ? '生成中...' : 'AI 生成'}
+            {aiLoading ? '生成中...' : 'AI 生成选题'}
           </button>
           <button
             onClick={() => setShowForm((v) => !v)}
@@ -385,7 +417,7 @@ export default function TopicsPage() {
                 value={aiSeed}
                 onChange={(e) => setAiSeed(e.target.value)}
                 placeholder="例如：禅意解压、深夜emo、宅文化..."
-                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               />
             </div>
             <div>
@@ -399,7 +431,7 @@ export default function TopicsPage() {
                 max={20}
                 value={aiCount}
                 onChange={(e) => setAiCount(parseInt(e.target.value, 10) || 1)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               />
             </div>
           </div>
@@ -413,7 +445,7 @@ export default function TopicsPage() {
               data-testid="btn-ai-topics"
               onClick={handleGenerateTopics}
               disabled={aiLoading}
-              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
+              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-accent-amber text-white rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
             >
               {aiLoading ? '生成中...' : '生成'}
             </button>
@@ -429,7 +461,7 @@ export default function TopicsPage() {
             </button>
           </div>
           {aiError && (
-            <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-xs md:text-sm">
+            <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-xs md:text-sm">
               {aiError}
             </div>
           )}
@@ -480,7 +512,7 @@ export default function TopicsPage() {
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <div>
@@ -492,7 +524,7 @@ export default function TopicsPage() {
               data-testid="input-test-angle"
               value={form.angle}
               onChange={(e) => setForm({ ...form, angle: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={3}
             />
           </div>
@@ -544,7 +576,7 @@ export default function TopicsPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
@@ -639,6 +671,11 @@ export default function TopicsPage() {
                 <div className="flex gap-2 text-xs items-center flex-wrap">
                   <span className="px-2 py-1 bg-claude-canvas text-claude-coral rounded">
                     {t.platform}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-medium ${statusPillClass(t.status)}`}
+                  >
+                    {t.status}
                   </span>
                   <select
                     aria-label="更改状态"

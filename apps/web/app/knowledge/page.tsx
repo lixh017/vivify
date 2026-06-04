@@ -238,8 +238,15 @@ export default function KnowledgePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📚 知识库</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
+            📚 知识库
+          </h1>
+          <p className="text-claude-muted text-sm mt-1">
+            IP 风格、SOP、复盘档案 — 你的第二大脑
+          </p>
+        </div>
         {tab === 'docs' ? (
           <button
             onClick={() => setShowForm((v) => !v)}
@@ -286,7 +293,7 @@ export default function KnowledgePage() {
       </div>
 
       {error && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
@@ -388,7 +395,7 @@ function DocsTab({
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <div>
@@ -402,7 +409,7 @@ function DocsTab({
               placeholder="例如: panda/characters/mama"
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <div>
@@ -431,7 +438,7 @@ function DocsTab({
               data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={6}
             />
           </div>
@@ -456,7 +463,7 @@ function DocsTab({
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
-              <h2 className="text-base md:text-lg font-semibold text-claude-ink">
+              <h2 className="font-serif text-lg text-claude-ink">
                 {key}
                 <span className="ml-2 text-xs md:text-sm text-claude-muted-soft">
                   ({groups[key].length})
@@ -560,7 +567,7 @@ function IpTemplatesTab({
                 placeholder="例如: 数字人 / 古装 / 言情"
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               />
             </div>
             <div>
@@ -573,7 +580,7 @@ function IpTemplatesTab({
                 placeholder="例如: 云岚"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+                className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               />
             </div>
           </div>
@@ -586,7 +593,7 @@ function IpTemplatesTab({
               onChange={(e) =>
                 setForm({ ...form, description: e.target.value })
               }
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={2}
             />
           </div>

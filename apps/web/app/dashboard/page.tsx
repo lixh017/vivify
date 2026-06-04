@@ -126,8 +126,15 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📊 表现</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
+            📊 表现
+          </h1>
+          <p className="text-claude-muted text-sm mt-1">
+            数据说话,爆款可复盘
+          </p>
+        </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
@@ -137,13 +144,13 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:gap-4">
-        <div className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline">
+        <div className="p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline">
           <p className="text-xs md:text-sm text-claude-muted">总记录数</p>
-          <p className="text-xl md:text-2xl font-bold mt-1 text-claude-ink">{totalCount}</p>
+          <p className="font-serif text-3xl mt-2 text-claude-ink">{totalCount}</p>
         </div>
-        <div className="p-3 md:p-4 bg-claude-surface-card rounded-lg border border-claude-hairline">
+        <div className="p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline">
           <p className="text-xs md:text-sm text-claude-muted">含平台链接</p>
-          <p className="text-xl md:text-2xl font-bold mt-1 text-claude-ink">{withUrlCount}</p>
+          <p className="font-serif text-3xl mt-2 text-claude-ink">{withUrlCount}</p>
         </div>
       </div>
 
@@ -160,7 +167,7 @@ export default function DashboardPage() {
               data-testid="input-test-platform"
               value={form.platform}
               onChange={(e) => setForm({ ...form, platform: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             >
               {PLATFORMS.map((p) => (
                 <option key={p} value={p}>
@@ -181,7 +188,7 @@ export default function DashboardPage() {
                 setForm({ ...form, platform_url: e.target.value })
               }
               placeholder="https://..."
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <div>
@@ -195,7 +202,7 @@ export default function DashboardPage() {
                 setForm({ ...form, performance_metrics: e.target.value })
               }
               placeholder="例如: 播放 12k, 点赞 800, 评论 45"
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={3}
             />
           </div>
@@ -211,7 +218,7 @@ export default function DashboardPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
@@ -267,7 +274,7 @@ export default function DashboardPage() {
                     data-testid="btn-ai-postmortem"
                     onClick={() => handlePostmortem(item)}
                     disabled={postmortem?.item.id === item.id && postmortem.state.loading}
-                    className="px-2.5 md:px-3 py-1 text-xs bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
+                    className="px-2.5 md:px-3 py-1 text-xs bg-claude-accent-amber text-white rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
                   >
                     {postmortem?.item.id === item.id && postmortem.state.loading
                       ? '复盘中...'
@@ -341,7 +348,7 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
           )}
 
           {state.error && (
-            <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+            <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
               {state.error}
             </div>
           )}

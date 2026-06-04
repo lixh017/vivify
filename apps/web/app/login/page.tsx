@@ -71,7 +71,7 @@ function LoginForm() {
 
   return (
     <div className="w-full max-w-sm">
-      <h1 className="text-2xl md:text-3xl font-bold text-center text-claude-ink">
+      <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
         🐼 OPC 登录
       </h1>
       <p className="text-sm text-claude-muted text-center mt-1">
@@ -98,7 +98,7 @@ function LoginForm() {
             data-testid="input-email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             disabled={submitting}
           />
         </div>
@@ -118,7 +118,7 @@ function LoginForm() {
             data-testid="input-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+            className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             disabled={submitting}
           />
         </div>
@@ -127,7 +127,7 @@ function LoginForm() {
           <div
             role="alert"
             data-testid="login-error"
-            className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm"
+            className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm"
           >
             {error}
           </div>
@@ -156,7 +156,7 @@ function LoginFormFallback() {
   // serve from the static prerender.
   return (
     <div className="w-full max-w-sm" aria-busy="true">
-      <h1 className="text-2xl md:text-3xl font-bold text-center text-claude-ink">
+      <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
         🐼 OPC 登录
       </h1>
       <p className="text-sm text-claude-muted text-center mt-1">

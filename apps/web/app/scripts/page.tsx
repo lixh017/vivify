@@ -111,8 +111,15 @@ export default function ScriptsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl md:text-3xl font-bold text-claude-ink">📝 脚本</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
+            📝 脚本
+          </h1>
+          <p className="text-claude-muted text-sm mt-1">
+            可拍的口播稿,在这里打磨
+          </p>
+        </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
@@ -154,7 +161,7 @@ export default function ScriptsPage() {
               data-testid="input-test-title"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
             />
           </div>
           <div>
@@ -167,7 +174,7 @@ export default function ScriptsPage() {
                 data-testid="btn-ai-humanize"
                 onClick={handleHumanize}
                 disabled={humanizing || !form.content.trim()}
-                className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-claude-ink text-claude-on-dark rounded hover:bg-claude-surface-dark-elevated disabled:opacity-50 transition-colors"
+                className="px-2.5 md:px-3 py-1 text-xs md:text-sm bg-claude-accent-amber text-white rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
                 title="调用 Claude 把当前内容改写得不像 AI 写的"
               >
                 {humanizing ? '拟人化中...' : 'AI 拟人化'}
@@ -178,7 +185,7 @@ export default function ScriptsPage() {
               data-testid="input-test-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono text-xs md:text-sm focus:outline-none focus:ring-2 focus:ring-claude-coral"
+              className="mt-1 w-full px-3 py-2 border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono text-xs md:text-sm focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={10}
             />
           </div>
@@ -211,7 +218,7 @@ export default function ScriptsPage() {
       )}
 
       {error && (
-        <div className="p-3 bg-claude-surface-card border border-claude-error text-claude-error rounded text-sm">
+        <div className="p-3 bg-claude-error/10 border border-claude-error text-claude-error rounded text-sm">
           {error}
         </div>
       )}
