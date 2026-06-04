@@ -1,0 +1,860 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "OPC API",
+    "description": "OPC is a content production workspace for one-person video studios. This API exposes CRUD endpoints for the core entities (topics, scripts, content items, knowledge base, series), the IP template generator, AI-assisted tools (topic generation, script humanizer, postmortem), and JSON-based data import/export. The MVP ships without authentication; deploy behind a reverse proxy that gates traffic to trusted clients.\n\nAll requests and responses are JSON. Time fields use RFC 3339. Lists are paginated via `limit` and `offset` query parameters and capped at 200 rows per request.",
+    "version": "0.1.0",
+    "contact": {
+      "name": "OPC",
+      "url": "https://github.com/opc/opc"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same-origin"
+    }
+  ],
+  "tags": [
+    {"name": "health", "description": "Liveness and readiness probes"},
+    {"name": "topics", "description": "Topic ideas and their kanban status"},
+    {"name": "scripts", "description": "Drafted scripts linked to a topic"},
+    {"name": "content-items", "description": "Published / scheduled posts"},
+    {"name": "knowledge", "description": "Knowledge base docs (IP guides, SOPs, postmortems)"},
+    {"name": "ai", "description": "AI-assisted generation (Anthropic Claude)"},
+    {"name": "ip-templates", "description": "Pre-baked IP style guide templates"},
+    {"name": "import-export", "description": "JSON-based bulk data import / export"}
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Liveness probe",
+        "description": "Returns 200 as long as the process is up. Does not check downstream dependencies. Suitable for kubelet `livenessProbe`.",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthOK"}}}
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Readiness probe",
+        "description": "Pings the database with a short timeout. Returns 200 when the DB is reachable, 503 otherwise. Suitable for kubelet `readinessProbe`.",
+        "responses": {
+          "200": {
+            "description": "Ready to serve traffic",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthOK"}}}
+          },
+          "503": {
+            "description": "Unready (DB ping failed)",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthUnready"}}}
+          }
+        }
+      }
+    },
+    "/topics": {
+      "get": {
+        "tags": ["topics"],
+        "summary": "List topics",
+        "parameters": [
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"},
+          {"name": "platform", "in": "query", "schema": {"type": "string"}, "description": "Filter by platform (one of: 抖音, 哔哩哔哩, 小红书, 视频号, YouTube)"},
+          {"name": "status", "in": "query", "schema": {"type": "string"}, "description": "Filter by status (one of: 想法, 评估, 待写, 撰写中, 已发布)"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of topics",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TopicList"}}}
+          }
+        }
+      },
+      "post": {
+        "tags": ["topics"],
+        "summary": "Create a topic",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TopicCreate"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Topic"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/topics/{id}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/ID"}
+      ],
+      "get": {
+        "tags": ["topics"],
+        "summary": "Get a topic by id",
+        "responses": {
+          "200": {
+            "description": "Topic",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Topic"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "put": {
+        "tags": ["topics"],
+        "summary": "Update a topic",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TopicUpdate"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Topic"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["topics"],
+        "summary": "Delete a topic",
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/scripts": {
+      "get": {
+        "tags": ["scripts"],
+        "summary": "List scripts",
+        "parameters": [
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of scripts",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ScriptList"}}}
+          }
+        }
+      },
+      "post": {
+        "tags": ["scripts"],
+        "summary": "Create a script",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ScriptCreate"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Script"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/scripts/{id}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/ID"}
+      ],
+      "get": {
+        "tags": ["scripts"],
+        "summary": "Get a script by id",
+        "responses": {
+          "200": {
+            "description": "Script",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Script"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "put": {
+        "tags": ["scripts"],
+        "summary": "Update a script",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ScriptUpdate"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Script"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["scripts"],
+        "summary": "Delete a script",
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/content-items": {
+      "get": {
+        "tags": ["content-items"],
+        "summary": "List content items",
+        "parameters": [
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of content items",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItemList"}}}
+          }
+        }
+      },
+      "post": {
+        "tags": ["content-items"],
+        "summary": "Create a content item",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItemCreate"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItem"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/content-items/{id}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/ID"}
+      ],
+      "get": {
+        "tags": ["content-items"],
+        "summary": "Get a content item by id",
+        "responses": {
+          "200": {
+            "description": "Content item",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItem"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "put": {
+        "tags": ["content-items"],
+        "summary": "Update a content item",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItemUpdate"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContentItem"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["content-items"],
+        "summary": "Delete a content item",
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/knowledge": {
+      "get": {
+        "tags": ["knowledge"],
+        "summary": "List knowledge base docs",
+        "parameters": [
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of knowledge docs",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDocList"}}}
+          }
+        }
+      },
+      "post": {
+        "tags": ["knowledge"],
+        "summary": "Create a knowledge doc",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDocCreate"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDoc"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/knowledge/{id}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/ID"}
+      ],
+      "get": {
+        "tags": ["knowledge"],
+        "summary": "Get a knowledge doc by id",
+        "responses": {
+          "200": {
+            "description": "Knowledge doc",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDoc"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "put": {
+        "tags": ["knowledge"],
+        "summary": "Update a knowledge doc",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDocUpdate"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeDoc"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["knowledge"],
+        "summary": "Delete a knowledge doc",
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/knowledge/search": {
+      "get": {
+        "tags": ["knowledge"],
+        "summary": "Search the knowledge base",
+        "description": "Full-text search backed by SQLite FTS5. The `q` parameter is required; the response includes a snippet around each match. This endpoint requires the `fts5` build tag at compile time.",
+        "parameters": [
+          {"name": "q", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Search query (FTS5 MATCH syntax)"},
+          {"$ref": "#/components/parameters/Limit"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Search hits",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeSearchResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/ai/topics": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Generate topic ideas with Claude",
+        "description": "Asks Claude for `count` topic ideas (capped at 20) seeded from the given `seed` and `platform`. Requires `ANTHROPIC_API_KEY` to be set on the server.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIGenerateTopicsRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Generated topics",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIGenerateTopicsResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "502": {"description": "AI returned output that could not be parsed"},
+          "503": {"description": "AI service unavailable (no API key, or upstream error)"}
+        }
+      }
+    },
+    "/ai/humanize": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Humanize a script",
+        "description": "Rewrites the given script to read less like AI-generated text. Requires `ANTHROPIC_API_KEY`.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIHumanizeRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Rewritten script",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIHumanizeResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "503": {"description": "AI service unavailable (no API key, or upstream error)"}
+        }
+      }
+    },
+    "/ai/postmortem": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Generate a postmortem for a content item",
+        "description": "Walks ContentItem -> Script -> Topic to gather context, then asks Claude for a structured postmortem (success factors, reusable patterns, insights, suggestions). Requires `ANTHROPIC_API_KEY`.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIPostmortemRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Postmortem report",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIPostmortemResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"description": "Content item not found"},
+          "503": {"description": "AI service unavailable (no API key, or upstream error)"}
+        }
+      }
+    },
+    "/ip-templates": {
+      "get": {
+        "tags": ["ip-templates"],
+        "summary": "List IP templates",
+        "description": "Groups `knowledge_docs` by IP type. Only docs under `ip-style-guide/<ip-type>/` are surfaced; other doc types are ignored.",
+        "responses": {
+          "200": {
+            "description": "Templates grouped by IP type",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/IPTemplateList"}}}
+          }
+        }
+      },
+      "post": {
+        "tags": ["ip-templates"],
+        "summary": "Create an IP template",
+        "description": "Materializes the four standard docs (style / tone / topics / anti-patterns) under the `ip-style-guide/<ip-type>/` namespace. Idempotent at the path level.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/IPTemplateCreate"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/IPTemplate"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/export": {
+      "get": {
+        "tags": ["import-export"],
+        "summary": "Export data as JSON",
+        "description": "Streams a JSON attachment (`Content-Disposition: attachment`) so the browser saves it to disk. Filename embeds the local UTC date.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "enum": ["topic", "script", "content_item", "knowledge", "all"]}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exported payload (JSON attachment)",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExportEnvelope"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/import": {
+      "post": {
+        "tags": ["import-export"],
+        "summary": "Import a JSON export",
+        "description": "Upserts rows from a JSON export payload. The payload's discriminator (`type`) must match the `?type=` query parameter.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "enum": ["topic", "script", "content_item", "knowledge", "all"]}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExportEnvelope"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Import summary",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ImportResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "integer", "format": "int64", "minimum": 1},
+        "description": "Resource id"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200},
+        "description": "Page size (max 200)"
+      },
+      "Offset": {
+        "name": "offset",
+        "in": "query",
+        "schema": {"type": "integer", "default": 0, "minimum": 0},
+        "description": "Page offset"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request body or query parameter",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {"type": "string", "description": "Human-readable error message"}
+        }
+      },
+      "HealthOK": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {"type": "string", "enum": ["ok", "ready"]}
+        }
+      },
+      "HealthUnready": {
+        "type": "object",
+        "required": ["status", "reason"],
+        "properties": {
+          "status": {"type": "string", "enum": ["unready"]},
+          "reason": {"type": "string"}
+        }
+      },
+      "Topic": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string", "maxLength": 200},
+          "angle": {"type": "string", "maxLength": 1000, "nullable": true},
+          "platform": {"type": "string", "maxLength": 32, "description": "One of: 抖音, 哔哩哔哩, 小红书, 视频号, YouTube"},
+          "status": {"type": "string", "maxLength": 16, "description": "One of: 想法, 评估, 待写, 撰写中, 已发布", "default": "想法"},
+          "series_id": {"type": "integer", "format": "int64", "nullable": true},
+          "expected_performance": {"type": "string", "maxLength": 500, "nullable": true},
+          "notes": {"type": "string", "maxLength": 4000, "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "TopicCreate": {
+        "type": "object",
+        "required": ["title", "platform"],
+        "properties": {
+          "title": {"type": "string", "maxLength": 200},
+          "angle": {"type": "string", "maxLength": 1000},
+          "platform": {"type": "string", "maxLength": 32},
+          "status": {"type": "string", "maxLength": 16, "default": "想法"},
+          "series_id": {"type": "integer", "format": "int64"},
+          "expected_performance": {"type": "string", "maxLength": 500},
+          "notes": {"type": "string", "maxLength": 4000}
+        }
+      },
+      "TopicUpdate": {
+        "type": "object",
+        "description": "Full replacement (PUT). All fields optional; omitted fields are reset to their zero value.",
+        "properties": {
+          "title": {"type": "string"},
+          "angle": {"type": "string"},
+          "platform": {"type": "string"},
+          "status": {"type": "string"},
+          "series_id": {"type": "integer", "format": "int64", "nullable": true},
+          "expected_performance": {"type": "string"},
+          "notes": {"type": "string"}
+        }
+      },
+      "TopicList": {
+        "type": "object",
+        "required": ["items", "total"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Topic"}},
+          "total": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Script": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "topic_id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "platform": {"type": "string"},
+          "style_fingerprint": {"type": "string", "description": "JSON-encoded style fingerprint blob"},
+          "tags": {"type": "string"},
+          "word_count": {"type": "integer"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ScriptCreate": {
+        "type": "object",
+        "required": ["title", "content", "platform"],
+        "properties": {
+          "topic_id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "platform": {"type": "string"},
+          "style_fingerprint": {"type": "string"},
+          "tags": {"type": "string"},
+          "word_count": {"type": "integer"}
+        }
+      },
+      "ScriptUpdate": {
+        "type": "object",
+        "properties": {
+          "topic_id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string"},
+          "content": {"type": "string"},
+          "platform": {"type": "string"},
+          "style_fingerprint": {"type": "string"},
+          "tags": {"type": "string"},
+          "word_count": {"type": "integer"}
+        }
+      },
+      "ScriptList": {
+        "type": "object",
+        "required": ["items", "total"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Script"}},
+          "total": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ContentItem": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "script_id": {"type": "integer", "format": "int64"},
+          "platform": {"type": "string"},
+          "scheduled_at": {"type": "string", "format": "date-time", "nullable": true},
+          "published_at": {"type": "string", "format": "date-time", "nullable": true},
+          "platform_url": {"type": "string"},
+          "performance_metrics": {"type": "string", "description": "JSON-encoded performance metrics blob"},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ContentItemCreate": {
+        "type": "object",
+        "required": ["script_id", "platform"],
+        "properties": {
+          "script_id": {"type": "integer", "format": "int64"},
+          "platform": {"type": "string"},
+          "scheduled_at": {"type": "string", "format": "date-time"},
+          "published_at": {"type": "string", "format": "date-time"},
+          "platform_url": {"type": "string"},
+          "performance_metrics": {"type": "string"}
+        }
+      },
+      "ContentItemUpdate": {
+        "type": "object",
+        "properties": {
+          "script_id": {"type": "integer", "format": "int64"},
+          "platform": {"type": "string"},
+          "scheduled_at": {"type": "string", "format": "date-time", "nullable": true},
+          "published_at": {"type": "string", "format": "date-time", "nullable": true},
+          "platform_url": {"type": "string"},
+          "performance_metrics": {"type": "string"}
+        }
+      },
+      "ContentItemList": {
+        "type": "object",
+        "required": ["items", "total"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ContentItem"}},
+          "total": {"type": "integer", "format": "int64"}
+        }
+      },
+      "KnowledgeDoc": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string"},
+          "path": {"type": "string", "description": "Hierarchical path, e.g. ip-style-guide/voice"},
+          "content": {"type": "string"},
+          "tags": {"type": "string"},
+          "doc_type": {"type": "string", "description": "ip-style / sop / prompt / postmortem / decision / platform-rule"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "KnowledgeDocCreate": {
+        "type": "object",
+        "required": ["title", "path", "content"],
+        "properties": {
+          "title": {"type": "string"},
+          "path": {"type": "string"},
+          "content": {"type": "string"},
+          "tags": {"type": "string"},
+          "doc_type": {"type": "string"}
+        }
+      },
+      "KnowledgeDocUpdate": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "path": {"type": "string"},
+          "content": {"type": "string"},
+          "tags": {"type": "string"},
+          "doc_type": {"type": "string"}
+        }
+      },
+      "KnowledgeDocList": {
+        "type": "object",
+        "required": ["items", "total"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/KnowledgeDoc"}},
+          "total": {"type": "integer", "format": "int64"}
+        }
+      },
+      "KnowledgeSearchHit": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer", "format": "int64"},
+          "title": {"type": "string"},
+          "path": {"type": "string"},
+          "snippet": {"type": "string", "description": "FTS5 snippet() output around the match"}
+        }
+      },
+      "KnowledgeSearchResponse": {
+        "type": "object",
+        "required": ["hits"],
+        "properties": {
+          "hits": {"type": "array", "items": {"$ref": "#/components/schemas/KnowledgeSearchHit"}}
+        }
+      },
+      "AIGenerateTopicsRequest": {
+        "type": "object",
+        "required": ["seed", "platform"],
+        "properties": {
+          "seed": {"type": "string", "description": "Brainstorming seed (e.g. \"夏日复古穿搭\")"},
+          "platform": {"type": "string", "description": "Target platform"},
+          "count": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20}
+        }
+      },
+      "AIGeneratedTopic": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "angle": {"type": "string"},
+          "expected_performance": {"type": "string"},
+          "hook": {"type": "string"}
+        }
+      },
+      "AIGenerateTopicsResponse": {
+        "type": "object",
+        "required": ["topics"],
+        "properties": {
+          "topics": {"type": "array", "items": {"$ref": "#/components/schemas/AIGeneratedTopic"}}
+        }
+      },
+      "AIHumanizeRequest": {
+        "type": "object",
+        "required": ["script"],
+        "properties": {
+          "script": {"type": "string"}
+        }
+      },
+      "AIHumanizeResponse": {
+        "type": "object",
+        "required": ["humanized"],
+        "properties": {
+          "humanized": {"type": "string"}
+        }
+      },
+      "AIPostmortemRequest": {
+        "type": "object",
+        "required": ["content_item_id"],
+        "properties": {
+          "content_item_id": {"type": "integer", "format": "int64"}
+        }
+      },
+      "AIPostmortemStructured": {
+        "type": "object",
+        "properties": {
+          "success_factors": {"type": "array", "items": {"type": "string"}},
+          "reusable_patterns": {"type": "array", "items": {"type": "string"}},
+          "insights": {"type": "array", "items": {"type": "string"}},
+          "suggestions": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "AIPostmortemResponse": {
+        "type": "object",
+        "required": ["report"],
+        "properties": {
+          "report": {"type": "string", "description": "Raw postmortem text"},
+          "structured": {"$ref": "#/components/schemas/AIPostmortemStructured"}
+        }
+      },
+      "IPTemplate": {
+        "type": "object",
+        "properties": {
+          "type": {"type": "string", "description": "IP type slug, e.g. fashion / tech / finance"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "doc_count": {"type": "integer", "description": "Number of knowledge_docs in this template"}
+        }
+      },
+      "IPTemplateList": {
+        "type": "object",
+        "required": ["templates"],
+        "properties": {
+          "templates": {"type": "array", "items": {"$ref": "#/components/schemas/IPTemplate"}}
+        }
+      },
+      "IPTemplateCreate": {
+        "type": "object",
+        "required": ["type", "name"],
+        "properties": {
+          "type": {"type": "string"},
+          "name": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "ExportEnvelope": {
+        "type": "object",
+        "required": ["type", "exported_at", "items"],
+        "properties": {
+          "type": {"type": "string", "enum": ["topic", "script", "content_item", "knowledge", "all"]},
+          "exported_at": {"type": "string", "format": "date-time"},
+          "items": {"type": "array", "items": {"type": "object"}}
+        }
+      },
+      "ImportResponse": {
+        "type": "object",
+        "required": ["imported"],
+        "properties": {
+          "imported": {"type": "integer", "description": "Number of rows upserted"}
+        }
+      }
+    }
+  }
+}

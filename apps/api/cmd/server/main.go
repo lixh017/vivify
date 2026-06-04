@@ -147,6 +147,14 @@ func main() {
 	importExportH := handlers.NewImportExportHandler(gormDB, nil)
 	importExportH.RegisterRoutes(r)
 
+	// API reference surface — /openapi.json serves the OpenAPI 3.0
+	// spec embedded at compile time, /docs serves the Swagger UI
+	// shell. Mounted after every other handler so they cannot be
+	// shadowed by a future entity handler claiming the top-level
+	// /openapi.json or /docs path.
+	docsH := handlers.NewDocsHandlers(slog.Default())
+	docsH.RegisterRoutes(r)
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           r,
