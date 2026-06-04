@@ -13,6 +13,8 @@ import type {
   ContentItem,
   KnowledgeDoc,
   ListResponse,
+  UpdateContentItemPatch,
+  IpTemplate,
 } from './types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || ''
@@ -104,7 +106,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    update: (id: number, data: Partial<ContentItem>) =>
+    update: (id: number, data: UpdateContentItemPatch) =>
       request<ContentItem>(`/content-items/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
@@ -133,6 +135,14 @@ export const api = {
   },
   series: {
     list: () => request<{ items: { id: number; name: string }[] }>('/series'),
+  },
+  ipTemplates: {
+    list: () => request<{ templates: IpTemplate[] }>('/ip-templates'),
+    create: (data: { type: string; name: string; description?: string }) =>
+      request<IpTemplate>('/ip-templates', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   ai: {
     generateTopics: (data: {

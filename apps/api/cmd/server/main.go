@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,16 +31,9 @@ func main() {
 	// in production-like environments (LOG_FORMAT=json) and text
 	// otherwise — keeping the human-friendly dev output the team is used
 	// to while making it trivial to ship structured logs to a log
-	// aggregator.
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-	if os.Getenv("LOG_FORMAT") != "json" {
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})))
-	}
+	// aggregator. The branch is picked once up front so we don't set the
+	// default twice.
+	setupLogger(os.Getenv("LOG_FORMAT"))
 
 	gormDB, err := db.Connect(cfg.DBPath)
 	if err != nil {
@@ -69,7 +63,14 @@ func main() {
 
 	mcpCtx, mcpCancel := context.WithCancel(context.Background())
 	defer mcpCancel()
+	// Use a WaitGroup to wait for the MCP goroutine to actually
+	// return — sleeping for a fixed duration is racy and can either
+	// be too long (delaying process exit) or too short (letting the
+	// process exit before the transport flushes its last log line).
+	var mcpWG sync.WaitGroup
+	mcpWG.Add(1)
 	go func() {
+		defer mcpWG.Done()
 		if err := mcpServer.ServeStdio(mcpCtx); err != nil {
 			slog.Error("mcp stdio exited", "error", err)
 			mcpCancel()
@@ -93,8 +94,15 @@ func main() {
 	r.GET("/healthz", handlers.Health)
 	// /readyz is a readiness probe — process is up AND the DB is
 	// reachable. Kubernetes-style orchestrators should gate traffic
-	// on /readyz and restart on /healthz failures.
-	r.GET("/readyz", handlers.NewReadyz(gormDB))
+	// on /readyz and restart on /healthz failures. We resolve the
+	// underlying *sql.DB once at startup so the readiness handler
+	// only depends on the minimal Pinger interface.
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		slog.Error("resolve sql.DB for readyz failed", "error", err)
+		os.Exit(1)
+	}
+	r.GET("/readyz", handlers.NewReadyz(sqlDB))
 
 	topicH := handlers.NewTopicHandlerFromGorm(gormDB, nil)
 	topicH.RegisterRoutes(r)
@@ -123,6 +131,13 @@ func main() {
 
 	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
 	aiH.RegisterRoutes(r)
+
+	// IP template routes — derived view over the knowledge_docs table.
+	// Mounted after the AI handler so the URL space is owned by each
+	// handler; there are no overlapping paths with the other
+	// collections.
+	ipTemplateH := handlers.NewIPTemplateHandler(gormDB)
+	ipTemplateH.RegisterRoutes(r)
 
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -165,17 +180,14 @@ func main() {
 	}
 
 	// Stop the MCP transport last so any tool calls in flight on the
-	// HTTP side finish first.
+	// HTTP side finish first. We wait for the MCP goroutine to
+	// return (bounded by a timeout) instead of sleeping — the
+	// WaitGroup completes when ServeStdio actually exits after
+	// mcpCancel.
 	mcpCancel()
-	// Give the MCP goroutine a brief window to flush — ServeStdio
-	// owns its own context cancellation handling.
 	mcpDone := make(chan struct{})
 	go func() {
-		// We don't have a WaitGroup handle for the MCP goroutine, so
-		// we just wait a short bounded duration. The transport exits
-		// on context cancel; this prevents a tail-of-log race where
-		// the process exits before slog flushes the last record.
-		time.Sleep(100 * time.Millisecond)
+		mcpWG.Wait()
 		close(mcpDone)
 	}()
 	select {
@@ -185,4 +197,24 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
+}
+
+// setupLogger configures the process-wide slog default. The handler
+// is picked once based on the LOG_FORMAT env var — the previous
+// implementation set the JSON handler unconditionally and then
+// re-set a text handler when LOG_FORMAT was unset, leaving the JSON
+// setup as dead code.
+func setupLogger(format string) {
+	var handler slog.Handler
+	switch format {
+	case "json":
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+	default:
+		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+	}
+	slog.SetDefault(slog.New(handler))
 }

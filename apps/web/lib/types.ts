@@ -33,11 +33,26 @@ export type ContentItem = {
   id: number
   script_id: number
   platform: string
-  scheduled_at?: string
-  published_at?: string
+  // `null` means the date is cleared (e.g. back to 待定 on the calendar);
+  // `undefined` means the field is absent. The Go server returns `null`
+  // for cleared fields, so we model that explicitly rather than collapsing
+  // the two states.
+  scheduled_at?: string | null
+  published_at?: string | null
   platform_url: string
   performance_metrics: string
   created_at: string
+}
+
+// PATCH payload for /content-items/:id. Each field is independently
+// optional, and the nullable timestamp fields can be explicitly cleared
+// by sending `null`. This matches the Go handler's Update semantics.
+export type UpdateContentItemPatch = {
+  platform?: string
+  scheduled_at?: string | null
+  published_at?: string | null
+  platform_url?: string
+  performance_metrics?: string
 }
 
 export type KnowledgeDoc = {
@@ -57,4 +72,14 @@ export type ListResponse<T> = {
   total: number
   limit: number
   offset: number
+}
+
+// IP template projection returned by /ip-templates. This is a derived
+// view over the knowledge_docs table, not a separate entity, so it
+// carries only the list-shape quartet the UI needs.
+export type IpTemplate = {
+  type: string
+  name: string
+  description: string
+  doc_count: number
 }
