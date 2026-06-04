@@ -1,0 +1,50 @@
+name: API CI
+
+on:
+  push:
+    paths:
+      - "apps/api/**"
+      - "Makefile"
+      - ".github/workflows/api-ci.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - "Makefile"
+      - ".github/workflows/api-ci.yml"
+
+defaults:
+  run:
+    working-directory: apps/api
+
+jobs:
+  test:
+    name: Test (race + fts5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: apps/api/go.sum
+
+      - name: go mod download
+        run: go mod download
+
+      # Full suite with the FTS5 build tag. This is the documented
+      # review command (`go test -race ./...` plus the tag).
+      - name: Test with -race -tags fts5
+        run: go test -race -tags fts5 ./...
+
+      # Plain `go test ./...` (no tag) must still pass: the FTS5
+      # integration tests are skipped via build tags, and the CRUD /
+      # unit tests run.
+      - name: Test with -race (no FTS5 tag)
+        run: go test -race ./...
+
+      - name: go vet
+        run: go vet -tags fts5 ./...
+
+      - name: Build server binary
+        run: go build -tags fts5 -trimpath -ldflags="-s -w" -o ../bin/opc-api ./cmd/server
