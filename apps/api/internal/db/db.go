@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 
 	"gorm.io/driver/sqlite"
@@ -8,6 +9,18 @@ import (
 
 	"github.com/opc/api/internal/models"
 )
+
+// ErrFTS5NotEnabled is the sentinel value callers can use to detect
+// that the binary was built without the `fts5` build tag. The off-tag
+// stub of EnsureKnowledgeFTS in fts5_off.go returns nil (so the
+// Makefile's `test-plain` smoke target keeps passing without the
+// tag), and the fts5-tagged implementation in fts5.go returns
+// driver-level errors instead. Code that needs to surface a
+// configuration error at startup should check for the presence of
+// the fts5 build tag independently — for example by calling
+// EnsureKnowledgeFTS at boot and surfacing a clear message to the
+// operator — rather than relying on the off-tag path to error.
+var ErrFTS5NotEnabled = errors.New("knowledge FTS5 is disabled: rebuild with -tags fts5 to enable the knowledge search surface")
 
 // pragmas lists the PRAGMA statements applied to every connection opened by
 // Connect. We want:
@@ -72,9 +85,14 @@ func applyPragmas(gormDB *gorm.DB) error {
 	return nil
 }
 
-// Migrate 在数据库上为所有 5 个实体创建/更新表结构。
+// Migrate 在数据库上为所有 5 个核心实体 + Phase 2 鉴权表创建/更新表结构。
+// User 和 Session 独立于业务实体:它们不参与内容工作流,但支撑多租户
+// 鉴权,必须在业务表之前就位,这样后续 PR 引入 OwnerID 外键时不会
+// 出现"user 表不存在"的迁移错误。
 func Migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
+		&models.User{},
+		&models.Session{},
 		&models.Topic{},
 		&models.Script{},
 		&models.ContentItem{},
@@ -83,66 +101,14 @@ func Migrate(db *gorm.DB) error {
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
 	}
-	if err := ensureKnowledgeFTS(db); err != nil {
+	if err := EnsureKnowledgeFTS(db); err != nil {
 		return fmt.Errorf("ensure knowledge fts: %w", err)
 	}
 	return nil
 }
 
-// knowledgeFTSStmts are the SQL statements that bring the FTS5 shadow table
-// and its sync triggers into existence. They are idempotent: every CREATE
-// uses IF NOT EXISTS so repeated migrations do not error. The FTS table is
-// declared as a contentless mirror of `knowledge_docs` (`content='knowledge_docs'`,
-// `content_rowid='id'`) and is kept in sync by three triggers on insert /
-// delete / update, matching the contract documented in section 4.9.7 of
-// the Phase 1 design spec.
-//
-// We use the trigram tokenizer (sqlite >= 3.34) because knowledge docs
-// contain a lot of CJK text; the default unicode61 tokenizer has no
-// concept of word boundaries for Han characters, so "声音调性" would not
-// match a content row that contains the same characters. trigram breaks
-// the input into overlapping 3-byte sequences which works equally well
-// for CJK and Latin text.
-var knowledgeFTSStmts = []string{
-	`CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_docs_fts USING fts5(
-		title,
-		content,
-		content='knowledge_docs',
-		content_rowid='id',
-		tokenize='trigram'
-	)`,
-	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_ai AFTER INSERT ON knowledge_docs BEGIN
-		INSERT INTO knowledge_docs_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-	END`,
-	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_ad AFTER DELETE ON knowledge_docs BEGIN
-		INSERT INTO knowledge_docs_fts(knowledge_docs_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
-	END`,
-	`CREATE TRIGGER IF NOT EXISTS knowledge_docs_au AFTER UPDATE ON knowledge_docs BEGIN
-		INSERT INTO knowledge_docs_fts(knowledge_docs_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
-		INSERT INTO knowledge_docs_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
-	END`,
-}
-
-// ensureKnowledgeFTS creates the FTS5 shadow table and sync triggers when
-// they do not already exist. It is split out of Migrate so test setup that
-// only needs the search surface (e.g. the FTS5 test) can call it directly
-// after AutoMigrate without going through the full migration pipeline.
-func ensureKnowledgeFTS(db *gorm.DB) error {
-	for _, stmt := range knowledgeFTSStmts {
-		if err := db.Exec(stmt).Error; err != nil {
-			return fmt.Errorf("%s: %w", firstLine(stmt), err)
-		}
-	}
-	return nil
-}
-
-// firstLine returns the first line of s, used purely to keep error
-// messages readable when the underlying DDL statement is multi-line.
-func firstLine(s string) string {
-	for i, r := range s {
-		if r == '\n' {
-			return s[:i]
-		}
-	}
-	return s
-}
+// knowledgeFTSStmts and ensureKnowledgeFTS live in fts5.go when the `fts5`
+// build tag is set, and a stub ErrFTS5NotEnabled lives in fts5_off.go when
+// it is not. Production binaries MUST be built with `-tags fts5`; the
+// stub returns a clear error so misconfigured deploys fail loudly
+// instead of silently breaking the knowledge search surface.

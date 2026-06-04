@@ -2,8 +2,6 @@ package db
 
 import (
 	"testing"
-
-	_ "github.com/glebarez/sqlite"
 )
 
 // TestMigrateCreatesTables verifies the five core tables come into existence
@@ -25,7 +23,12 @@ func TestMigrateCreatesTables(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	tables := []string{"topics", "scripts", "content_items", "knowledge_docs", "series"}
+	// users + sessions were added in Phase 2 alongside the existing five
+	// content-workflow tables.
+	tables := []string{
+		"users", "sessions",
+		"topics", "scripts", "content_items", "knowledge_docs", "series",
+	}
 	for _, table := range tables {
 		var name string
 		row := conn.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table)
@@ -152,41 +155,8 @@ func TestMigrateCreatesIndexes(t *testing.T) {
 	}
 }
 
-// TestMigrateCreatesFTS5Surface verifies that Migrate brings the FTS5
-// shadow table and its three sync triggers into existence. The FTS
-// table is a virtual table and shows up in sqlite_master as a
-// non-standard 'table' with type text. The triggers show up as
-// 'trigger' rows. We assert by name so a refactor that renames the
-// objects does not silently regress.
-func TestMigrateCreatesFTS5Surface(t *testing.T) {
-	gormDB, err := connectGorm("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	conn, err := gormDB.DB()
-	if err != nil {
-		t.Fatalf("get sql.DB from gorm: %v", err)
-	}
-	defer conn.Close()
-
-	if err := Migrate(gormDB); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	want := []string{
-		"knowledge_docs_fts",
-		"knowledge_docs_ai",
-		"knowledge_docs_ad",
-		"knowledge_docs_au",
-	}
-	for _, name := range want {
-		var got string
-		if err := conn.QueryRow(
-			"SELECT name FROM sqlite_master WHERE name = ?",
-			name,
-		).Scan(&got); err != nil {
-			t.Errorf("%s not created: %v", name, err)
-		}
-	}
-}
+// TestMigrateCreatesFTS5Surface is in migrate_fts5_test.go and is gated
+// behind the `fts5` build tag, because the FTS5 virtual table can only
+// be created against an SQLite engine that has the FTS5 module
+// compiled in (mattn/go-sqlite3, with `-tags fts5`). The CI workflow
+// runs that test with the tag set; a plain `go test ./...` skips it.
