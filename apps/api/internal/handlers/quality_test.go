@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -150,12 +151,15 @@ func TestScoreFallsBackOnParseError(t *testing.T) {
 }
 
 // TestScoreFallsBackOnNoAPIKey: when the agent is real (key set)
-// but the underlying call returns an "API key" error, the handler
+// but the underlying call returns an ErrNoAPIKey error, the handler
 // MUST fall back to the rule-based scorer with the X-Demo-Mode
 // header so the frontend can show a "demo" badge.
 func TestScoreFallsBackOnNoAPIKey(t *testing.T) {
 	r := setupQualityTestRouter(t, func(_ context.Context, _ string) (string, error) {
-		return "", errAIUnavailable
+		// Return the sentinel wrapped the same way agents.Complete
+		// does, so errors.Is(err, agents.ErrNoAPIKey) succeeds in
+		// the handler.
+		return "", fmt.Errorf("claude complete: %w", agents.ErrNoAPIKey)
 	})
 	w := doJSON(t, r, http.MethodPost, "/ai/score", map[string]any{
 		"title":    "好标题",
@@ -510,5 +514,97 @@ func TestPublishChecklistShortScript(t *testing.T) {
 	}
 	if got.Status != checkFail {
 		t.Errorf("short script status = %q, want %q: %+v", got.Status, checkFail, got)
+	}
+}
+
+// TestPublishChecklistScriptMissing: when a ContentItem points at a
+// Script id that doesn't exist, the handler must return 404 (not
+// 200 with misleading "no hashtags" / "short script" fails from a
+// zero-value Script).
+func TestPublishChecklistScriptMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Topic{}, &models.Script{}, &models.ContentItem{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	// Insert a content item with a non-existent ScriptID (no
+	// Script row in the DB).
+	ci := models.ContentItem{
+		ScriptID: 9999,
+		Platform: "抖音",
+	}
+	if err := db.Create(&ci).Error; err != nil {
+		t.Fatalf("create ci: %v", err)
+	}
+	claude := agents.NewClaude("")
+	r := gin.New()
+	NewQualityHandler(claude, db).RegisterRoutes(r)
+
+	w := doJSON(t, r, http.MethodPost, "/ai/publish-checklist", map[string]any{
+		"content_item_id": ci.ID,
+	})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (script missing), body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "script") {
+		t.Errorf("body should mention script, got: %s", w.Body.String())
+	}
+}
+
+// TestClamp pins the package-private clamp helper. The
+// qualityResponseFromMap test only exercises the happy path, so
+// this table-driven test guards the > 100 and < lo branches added
+// after the original clamp was extracted. If a future refactor
+// silently inverts the bounds, this test fails loudly.
+func TestClamp(t *testing.T) {
+	cases := []struct {
+		name            string
+		v, lo, hi, want int
+	}{
+		{"in range", 50, 0, 100, 50},
+		{"below lo", -5, 0, 100, 0},
+		{"above hi", 150, 0, 100, 100},
+		{"at lo", 0, 0, 100, 0},
+		{"at hi", 100, 0, 100, 100},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clamp(tc.v, tc.lo, tc.hi); got != tc.want {
+				t.Errorf("clamp(%d, %d, %d) = %d, want %d", tc.v, tc.lo, tc.hi, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckHasCTAMessageShape pins the user-facing message
+// checkHasCTA produces. The matched CTA token is interpolated into
+// the message, so a future CTA like "@" would render as "脚本含
+// CTA(@)" — fine, but worth pinning. If a future refactor drops
+// the matched token from the message (e.g. for a clean "CTA 存在"
+// copy), this test will fail and force a deliberate update.
+func TestCheckHasCTAMessageShape(t *testing.T) {
+	cases := []struct {
+		name       string
+		content    string
+		wantStatus publishCheckStatus
+		wantSubstr string
+	}{
+		{"chinese CTA 关注", "欢迎大家关注我们频道", checkPass, "关注"},
+		{"at mention", "请 @ 我们", checkPass, "@"},
+		{"no CTA", "今天讲讲窗边的熊猫", checkWarn, "未发现明确 CTA"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkHasCTA(tc.content)
+			if got.Status != tc.wantStatus {
+				t.Errorf("status = %q, want %q (msg=%q)", got.Status, tc.wantStatus, got.Message)
+			}
+			if !strings.Contains(got.Message, tc.wantSubstr) {
+				t.Errorf("message = %q, want substring %q", got.Message, tc.wantSubstr)
+			}
+		})
 	}
 }

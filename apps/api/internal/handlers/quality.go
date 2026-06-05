@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -151,12 +152,20 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 
 	raw, err := h.claude.Complete(ctx, prompt)
 	if err != nil {
-		if strings.Contains(err.Error(), "API key") {
+		if errors.Is(err, agents.ErrNoAPIKey) {
 			// No API key: fall back to the rule-based scorer so
 			// the frontend still gets a useful answer (and a
 			// clear header so it can show a "demo" badge).
 			markDemoResponse(c)
-			c.JSON(http.StatusOK, qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform)))
+			fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform))
+			if fbErr != nil {
+				// rule-based map desync — log loudly but
+				// still return a clamped zero response so
+				// the frontend gets a usable 200.
+				h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
+				fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
+			}
+			c.JSON(http.StatusOK, fb)
 			return
 		}
 		h.logger.Error("score complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -170,7 +179,12 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 		// rule-based scoring. Better to give the user a
 		// deterministic answer than a 502.
 		h.logger.Warn("score parse failed, falling back to rule-based", "err", err.Error(), "request_id", c.GetString("request_id"))
-		out = qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform))
+		fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform))
+		if fbErr != nil {
+			h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
+			fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
+		}
+		out = fb
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -211,10 +225,23 @@ func parseQualityScore(raw string) (qualityScoreResponse, error) {
 // rule-based fallback into the typed wire response. We do an
 // intermediate JSON round-trip so the field name mapping is in one
 // place and the rule-based helper stays a plain map.
-func qualityResponseFromMap(m map[string]any) qualityScoreResponse {
-	b, _ := json.Marshal(m)
+//
+// We do NOT swallow the marshal/unmarshal errors: if the rule-based
+// output keys ever drift from the wire struct, the caller MUST hear
+// about it (via the returned error) rather than silently get a
+// zero-value response. The handler logs + returns the error and
+// falls back to a zero-value typed response with clamped scores so
+// the frontend still gets a usable 200, but the regression is loud
+// for the operator.
+func qualityResponseFromMap(m map[string]any) (qualityScoreResponse, error) {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return qualityScoreResponse{}, fmt.Errorf("qualityResponseFromMap: marshal: %w", err)
+	}
 	var out qualityScoreResponse
-	_ = json.Unmarshal(b, &out)
+	if err := json.Unmarshal(b, &out); err != nil {
+		return qualityScoreResponse{}, fmt.Errorf("qualityResponseFromMap: unmarshal: %w", err)
+	}
 	if out.Suggestions == nil {
 		out.Suggestions = []qualitySuggestion{}
 	}
@@ -224,7 +251,7 @@ func qualityResponseFromMap(m map[string]any) qualityScoreResponse {
 	out.HookStrength = clamp(out.HookStrength, 0, 100)
 	out.Structure = clamp(out.Structure, 0, 100)
 	out.PlatformFit = clamp(out.PlatformFit, 0, 100)
-	return out
+	return out, nil
 }
 
 func clamp(v, lo, hi int) int {
@@ -339,7 +366,7 @@ func (h *QualityHandler) PlatformAdapt(c *gin.Context) {
 
 	raw, err := h.claude.Complete(ctx, prompt)
 	if err != nil {
-		if strings.Contains(err.Error(), "API key") {
+		if errors.Is(err, agents.ErrNoAPIKey) {
 			h.logger.Warn("platform-adapt: no API key configured", "request_id", c.GetString("request_id"))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
@@ -478,7 +505,17 @@ func (h *QualityHandler) PublishChecklist(c *gin.Context) {
 	}
 
 	var script models.Script
-	if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&script, ci.ScriptID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := h.db.WithContext(withTimeout(c.Request.Context())).First(&script, ci.ScriptID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// A ContentItem with no backing Script is a data
+			// integrity issue. Surface it as 404 with a distinct
+			// message rather than proceeding with a zero-value
+			// Script, which would yield misleading "no hashtags"
+			// / "short script" failures and hide the real bug.
+			h.logger.Error("publish-checklist: script missing for content item", "content_item_id", req.ContentItemID, "script_id", ci.ScriptID, "request_id", c.GetString("request_id"))
+			c.JSON(http.StatusNotFound, gin.H{"error": "script for content item not found"})
+			return
+		}
 		h.logger.Error("publish-checklist: script lookup failed", "err", err.Error(), "script_id", ci.ScriptID, "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up script"})
 		return

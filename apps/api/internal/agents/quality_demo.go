@@ -15,6 +15,16 @@ import "strings"
 // This function is intentionally simple — it exists so demo and
 // fallback paths are decoupled from Claude and so unit tests can
 // pin its behaviour without spinning up the Anthropic SDK.
+//
+// NOTE: the messages produced by buildSuggestions are independent
+// from the pre-baked demo pool in DemoQualityScores. An operator
+// comparing the demo response (served from demo_data.go) against a
+// live rule-based fallback for the same input will see different
+// numbers AND different suggestion copy. That is intentional — the
+// live fallback is meant to be conservative and IP-agnostic, while
+// the demo pool is pre-tuned to the panda IP. If you add a new
+// suggestion message, do so here; the demo pool is updated
+// separately.
 func RuleBasedScore(title, script, platform string) map[string]any {
 	hook := scoreHook(title)
 	structure := scoreStructure(script)
@@ -61,10 +71,21 @@ func scoreHook(title string) int {
 		score += 5
 	}
 	// Strong verbs that show up a lot in successful scripts.
-	for _, kw := range []string{"看", "听", "想", "翻", "写", "走", "看", "陪", "等", "发现", "原来", "终于"} {
-		if strings.Contains(t, kw) {
-			score += 5
+	// We accumulate (capped) rather than break at the first match
+	// so a title with several high-signal keywords — e.g.
+	// "看 听 想 翻 写" — gets a stronger hook score. The cap of 3
+	// prevents a single character appearing repeatedly in a
+	// contrived title from running the score.
+	const maxKeywordHits = 3
+	const keywordBonus = 5
+	keywordHits := 0
+	for _, kw := range []string{"看", "听", "想", "翻", "写", "走", "陪", "等", "发现", "原来", "终于"} {
+		if keywordHits >= maxKeywordHits {
 			break
+		}
+		if strings.Contains(t, kw) {
+			score += keywordBonus
+			keywordHits++
 		}
 	}
 	// Dialogue / quotation — hooks that quote something the panda
@@ -205,9 +226,16 @@ func buildSuggestions(title, script, platform string, hook, structure, fit int) 
 			"severity": sev,
 		})
 	}
+	// The "script too short" suggestion shares the structure
+	// category with the per-axis structure < 70 branch. A very
+	// short script will trip both, producing two identical-category
+	// rows in the UI. Demote the length-based one to a different
+	// category ("word_count") so the frontend can render a clearer
+	// two-axis diagnosis: "your structure is loose" + "your script
+	// is too short to anchor it".
 	if len(strings.TrimSpace(script)) < 50 {
 		out = append(out, map[string]string{
-			"category": "structure",
+			"category": "word_count",
 			"message":  "脚本字数过少(< 50),建议扩展到 80-300 字区间以提升完播率",
 			"severity": "high",
 		})

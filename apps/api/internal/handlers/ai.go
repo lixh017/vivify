@@ -184,6 +184,13 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 			})
 			return
 		}
+		// Demo pool may have grown beyond req.Count (it is a marketing
+		// pool, not a per-request fixture). Mirror the real path and
+		// return only the first req.Count topics so the wire contract
+		// is consistent regardless of which mode the server is in.
+		if len(topics) > req.Count {
+			topics = topics[:req.Count]
+		}
 		markDemoResponse(c)
 		c.JSON(http.StatusOK, generateTopicsResponse{Topics: topics})
 		return

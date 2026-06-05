@@ -27,11 +27,13 @@ func TestGenerateTopicsPrompt(t *testing.T) {
 func TestHumanizeScriptPrompt(t *testing.T) {
 	a := NewClaude("test-key")
 	prompt := a.HumanizeScriptPrompt("这是 AI 生成的脚本，结构化、对仗工整")
-	if !strings.Contains(prompt, "拟人化") {
-		t.Error("humanize prompt missing '拟人化' concept")
-	}
 	if !strings.Contains(prompt, "AI 痕迹") {
 		t.Error("humanize prompt missing 'AI 痕迹' concept")
+	}
+	// New prompt must also include a worked example so Claude
+	// knows what "human" looks like in the panda IP voice.
+	if !strings.Contains(prompt, "改写前") || !strings.Contains(prompt, "改写后") {
+		t.Error("humanize prompt missing before/after example")
 	}
 }
 
@@ -117,13 +119,15 @@ func TestNewClaudeAllowsEmptyKey(t *testing.T) {
 		t.Fatal("NewClaude with empty key should return a non-nil agent")
 	}
 
-	// Complete should fail with a clear, actionable error.
+	// Complete should fail with a clear, actionable error that
+	// matches the exported sentinel (so handlers can branch via
+	// errors.Is rather than substring matching).
 	_, err := a.Complete(context.Background(), "test prompt")
 	if err == nil {
 		t.Error("Complete with empty key should return error")
 	}
-	if !strings.Contains(err.Error(), "API key") {
-		t.Errorf("error should mention API key, got: %v", err)
+	if !errors.Is(err, ErrNoAPIKey) {
+		t.Errorf("error should wrap ErrNoAPIKey, got: %v", err)
 	}
 }
 

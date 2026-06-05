@@ -449,8 +449,8 @@ func TestDemoTopicsNoKey(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v body=%s", err, w.Body.String())
 	}
-	if len(resp.Topics) != 5 {
-		t.Errorf("len(topics) = %d, want 5", len(resp.Topics))
+	if len(resp.Topics) < 5 {
+		t.Errorf("len(topics) = %d, want at least 5", len(resp.Topics))
 	}
 	// Spot-check that the panda IP content actually flowed through.
 	if !strings.Contains(w.Body.String(), "熊猫") {

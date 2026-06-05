@@ -59,8 +59,8 @@ func TestDemoResponseTopicsIsValidJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &topics); err != nil {
 		t.Fatalf("canned topics JSON does not parse: %v\n%s", err, raw)
 	}
-	if len(topics) != 5 {
-		t.Errorf("expected 5 canned topics, got %d", len(topics))
+	if len(topics) < 5 {
+		t.Errorf("expected at least 5 canned topics, got %d", len(topics))
 	}
 	// Spot-check one entry to make sure the fields are populated.
 	if topics[0].Title == "" || topics[0].Hook == "" {
