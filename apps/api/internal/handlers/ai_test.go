@@ -104,6 +104,28 @@ func TestGenerateTopicsStripsMarkdownFence(t *testing.T) {
 	}
 }
 
+// TestGenerateTopicsIncludesPatternAndVoiceTags asserts the upgraded
+// wire contract (pattern + voice_tags) flows through the parser and
+// out to the client. The demo pool in demo_data.go emits these
+// fields; without the new generatedTopic struct fields, the parser
+// would silently drop them and the frontend would never see them.
+func TestGenerateTopicsIncludesPatternAndVoiceTags(t *testing.T) {
+	r := setupDemoRouter(t)
+	w := doJSON(t, r, http.MethodPost, "/ai/topics", map[string]any{
+		"seed":     "雨夜",
+		"platform": "抖音",
+		"count":    2,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{`"pattern":`, `"voice_tags":`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("body missing %s — pattern/voice_tags not flowing through to client: %s", want, w.Body.String())
+		}
+	}
+}
+
 // TestGenerateTopicsNoAPIKey: when the agent returns a "no API key"
 // error, the handler must surface 503 with a clear message so the
 // frontend can show a useful hint instead of a generic 500.

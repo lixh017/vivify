@@ -101,11 +101,21 @@ type generateTopicsRequest struct {
 
 // generatedTopic is the wire shape for a single topic. Field names
 // use snake_case to match the rest of the API (see models/topic.go).
+//
+// The upgraded prompt (see claude.go: GenerateTopicsPrompt) and the
+// demo pool (see DemoTopicsJSON) emit `pattern` and `voice_tags`
+// alongside the original four fields. The frontend surfaces them as
+// design hints, so dropping them at the wire boundary would silently
+// break the "clear result display" deliverable. Both fields are
+// optional from the parser's perspective — old Claude calls that
+// return only the four core fields still parse cleanly.
 type generatedTopic struct {
-	Title               string `json:"title"`
-	Angle               string `json:"angle"`
-	ExpectedPerformance string `json:"expected_performance"`
-	Hook                string `json:"hook"`
+	Title               string   `json:"title"`
+	Angle               string   `json:"angle"`
+	ExpectedPerformance string   `json:"expected_performance"`
+	Hook                string   `json:"hook"`
+	Pattern             string   `json:"pattern,omitempty"`
+	VoiceTags           []string `json:"voice_tags,omitempty"`
 }
 
 // generateTopicsResponse wraps the topics array. Wrapping (rather
@@ -204,9 +214,11 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 	raw, err := h.claude.Complete(ctx, prompt)
 	if err != nil {
 		// Distinguish "Claude is not configured" from generic failures so
-		// the frontend can show a useful hint. The agents package uses
-		// the literal phrase "no Anthropic API key" — match on that.
-		if strings.Contains(err.Error(), "API key") {
+		// the frontend can show a useful hint. Use the exported sentinel
+		// rather than substring matching — substring matching would
+		// silently mis-route any future error message that happens to
+		// contain the phrase "API key" (e.g. "invalid API key for org X").
+		if errors.Is(err, agents.ErrNoAPIKey) {
 			h.logger.Warn("ai: no API key configured", "request_id", c.GetString("request_id"))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
@@ -334,9 +346,10 @@ func (h *AIHandler) HumanizeScript(c *gin.Context) {
 	humanized, err := h.claude.Complete(ctx, prompt)
 	if err != nil {
 		// Distinguish "Claude is not configured" from generic failures
-		// so the frontend can show a useful hint. The agents package
-		// uses the literal phrase "no Anthropic API key" — match on it.
-		if strings.Contains(err.Error(), "API key") {
+		// so the frontend can show a useful hint. Use the exported
+		// sentinel rather than substring matching — see the matching
+		// branch in GenerateTopics for the rationale.
+		if errors.Is(err, agents.ErrNoAPIKey) {
 			h.logger.Warn("humanize: no API key configured", "request_id", c.GetString("request_id"))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
@@ -469,7 +482,7 @@ func (h *AIHandler) Postmortem(c *gin.Context) {
 
 	report, err := h.claude.Complete(ctx, prompt)
 	if err != nil {
-		if strings.Contains(err.Error(), "API key") {
+		if errors.Is(err, agents.ErrNoAPIKey) {
 			h.logger.Warn("postmortem: no API key configured", "request_id", c.GetString("request_id"))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",

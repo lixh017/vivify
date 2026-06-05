@@ -54,3 +54,7 @@ playwright/.cache/
 e2e/.results/
 apps/web/playwright-report/
 apps/web/test-results/
+
+# Test artifacts (image gen / TTS smoke tests)
+image_*.jpg
+speech_*.mp3

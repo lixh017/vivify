@@ -2,6 +2,30 @@ package agents
 
 import "fmt"
 
+// Suggestion category values used in the QualitySuggestion JSON
+// contract. The Claude prompt's worked example references these
+// constants so a rename in the wire shape (or a typo in the
+// prompt) breaks compilation rather than silently degrading
+// scoring. Keep this list in sync with the values the live
+// /ai/score endpoint, the rule-based fallback, and the demo pool
+// emit.
+const (
+	SuggestionCategoryHook      = "hook"
+	SuggestionCategoryStructure = "structure"
+	SuggestionCategoryPlatform  = "platform_fit"
+	SuggestionCategoryWordCount = "word_count"
+	SuggestionCategoryCTA       = "cta"
+)
+
+// Suggestion severity values used in the QualitySuggestion JSON
+// contract. Same rationale as SuggestionCategory*: code-level
+// constants so a typo in the prompt is a compile error.
+const (
+	SuggestionSeverityLow    = "low"
+	SuggestionSeverityMedium = "medium"
+	SuggestionSeverityHigh   = "high"
+)
+
 // ScoreContentPrompt builds the prompt used to ask Claude to
 // evaluate a content piece (title + script) and return a JSON
 // object matching the QualityScoreResponse shape.
@@ -51,10 +75,10 @@ func (c *Claude) ScoreContentPrompt(title, script, platform string) string {
     "platform_fit": "标题 8 字 ≤ 22 字 +25;脚本 21 字偏短(< 80) -7;抖音钩子 3 秒内出画面 +10"
   },
   "suggestions": [
-    { "category": "structure", "severity": "medium",
+    { "category": "%s", "severity": "%s",
       "problem":   "脚本只有 21 字,完播率高但信息密度低,长尾搜索吃不动",
       "rewrite":   "在'今天辛苦了'前加 1-2 句铺垫,例如:'今天的雨...下得有点久' (留白 + 共情)" },
-    { "category": "hook",      "severity": "low",
+    { "category": "%s", "severity": "%s",
       "problem":   "前 3 秒虽然有画面,但旁白第一句才出'窗边的熊猫',可再前置 0.5 秒",
       "rewrite":   "把'画面: 雨打在窗上,熊猫侧脸'写在脚本最前,代替空镜" }
   ],
@@ -73,6 +97,8 @@ func (c *Claude) ScoreContentPrompt(title, script, platform string) string {
 		PlatformVoice,
 		CoTStepsQuality,
 		OutputJSONOnly,
+		SuggestionCategoryStructure, SuggestionSeverityMedium,
+		SuggestionCategoryHook, SuggestionSeverityLow,
 	)
 }
 

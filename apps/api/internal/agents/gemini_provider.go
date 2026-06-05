@@ -117,7 +117,7 @@ func (p *GeminiProvider) Complete(ctx context.Context, prompt string, opts Compl
 	}
 	model := p.defaultModel
 	if opts.Model != "" {
-		model = string(opts.Model)
+		model = opts.Model
 	}
 	maxToks := int64(GeminiDefaultMaxToks)
 	if opts.MaxTokens > 0 {

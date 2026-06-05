@@ -1,6 +1,9 @@
 package agents
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // RuleBasedScore returns a deterministic 0-100 score breakdown for a
 // piece of content based purely on simple heuristics over the
@@ -186,11 +189,19 @@ func scorePlatformFit(title, platform string) int {
 }
 
 // buildSuggestions turns the three axis scores into actionable
-// suggestions. Each suggestion is shaped {category, message,
-// severity} to match the JSON contract the real Claude prompt asks
-// for. We only emit a suggestion when its corresponding axis
-// actually scored low — emitting a "fix your hook" line on a
-// 90-score hook would be noise.
+// suggestions. Each suggestion is shaped {category, severity,
+// problem, rewrite} to match the JSON contract the upgraded
+// ScoreContentPrompt asks for (see quality.go and the demo pool
+// in demo_data.go). We only emit a suggestion when its
+// corresponding axis actually scored low — emitting a "fix your
+// hook" line on a 90-score hook would be noise.
+//
+// The older wire contract used {category, message, severity}; the
+// field rename + split into problem/rewrite was introduced in the
+// AI-quality Phase 1 upgrade. buildSuggestions now returns both
+// problem and rewrite so the rule-based fallback path produces the
+// same shape as the live Claude path, which means the frontend
+// does not need to branch on which mode produced the response.
 func buildSuggestions(title, script, platform string, hook, structure, fit int) []map[string]string {
 	out := make([]map[string]string, 0, 4)
 	if hook < 70 {
@@ -200,7 +211,8 @@ func buildSuggestions(title, script, platform string, hook, structure, fit int) 
 		}
 		out = append(out, map[string]string{
 			"category": "hook",
-			"message":  "前 3 秒钩子偏弱,建议用具体画面或对话开场,避免 '今天想给大家讲' 这类铺垫句式",
+			"problem":  "前 3 秒钩子偏弱,首句偏向'今天想给大家讲'等铺垫句式,缺少具体画面或对话",
+			"rewrite":  "换成画面钩子:'画面: 窗边的熊猫看着雨,3 秒无台词' → 旁白第一句再开口",
 			"severity": sev,
 		})
 	}
@@ -211,7 +223,8 @@ func buildSuggestions(title, script, platform string, hook, structure, fit int) 
 		}
 		out = append(out, map[string]string{
 			"category": "structure",
-			"message":  "脚本结构松散,建议加入 1-2 个换行做呼吸,并在结尾留一句情绪锚点",
+			"problem":  "脚本结构松散,缺少换行做呼吸,结尾也没有留出情绪锚点",
+			"rewrite":  "在第 2 段和第 3 段之间插入空行,结尾把口号句换成 1 句悬而未决的旁白(例:'今天...就到这里吧')",
 			"severity": sev,
 		})
 	}
@@ -222,7 +235,8 @@ func buildSuggestions(title, script, platform string, hook, structure, fit int) 
 		}
 		out = append(out, map[string]string{
 			"category": "platform_fit",
-			"message":  platformFitSuggestion(platform, len([]rune(title))),
+			"problem":  "标题长度或结构与目标平台惯例不符:" + platformFitProblem(platform, len([]rune(title))),
+			"rewrite":  platformFitSuggestion(platform, len([]rune(title))),
 			"severity": sev,
 		})
 	}
@@ -236,7 +250,8 @@ func buildSuggestions(title, script, platform string, hook, structure, fit int) 
 	if len(strings.TrimSpace(script)) < 50 {
 		out = append(out, map[string]string{
 			"category": "word_count",
-			"message":  "脚本字数过少(< 50),建议扩展到 80-300 字区间以提升完播率",
+			"problem":  "脚本字数过少(< 50),完播率可能拉满但信息密度低,长尾搜索吃不动",
+			"rewrite":  "在结尾前补 2-3 句具体画面或留白,把字数推到 80-300 字区间",
 			"severity": "high",
 		})
 	}
@@ -256,6 +271,23 @@ func platformFitSuggestion(platform string, runes int) string {
 		return "小红书标题超过 20 字会折叠,建议把核心词前置并加 emoji"
 	default:
 		return "标题长度需根据目标平台调整,主流建议 ≤ 22 字"
+	}
+}
+
+// platformFitProblem returns the "why this scored low" half of the
+// platform_fit suggestion, kept separate from platformFitSuggestion
+// (the "what to do about it" half) so the suggestion entry carries
+// both problem and rewrite fields in the new wire contract.
+func platformFitProblem(platform string, runes int) string {
+	switch platform {
+	case "抖音":
+		return fmt.Sprintf("当前标题 %d 字,抖音显示上限 22 字,超出部分会被截断", runes)
+	case "哔哩哔哩":
+		return fmt.Sprintf("当前标题 %d 字,B 站虽然接受更长标题,但缺少搜索关键词,长尾流量吃不动", runes)
+	case "小红书":
+		return fmt.Sprintf("当前标题 %d 字,小红书显示上限 20 字,超出部分会被折叠", runes)
+	default:
+		return fmt.Sprintf("当前标题 %d 字,主流平台惯例 ≤ 22 字,长度需要按目标平台调整", runes)
 	}
 }
 

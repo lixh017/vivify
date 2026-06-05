@@ -57,12 +57,12 @@ const batchConcurrency = 3
 // partial failures — the request is all-or-nothing so the
 // caller can show a clean "5 ideas saved" toast.
 type batchRequest struct {
-	Seed                    string   `json:"seed"`
-	Platforms               []string `json:"platforms"`
-	Count                   int      `json:"count"`
-	IncludeKnowledge        bool     `json:"include_knowledge"`
-	Steps                   []string `json:"steps"`
-	AutoCreateContentItems  bool     `json:"auto_create_content_items"`
+	Seed                   string   `json:"seed"`
+	Platforms              []string `json:"platforms"`
+	Count                  int      `json:"count"`
+	IncludeKnowledge       bool     `json:"include_knowledge"`
+	Steps                  []string `json:"steps"`
+	AutoCreateContentItems bool     `json:"auto_create_content_items"`
 }
 
 // batchTopic is the trimmed topic shape the batch endpoint
@@ -81,11 +81,11 @@ type batchTopic struct {
 // envelope shape mirrors /ai/pipeline's per-section emission
 // so the frontend can reuse the same render code.
 type batchGeneratedItem struct {
-	Topic        *batchTopic            `json:"topic,omitempty"`
-	Script       *pipelineScript        `json:"script,omitempty"`
-	Score        *qualityScoreResponse  `json:"score,omitempty"`
-	Adaptations  *platformAdaptResponse `json:"adaptations,omitempty"`
-	Error        string                 `json:"error,omitempty"`
+	Topic       *batchTopic            `json:"topic,omitempty"`
+	Script      *pipelineScript        `json:"script,omitempty"`
+	Score       *qualityScoreResponse  `json:"score,omitempty"`
+	Adaptations *platformAdaptResponse `json:"adaptations,omitempty"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 // batchSummary is the small rollup block at the end of the
@@ -157,6 +157,16 @@ var defaultBatchSteps = []string{"topics", "script", "score", "adapt"}
 // feels consistent.
 var defaultBatchPlatforms = []string{"抖音", "哔哩哔哩", "小红书"}
 
+// defaultSourcePlatform is the platform the batch handler uses
+// for the topic + script steps when the caller did not supply a
+// `platforms` list. It is the first entry in defaultBatchPlatforms
+// by convention; the per-topic adapt step then rewrites to every
+// platform in `platforms` regardless. Defining it as a constant
+// keeps the batch handler's "source platform" default in lockstep
+// with any future change to the canonical source platform and
+// makes the value referenceable from tests.
+const defaultSourcePlatform = "抖音"
+
 // RunBatch — POST /ai/batch
 //
 // Body: {seed, platforms, count, include_knowledge, steps, auto_create_content_items}
@@ -200,9 +210,11 @@ func (h *BatchHandler) RunBatch(c *gin.Context) {
 	}
 
 	// Per-topic source platform for the topic + script steps.
-	// We default to 抖音 — the per-topic adapt step rewrites
-	// to every platform in `platforms` regardless.
-	sourcePlatform := "抖音"
+	// Defaults to the canonical source platform; the per-topic
+	// adapt step rewrites to every platform in `platforms`
+	// regardless. See defaultSourcePlatform docstring for why
+	// this is a named constant rather than an inline literal.
+	sourcePlatform := defaultSourcePlatform
 	if len(platforms) > 0 {
 		sourcePlatform = platforms[0]
 	}
@@ -263,9 +275,16 @@ func normalizeBatchSteps(in []string) []string {
 
 // normalizeBatchPlatforms returns the platform list with
 // duplicates removed and empty entries dropped. Empty input
-// becomes the canonical 抖音/哔哩哔哩/小红书 set. The first
-// platform is used as the "source" platform for the topic +
-// script steps (the adapt step then emits all three).
+// (nil/zero-length, or all-blank entries) becomes the canonical
+// 抖音/哔哩哔哩/小红书 set. The first platform is used as the
+// "source" platform for the topic + script steps (the adapt step
+// then emits all three).
+//
+// The all-blank branch is preserved (not unreachable) so a
+// caller that sends ["", " "] still gets a usable platform set
+// rather than a silent empty list — matching the test's contract
+// and the QA guidance that the default is only used when input
+// is nil/empty/all-blank.
 func normalizeBatchPlatforms(in []string) []string {
 	if len(in) == 0 {
 		out := make([]string, len(defaultBatchPlatforms))
@@ -283,6 +302,9 @@ func normalizeBatchPlatforms(in []string) []string {
 		out = append(out, p)
 	}
 	if len(out) == 0 {
+		// All entries were blank or duplicates of nothing —
+		// fall back to the canonical set so downstream code
+		// always has at least one platform to work with.
 		out = append(out, defaultBatchPlatforms...)
 	}
 	return out
@@ -317,7 +339,11 @@ func (h *BatchHandler) runBatch(ctx context.Context, req batchRequest, steps, pl
 // calling /ai/pipeline N times. A failure in any step records
 // the error on the result and short-circuits the rest of the
 // steps (same policy as the pipeline handler).
-func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform string, platforms, steps []string, ragContext string, ragTitles []string) batchGeneratedItem {
+//
+// ragTitles is reserved for a future "grounded in docs X, Y, Z"
+// per-topic attribution feature; the per-batch title set is
+// already returned at the top level via batchResponse.KnowledgeUsed.
+func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform string, platforms, steps []string, ragContext string, _ []string) batchGeneratedItem {
 	res := batchGeneratedItem{}
 	topics, err := runBatchTopicsStep(ctx, h.claude, seed, sourcePlatform, ragContext, 1)
 	if err != nil {
@@ -339,8 +365,13 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 		return res
 	}
 
+	// scriptContent is tracked across iterations of the steps
+	// loop so a caller that lists "script" twice (e.g. once to
+	// also force regeneration after a future flag) only pays for
+	// one Claude call. Today normalizeBatchSteps dedupes by
+	// string, so this is a defensive no-op, but the variable
+	// keeps the loop correct if that policy ever relaxes.
 	var scriptContent string
-	var scriptTitle string
 	for _, step := range steps {
 		if step == "topics" {
 			continue
@@ -357,7 +388,6 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 			}
 			res.Script = s
 			scriptContent = s.Content
-			scriptTitle = s.Title
 		case "score":
 			if res.Script == nil {
 				res.Error = "score step requires a script"
@@ -382,9 +412,6 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 			res.Adaptations = a
 		}
 	}
-	_ = scriptContent
-	_ = scriptTitle
-	_ = ragTitles // reserved for future per-doc attribution
 	return res
 }
 

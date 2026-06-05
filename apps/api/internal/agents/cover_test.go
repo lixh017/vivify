@@ -218,13 +218,3 @@ func TestProviderNameResolvesAuto(t *testing.T) {
 		t.Errorf("no key, provider = %q, want mock", got)
 	}
 }
-
-// min is a tiny helper to keep the import list small. (Go
-// 1.21+ has a builtin but we keep the explicit form to stay
-// readable for reviewers on older toolchains.)
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

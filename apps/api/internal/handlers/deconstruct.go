@@ -26,6 +26,14 @@ const maxTranscriptBytes = 256 * 1024
 // inject fakes without pulling in the Anthropic SDK. The set is
 // intentionally narrow: the two prompt builders plus the existing
 // demo-mode helpers.
+//
+// Note: the DemoResponse(op, seed) call uses agents.DemoOperation
+// because the demo pool is shared across the AI surface (topics,
+// quality scoring, deconstruct, viral formula). The constants
+// passable here are agents.DemoOpDeconstruct and
+// agents.DemoOpViralFormula — using the named constants at the
+// call sites makes the intent self-documenting (see
+// h.claude.DemoResponse(agents.DemoOpDeconstruct, ...) below).
 type DeconstructClient interface {
 	DeconstructPrompt(transcript string, meta agents.DeconstructMetadata) string
 	ViralFormulaPrompt(transcript string) string

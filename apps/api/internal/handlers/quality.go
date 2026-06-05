@@ -62,6 +62,25 @@ func (h *QualityHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/publish-checklist", h.PublishChecklist)
 }
 
+// scoreFallbackHeader is the response header the /ai/score
+// handler sets when the rule-based fallback path itself fails (so
+// the frontend gets a clamped zero response with empty
+// suggestions, but at least knows the score is unreliable).
+// The X- prefix keeps it out of CORS preflight by default; if a
+// future deployment crosses origins and needs to read it, add
+// `Access-Control-Expose-Headers: X-Score-Fallback` to the CORS
+// middleware.
+//
+// The possible values today are:
+//   - "failed" — qualityResponseFromMap returned an error; the
+//     response body is a zero-value qualityScoreResponse and the
+//     frontend should show a degraded banner instead of a 0/0/0/0.
+const scoreFallbackHeader = "X-Score-Fallback"
+
+const (
+	scoreFallbackFailed = "failed"
+)
+
 // ---------------------------------------------------------------------------
 // /ai/score
 // ---------------------------------------------------------------------------
@@ -75,12 +94,20 @@ type scoreRequest struct {
 	Platform string `json:"platform"`
 }
 
-// qualitySuggestion matches the {category, message, severity}
-// shape the prompt asks Claude for. The severity field is
-// constrained to a small set so the frontend can style consistently.
+// qualitySuggestion matches the {category, problem, rewrite,
+// severity} shape the upgraded ScoreContentPrompt and the demo
+// pool (see DemoQualityScores in demo_data.go) produce. Each
+// suggestion is a "before/after" pair: problem is what the
+// heuristic flagged, rewrite is the concrete fix the user can paste
+// back into their script. The legacy {category, message, severity}
+// contract from the pre-Phase-1 wire shape is gone — both the
+// rule-based fallback (buildSuggestions) and the live Claude path
+// emit the same fields, so the frontend does not need to branch
+// on which mode produced the response.
 type qualitySuggestion struct {
 	Category string `json:"category"`
-	Message  string `json:"message"`
+	Problem  string `json:"problem"`
+	Rewrite  string `json:"rewrite"`
 	Severity string `json:"severity"`
 }
 
@@ -161,9 +188,13 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 			if fbErr != nil {
 				// rule-based map desync — log loudly but
 				// still return a clamped zero response so
-				// the frontend gets a usable 200.
+				// the frontend gets a usable 200. We also
+				// set X-Score-Fallback=failed so the UI can
+				// surface a degraded banner instead of a
+				// silent 0/0/0/0.
 				h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
 				fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
+				c.Header(scoreFallbackHeader, scoreFallbackFailed)
 			}
 			c.JSON(http.StatusOK, fb)
 			return
@@ -183,6 +214,9 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 		if fbErr != nil {
 			h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
 			fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
+			// Same X-Score-Fallback header as the no-key path so
+			// the frontend can show a degraded banner.
+			c.Header(scoreFallbackHeader, scoreFallbackFailed)
 		}
 		out = fb
 	}

@@ -43,16 +43,18 @@ type coverResponse struct {
 // handler owns input validation + response shape and leaves
 // provider selection / mock fallback to the agent.
 type CoverHandler struct {
-	gen    agents.CoverGenerator
-	logger *slog.Logger
+	gen agents.CoverGenerator
 }
 
-// NewCoverHandler wires a CoverHandler. A nil logger falls
-// back to slog.Default(). The generator is required; callers
-// who want a fully-disabled endpoint can pass a CoverClient
-// constructed with the "mock" provider and an empty key.
+// NewCoverHandler wires a CoverHandler. The generator is
+// required; callers who want a fully-disabled endpoint can
+// pass a CoverClient constructed with the "mock" provider
+// and an empty key. Logging uses slog.Default() (no logger
+// injection point — the cover handler is small enough that
+// the only thing the logger would do is forward to the
+// default).
 func NewCoverHandler(gen agents.CoverGenerator) *CoverHandler {
-	return &CoverHandler{gen: gen, logger: slog.Default()}
+	return &CoverHandler{gen: gen}
 }
 
 // RegisterRoutes attaches the cover endpoint to the router.
@@ -66,7 +68,8 @@ func (h *CoverHandler) RegisterRoutes(r gin.IRouter) {
 // 200:  {image_url, prompt_used, provider, generation_time_ms}
 // 400:  missing title
 // 502:  provider returned a non-2xx (only when a real key is
-//       configured; mock mode never returns 502)
+//
+//	configured; mock mode never returns 502)
 //
 // Demo mode (?demo=true or no API key) is handled inside
 // the cover agent — the handler does not need to know
@@ -76,7 +79,7 @@ func (h *CoverHandler) RegisterRoutes(r gin.IRouter) {
 func (h *CoverHandler) GenerateCover(c *gin.Context) {
 	var req coverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("invalid cover body", "err", err.Error(), "request_id", c.GetString("request_id"))
+		slog.Default().Warn("invalid cover body", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
@@ -95,10 +98,22 @@ func (h *CoverHandler) GenerateCover(c *gin.Context) {
 		TopicID:  req.TopicID,
 	})
 	if err != nil {
-		h.logger.Error("cover generation failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		// Log the full upstream detail (which may include provider
+		// URLs, key fragments, or stack-trace style messages) so
+		// the operator can diagnose via logs, but do NOT echo it
+		// to the public response body. The user-facing message
+		// is a stable string that is safe to surface to a browser
+		// or third-party consumer of the API.
+		slog.Default().Error(
+			"cover generation failed",
+			"err", err.Error(),
+			"provider", res.Provider,
+			"request_id", c.GetString("request_id"),
+		)
 		c.JSON(http.StatusBadGateway, gin.H{
-			"error":  "cover generation failed: " + err.Error(),
-			"prompt": res.PromptUsed,
+			"error":    "cover generation failed; see server logs",
+			"prompt":   res.PromptUsed,
+			"provider": res.Provider,
 		})
 		return
 	}

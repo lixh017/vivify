@@ -23,10 +23,10 @@ import (
 // provider's contract — the underlying transport is the same
 // 火山引擎 OpenAPI endpoint but the payload schema differs.
 const (
-	CoverProviderKling   = "kling"
-	CoverProviderJimeng  = "jimeng" // 即梦
-	CoverProviderAuto    = "auto"   // pick first configured, else mock
-	CoverProviderMock    = "mock"   // never hits the network
+	CoverProviderKling  = "kling"
+	CoverProviderJimeng = "jimeng" // 即梦
+	CoverProviderAuto   = "auto"   // pick first configured, else mock
+	CoverProviderMock   = "mock"   // never hits the network
 )
 
 // Default timeout for a single cover-image generation request.
@@ -34,6 +34,15 @@ const (
 // so a slow upstream does not surface as a transient 502 to the
 // frontend.
 const coverDefaultTimeout = 30 * time.Second
+
+// maxCoverResponseBytes caps how many bytes we will buffer from
+// the upstream provider response. 1 MiB is well above any sane
+// 火山引擎 image-generation payload (a typical response is a few
+// KB of JSON around the CDN URL) but protects the API server
+// from OOMing if the upstream ever returns an unexpectedly
+// large body (e.g. an HTML error page from a misconfigured
+// proxy).
+const maxCoverResponseBytes = 1 << 20
 
 // Volcengine base URL for the image-generation endpoints. The
 // path is appended per-provider by the request builder. We keep
@@ -96,8 +105,12 @@ type CoverClient struct {
 // generation is needed. Allowed values: "kling", "jimeng",
 // "auto" (default: kling if configured else jimeng), "mock"
 // (force mock even when a key is set). Unknown values are
-// coerced to "auto" so a typo does not 400 the call.
+// coerced to "auto" so a typo does not 400 the call, AND a
+// warning is logged with the original value so the operator
+// can spot COVER_PROVIDER=klign (typo) instead of silently
+// getting a kling-or-mock fallback.
 func NewCoverClient(apiKey, provider string) *CoverClient {
+	original := provider
 	p := strings.ToLower(strings.TrimSpace(provider))
 	switch p {
 	case "", CoverProviderAuto:
@@ -106,7 +119,14 @@ func NewCoverClient(apiKey, provider string) *CoverClient {
 		// keep
 	default:
 		// Unknown provider name — fall through to auto so the
-		// call still has a chance to succeed.
+		// call still has a chance to succeed. Log the original
+		// (un-normalized) value so the operator can correlate
+		// with COVER_PROVIDER in their .env / deployment config.
+		slog.Default().Warn(
+			"cover: unknown provider coerced to auto",
+			"raw", original,
+			"normalized", p,
+		)
 		p = CoverProviderAuto
 	}
 	return &CoverClient{
@@ -148,10 +168,10 @@ func (c *CoverClient) ProviderName() string {
 }
 
 // Generate runs a cover-image generation. Behaviour:
-//   1. If provider == "mock" OR apiKey is empty, return a
-//      deterministic mock image (data: URL with a small SVG).
-//   2. Otherwise build the prompt, call the 火山引擎 endpoint,
-//      and return the CDN URL from the response.
+//  1. If provider == "mock" OR apiKey is empty, return a
+//     deterministic mock image (data: URL with a small SVG).
+//  2. Otherwise build the prompt, call the 火山引擎 endpoint,
+//     and return the CDN URL from the response.
 //
 // The function never returns an empty image_url: a transport
 // failure is wrapped as an error and a mock is NOT returned in
@@ -190,7 +210,7 @@ func (c *CoverClient) Generate(ctx context.Context, req CoverRequest) (CoverResu
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverResponseBytes))
 	if err != nil {
 		return CoverResult{}, fmt.Errorf("cover: read response: %w", err)
 	}
@@ -280,7 +300,7 @@ func (c *CoverClient) buildProviderBody(prov, prompt string) ([]byte, error) {
 		})
 	default:
 		return json.Marshal(map[string]any{
-			"prompt":      prompt,
+			"prompt":       prompt,
 			"aspect_ratio": "9:16",
 			"n":            1,
 		})

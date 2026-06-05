@@ -107,9 +107,14 @@ func TestCoverRejectsEmptyTitle(t *testing.T) {
 
 // TestCoverReturnsBadGatewayOnProviderError asserts the
 // 502 path: the generator returned an error (e.g. real
-// provider returned 401). The handler must surface the
-// error message and include the prompt that was sent so an
-// operator can debug without re-running with curl.
+// provider returned 401). The handler must surface a stable
+// user-facing message AND echo the prompt that was sent so an
+// operator can debug without re-running with curl. The raw
+// upstream error text (which may include provider URLs or key
+// fragments) is NOT echoed to the body — that detail is
+// captured via the slog call. See the slog line emitted by
+// the handler in the test output for the full upstream
+// message.
 func TestCoverReturnsBadGatewayOnProviderError(t *testing.T) {
 	gen := &fakeCoverGen{
 		available: true,
@@ -125,8 +130,11 @@ func TestCoverReturnsBadGatewayOnProviderError(t *testing.T) {
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "401") {
-		t.Errorf("body = %s, want 401 in error", w.Body.String())
+	if !strings.Contains(w.Body.String(), "see server logs") {
+		t.Errorf("body = %s, want stable 'see server logs' message", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "invalid access key") {
+		t.Errorf("body = %s, must not leak raw provider error", w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "the prompt that was sent") {
 		t.Errorf("body = %s, want prompt echoed", w.Body.String())

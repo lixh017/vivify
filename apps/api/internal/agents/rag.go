@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -48,6 +49,12 @@ const ragLimit = 3
 // ("", nil) so the pipeline handler can stay oblivious to the
 // configuration shape during tests. The platform argument is
 // trimmed; an empty platform is not an error.
+//
+// On a DB error the helper degrades to ("", nil) so the pipeline
+// still returns a useful response (without a style-reference
+// banner) — the underlying error is logged at WARN via slog so an
+// operator can distinguish "no matching docs" from "the RAG lookup
+// itself failed".
 func FindRelevantKnowledge(ctx context.Context, db *gorm.DB, seed, platform string) (string, []string) {
 	if db == nil {
 		// No DB wired (test mode without gorm). Skip RAG cleanly
@@ -76,10 +83,15 @@ func FindRelevantKnowledge(ctx context.Context, db *gorm.DB, seed, platform stri
 		Order("updated_at DESC").
 		Limit(ragLimit)
 	if err := q.Find(&docs).Error; err != nil {
-		// On a DB error we degrade to "no RAG context" rather than
-		// failing the whole pipeline. The pipeline handler logs the
-		// underlying error and the frontend still gets a useful
-		// response without the style-reference banner.
+		// Degrade to "no RAG context" so the pipeline still returns
+		// a useful response. We log the underlying error so an
+		// operator can distinguish "RAG lookup failed" from
+		// "no matching docs" in the operator logs.
+		slog.WarnContext(ctx, "RAG lookup failed; continuing without style reference",
+			"err", err.Error(),
+			"seed", cleanedSeed,
+			"platform", platform,
+		)
 		return "", nil
 	}
 	if len(docs) == 0 {

@@ -32,6 +32,16 @@ type DeconstructMetadata struct {
 //   - gives a worked example for the canonical "深夜熊猫读庄子" video
 //   - explicitly lists the per-platform fit output shape
 //   - requires overall_score to be justified by 3-5 evidence lines
+//
+// Note for future prompt iterations: the long Chinese spec is
+// inlined here on purpose (Claude performs better with a single
+// contiguous prompt than with concatenated fragments), but the
+// voice / style fragments it depends on (PandaIPVoice, CoTStepsDeconstruct,
+// OutputJSONOnly) live in prompts.go — the central catalog the LLM
+// team is expected to iterate on. If you need to tweak voice or
+// reasoning scaffolding, edit prompts.go; reserve edits to this
+// function for the task spec itself (sampling, beat shape,
+// output fields).
 func (c *Claude) DeconstructPrompt(transcript string, meta DeconstructMetadata) string {
 	return fmt.Sprintf(
 		`%s

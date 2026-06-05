@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	anthropic "github.com/anthropics/anthropic-sdk-go"
 )
 
 // TaskName is a typed string identifying which OPC AI task is
@@ -52,13 +50,13 @@ type RouteConfig struct {
 // NewRouterWithOverrides to inject env-based per-task model
 // overrides without forking the table.
 var DefaultRoutes = map[TaskName]RouteConfig{
-	TaskTopicGenerate:  {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeSonnet4_5)},
-	TaskScriptHumanize: {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeSonnet4_5)},
-	TaskContentScore:   {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeHaiku4_5)},
-	TaskPlatformAdapt:  {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeSonnet4_5)},
+	TaskTopicGenerate:  {Provider: ProviderClaude, Model: ModelClaudeSonnet4_5},
+	TaskScriptHumanize: {Provider: ProviderClaude, Model: ModelClaudeSonnet4_5},
+	TaskContentScore:   {Provider: ProviderClaude, Model: ModelClaudeHaiku4_5},
+	TaskPlatformAdapt:  {Provider: ProviderClaude, Model: ModelClaudeSonnet4_5},
 	TaskDeconstruct:    {Provider: ProviderGemini, Model: GeminiDefaultModel},
-	TaskViralFormula:   {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeSonnet4_5)},
-	TaskPostmortem:     {Provider: ProviderClaude, Model: string(anthropic.ModelClaudeSonnet4_5)},
+	TaskViralFormula:   {Provider: ProviderClaude, Model: ModelClaudeSonnet4_5},
+	TaskPostmortem:     {Provider: ProviderClaude, Model: ModelClaudeSonnet4_5},
 }
 
 // Router resolves a TaskName to a (Provider, model) pair at call
@@ -177,7 +175,7 @@ func (r *Router) Complete(ctx context.Context, task TaskName, prompt string, opt
 		return "", fmt.Errorf("router: no provider available for task %q: %w", task, ErrProviderUnavailable)
 	}
 	if opts.Model == "" && model != "" {
-		opts.Model = anthropic.Model(model)
+		opts.Model = model
 	}
 	return p.Complete(ctx, prompt, opts)
 }

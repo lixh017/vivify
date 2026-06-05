@@ -34,7 +34,7 @@ var ErrNoContent = errors.New("claude returned empty content")
 // (e.g. viral deconstruction) can override these per-call through
 // CompleteOptions.
 const (
-	DefaultModel     = anthropic.ModelClaudeSonnet4_5
+	DefaultModel     = ModelClaudeSonnet4_5
 	DefaultMaxTokens = 4096
 	DefaultTimeout   = 60 * time.Second
 )
@@ -46,7 +46,7 @@ type Claude struct {
 	client        anthropic.Client
 	keyConfigured bool         // false when constructed with empty API key (dev mode)
 	override      CompleteFunc // optional test override; nil in production
-	model         anthropic.Model
+	model         string
 	maxTokens     int64
 	timeout       time.Duration
 }
@@ -58,8 +58,12 @@ type CompleteFunc func(ctx context.Context, prompt string) (string, error)
 // CompleteOptions tunes a single Complete call. Zero values fall
 // back to the Claude-constructor defaults. Use this when a specific
 // tool needs a larger token budget or a different model.
+//
+// Model is a plain string (not anthropic.Model) so the Provider
+// interface stays vendor-neutral — the Claude-specific providers
+// cast to anthropic.Model at the SDK call site.
 type CompleteOptions struct {
-	Model     anthropic.Model
+	Model     string
 	MaxTokens int64
 	Timeout   time.Duration
 }
@@ -315,7 +319,7 @@ func (c *Claude) CompleteWithOptions(ctx context.Context, prompt string, opts Co
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resp, err := c.client.Messages.New(cctx, anthropic.MessageNewParams{
-		Model:     model,
+		Model:     anthropic.Model(model),
 		MaxTokens: maxTokens,
 		Messages: []anthropic.MessageParam{
 			{
@@ -353,7 +357,7 @@ func (c *Claude) Complete(ctx context.Context, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	resp, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     c.model,
+		Model:     anthropic.Model(c.model),
 		MaxTokens: c.maxTokens,
 		Messages: []anthropic.MessageParam{
 			{

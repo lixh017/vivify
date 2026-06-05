@@ -92,14 +92,17 @@ func TestScoreForcedDemoWithKey(t *testing.T) {
 
 // TestScoreRealPath verifies the override path runs and the
 // response is parsed. We echo back a canned JSON and check the
-// handler uses it.
+// handler uses it. The suggestion uses the Phase-1
+// {category, problem, rewrite, severity} shape so a future
+// regression to the old {category, message, severity} contract
+// would fail this test.
 func TestScoreRealPath(t *testing.T) {
 	overrideResp := `{
 		"overall_score": 90,
 		"hook_strength": 95,
 		"structure": 88,
 		"platform_fit": 87,
-		"suggestions": [{"category":"hook","message":"很好","severity":"low"}],
+		"suggestions": [{"category":"hook","problem":"开头铺垫句偏多","rewrite":"换成具体画面钩子","severity":"low"}],
 		"rewritten_hook": ""
 	}`
 	r := setupQualityTestRouter(t, func(_ context.Context, _ string) (string, error) {
@@ -122,6 +125,16 @@ func TestScoreRealPath(t *testing.T) {
 	}
 	if len(resp.Suggestions) != 1 || resp.Suggestions[0].Category != "hook" {
 		t.Errorf("suggestions = %+v, want one hook suggestion", resp.Suggestions)
+	}
+	// Pin the Phase-1 wire shape: problem + rewrite must round-trip.
+	// The legacy `message` field was removed from the struct; a
+	// regression that re-adds it would no longer compile and that
+	// compile failure is itself the guard.
+	if resp.Suggestions[0].Problem == "" {
+		t.Errorf("suggestion.problem is empty, want non-empty (Phase-1 contract)")
+	}
+	if resp.Suggestions[0].Rewrite == "" {
+		t.Errorf("suggestion.rewrite is empty, want non-empty (Phase-1 contract)")
 	}
 }
 
@@ -147,6 +160,14 @@ func TestScoreFallsBackOnParseError(t *testing.T) {
 	}
 	if resp.OverallScore < 1 {
 		t.Errorf("fallback overall_score should be > 0, got %d", resp.OverallScore)
+	}
+	// Phase-1 QA: the X-Score-Fallback header is reserved for the
+	// case where the rule-based fallback itself fails. When parse
+	// fails but the fallback succeeds (the common case), the
+	// header MUST be empty so the frontend does not show a
+	// degraded banner for a normal fallback.
+	if got := w.Header().Get(scoreFallbackHeader); got != "" {
+		t.Errorf("%s = %q, want empty (fallback succeeded)", scoreFallbackHeader, got)
 	}
 }
 

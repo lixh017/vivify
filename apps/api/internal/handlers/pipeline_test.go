@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -94,11 +95,11 @@ func TestPipelineRunsAllFourStepsInOrder(t *testing.T) {
 		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Topics []generatedTopic `json:"topics"`
-		Script *pipelineScript  `json:"script"`
-		Score  *qualityScoreResponse `json:"score"`
+		Topics []generatedTopic       `json:"topics"`
+		Script *pipelineScript        `json:"script"`
+		Score  *qualityScoreResponse  `json:"score"`
 		Adapt  *platformAdaptResponse `json:"adaptations"`
-		Used   []string         `json:"knowledge_used"`
+		Used   []string               `json:"knowledge_used"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v body=%s", err, w.Body.String())
@@ -131,8 +132,10 @@ func TestPipelineRunsAllFourStepsInOrder(t *testing.T) {
 // evidence-only.
 func TestPipelineKnowledgeUsedWhenFlagTrue(t *testing.T) {
 	db := openPipelineDB(t)
-	// Seed two docs — one matches the seed "雨夜", the other is
-	// noise that should not be returned.
+	// Seed one matching doc + one noise doc. Multi-doc ordering
+	// is exercised separately by
+	// TestPipelineKnowledgeUsedOrderIsUpdatedAtDesc; this test
+	// keeps the "RAG picks the right doc" assertion focused.
 	if err := db.Create(&models.KnowledgeDoc{Title: "雨夜窗边", Content: "窗边的熊猫,一句话都没说"}).Error; err != nil {
 		t.Fatalf("seed doc 1: %v", err)
 	}
@@ -196,6 +199,57 @@ func TestPipelineKnowledgeUsedWhenFlagTrue(t *testing.T) {
 	}
 }
 
+// TestPipelineKnowledgeUsedOrderIsUpdatedAtDesc seeds multiple
+// matching docs in a non-monotonic order and asserts the response
+// is sorted by updated_at DESC, matching the SQL in
+// agents/rag.go. A future query change (e.g. dropping the ORDER
+// BY, or switching to ORDER BY id) would flip this and the test
+// would fail — protecting the operator-facing "grounded in docs
+// X, Y, Z" ordering from silent regressions.
+func TestPipelineKnowledgeUsedOrderIsUpdatedAtDesc(t *testing.T) {
+	db := openPipelineDB(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Insertion order is NOT updated_at order on purpose.
+	docs := []models.KnowledgeDoc{
+		{Title: "雨夜-A", Content: "x", UpdatedAt: base.Add(0 * time.Hour)}, // oldest
+		{Title: "雨夜-C", Content: "y", UpdatedAt: base.Add(2 * time.Hour)}, // newest
+		{Title: "雨夜-B", Content: "z", UpdatedAt: base.Add(1 * time.Hour)}, // middle
+	}
+	for i := range docs {
+		if err := db.Create(&docs[i]).Error; err != nil {
+			t.Fatalf("seed doc %d: %v", i, err)
+		}
+	}
+
+	override := func(_ context.Context, _ string) (string, error) {
+		return `[{"title":"深夜窗边","angle":"治愈","expected_performance":"高完播","hook":"画面: 熊猫"}]`, nil
+	}
+	r := setupPipelineRouter(t, override, db)
+	w := doJSON(t, r, http.MethodPost, "/ai/pipeline", map[string]any{
+		"seed":              "雨夜",
+		"platform":          "抖音",
+		"include_knowledge": true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Used []string `json:"knowledge_used"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, w.Body.String())
+	}
+	want := []string{"雨夜-C", "雨夜-B", "雨夜-A"}
+	if len(resp.Used) != len(want) {
+		t.Fatalf("knowledge_used = %v, want %v", resp.Used, want)
+	}
+	for i := range want {
+		if resp.Used[i] != want[i] {
+			t.Errorf("knowledge_used[%d] = %q, want %q (full: %v)", i, resp.Used[i], want[i], resp.Used)
+		}
+	}
+}
+
 // TestPipelineKnowledgeEmptyWhenFlagFalse asserts the RAG step
 // is silently skipped when include_knowledge is false. The
 // knowledge_used field is still present in the response (as an
@@ -251,10 +305,10 @@ func TestPipelineDemoMode(t *testing.T) {
 		t.Errorf("X-Demo-Mode header = %q, want %q", got, "true")
 	}
 	var resp struct {
-		Topics []generatedTopic        `json:"topics"`
-		Script *pipelineScript         `json:"script"`
-		Score  *qualityScoreResponse   `json:"score"`
-		Adapt  *platformAdaptResponse  `json:"adaptations"`
+		Topics []generatedTopic       `json:"topics"`
+		Script *pipelineScript        `json:"script"`
+		Score  *qualityScoreResponse  `json:"score"`
+		Adapt  *platformAdaptResponse `json:"adaptations"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v body=%s", err, w.Body.String())
@@ -319,9 +373,9 @@ func TestPipelineStepsFilterOnlyTopics(t *testing.T) {
 		t.Errorf("claude calls = %d, want 1 (topics only)", calls)
 	}
 	var resp struct {
-		Topics []generatedTopic `json:"topics"`
-		Script *pipelineScript  `json:"script"`
-		Score  *qualityScoreResponse `json:"score"`
+		Topics []generatedTopic       `json:"topics"`
+		Script *pipelineScript        `json:"script"`
+		Score  *qualityScoreResponse  `json:"score"`
 		Adapt  *platformAdaptResponse `json:"adaptations"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {

@@ -17,7 +17,7 @@ import (
 type ClaudeProvider struct {
 	client       anthropic.Client
 	apiKey       string
-	defaultModel anthropic.Model
+	defaultModel string
 	override     CompleteFunc // test-only hook; nil in production
 }
 
@@ -80,7 +80,7 @@ func (p *ClaudeProvider) Complete(ctx context.Context, prompt string, opts Compl
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resp, err := p.client.Messages.New(cctx, anthropic.MessageNewParams{
-		Model:     model,
+		Model:     anthropic.Model(model),
 		MaxTokens: maxTokens,
 		Messages: []anthropic.MessageParam{
 			{

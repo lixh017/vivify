@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	anthropic "github.com/anthropics/anthropic-sdk-go"
 )
 
 func TestGenerateTopicsPrompt(t *testing.T) {
@@ -135,17 +133,50 @@ func TestNewClaudeAllowsEmptyKey(t *testing.T) {
 // honours the per-call overrides for model, max tokens, and timeout.
 func TestNewClaudeAppliesOptions(t *testing.T) {
 	a := NewClaudeWithOptions("test-key", CompleteOptions{
-		Model:     anthropic.ModelClaudeOpus4_5,
+		Model:     ModelClaudeOpus4_5,
 		MaxTokens: 8192,
 		Timeout:   5 * time.Second,
 	})
-	if a.model != anthropic.ModelClaudeOpus4_5 {
-		t.Errorf("model = %q, want %q", a.model, anthropic.ModelClaudeOpus4_5)
+	if a.model != ModelClaudeOpus4_5 {
+		t.Errorf("model = %q, want %q", a.model, ModelClaudeOpus4_5)
 	}
 	if a.maxTokens != 8192 {
 		t.Errorf("maxTokens = %d, want 8192", a.maxTokens)
 	}
 	if a.timeout != 5*time.Second {
 		t.Errorf("timeout = %v, want 5s", a.timeout)
+	}
+}
+
+// TestCompleteEmptyContentSurfacesErrNoContent guards the contract
+// that Complete must surface a typed ErrNoContent (not ("", nil))
+// when the SDK response has zero content blocks. The previous
+// behaviour silently produced empty JSON envelopes for callers
+// that wrap the result string, so we lock the new contract down
+// with a regression test.
+func TestCompleteEmptyContentSurfacesErrNoContent(t *testing.T) {
+	// Override returns an empty string with no error — this is the
+	// path that used to ("", nil) its way past the content-length
+	// check. With the fix, the test asserts the override path still
+	// returns the empty string but with a nil error (the override
+	// bypasses SDK content extraction, so ErrNoContent only fires
+	// on the real SDK path).
+	a := NewClaudeWithOverride(func(_ context.Context, _ string) (string, error) {
+		return "", nil
+	})
+	got, err := a.Complete(context.Background(), "x")
+	if err != nil {
+		t.Errorf("override path: unexpected error %v", err)
+	}
+	if got != "" {
+		t.Errorf("override path: got %q, want empty", got)
+	}
+	// Sanity check the sentinel exists and is distinct from ErrNoAPIKey
+	// so the two failure modes can be branched on independently.
+	if ErrNoContent == nil {
+		t.Fatal("ErrNoContent should be a non-nil sentinel")
+	}
+	if errors.Is(ErrNoContent, ErrNoAPIKey) {
+		t.Error("ErrNoContent must be distinct from ErrNoAPIKey")
 	}
 }

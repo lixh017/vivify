@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
-
-	anthropic "github.com/anthropics/anthropic-sdk-go"
 )
 
 // fakeProvider is a minimal Provider stub used by router tests.
@@ -46,13 +44,13 @@ func TestRouterRouteForDefaults(t *testing.T) {
 		wantProvider string
 		wantModel    string
 	}{
-		{TaskTopicGenerate, ProviderClaude, string(anthropic.ModelClaudeSonnet4_5)},
-		{TaskScriptHumanize, ProviderClaude, string(anthropic.ModelClaudeSonnet4_5)},
-		{TaskContentScore, ProviderClaude, string(anthropic.ModelClaudeHaiku4_5)},
-		{TaskPlatformAdapt, ProviderClaude, string(anthropic.ModelClaudeSonnet4_5)},
+		{TaskTopicGenerate, ProviderClaude, ModelClaudeSonnet4_5},
+		{TaskScriptHumanize, ProviderClaude, ModelClaudeSonnet4_5},
+		{TaskContentScore, ProviderClaude, ModelClaudeHaiku4_5},
+		{TaskPlatformAdapt, ProviderClaude, ModelClaudeSonnet4_5},
 		{TaskDeconstruct, ProviderGemini, GeminiDefaultModel},
-		{TaskViralFormula, ProviderClaude, string(anthropic.ModelClaudeSonnet4_5)},
-		{TaskPostmortem, ProviderClaude, string(anthropic.ModelClaudeSonnet4_5)},
+		{TaskViralFormula, ProviderClaude, ModelClaudeSonnet4_5},
+		{TaskPostmortem, ProviderClaude, ModelClaudeSonnet4_5},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -152,7 +150,7 @@ func TestRouterCompleteUsesRoutedModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if string(claude.lastOpts.Model) != string(anthropic.ModelClaudeHaiku4_5) {
+	if string(claude.lastOpts.Model) != ModelClaudeHaiku4_5 {
 		t.Errorf("routed model = %q, want haiku", claude.lastOpts.Model)
 	}
 }
@@ -165,12 +163,12 @@ func TestRouterCompleteCallerOverridesModel(t *testing.T) {
 	claude := &fakeProvider{name: ProviderClaude, available: true}
 	r := NewRouter(claude)
 	_, err := r.Complete(context.Background(), TaskContentScore, "hello", CompleteOptions{
-		Model: anthropic.ModelClaudeOpus4_5,
+		Model: ModelClaudeOpus4_5,
 	})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if string(claude.lastOpts.Model) != string(anthropic.ModelClaudeOpus4_5) {
+	if string(claude.lastOpts.Model) != ModelClaudeOpus4_5 {
 		t.Errorf("caller model = %q, want opus", claude.lastOpts.Model)
 	}
 }

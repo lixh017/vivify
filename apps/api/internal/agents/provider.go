@@ -46,6 +46,23 @@ const (
 	ProviderGemini   = "gemini"
 )
 
+// Canonical model identifiers used by the router and the default
+// per-task routing table. Defined here (the vendor-neutral part
+// of the package) so router.go and its tests do not need to
+// import the Anthropic SDK purely to spell a model name. The
+// Claude-specific providers still cast to anthropic.Model at the
+// SDK call site.
+//
+// Kept in lockstep with the values the Anthropic SDK exposes
+// under anthropic.ModelClaudeSonnet4_5 etc. If the upstream
+// SDK renames a model, update these constants and the cast in
+// claude.go / claude_provider.go together.
+const (
+	ModelClaudeSonnet4_5 = "claude-sonnet-4-5"
+	ModelClaudeHaiku4_5  = "claude-haiku-4-5"
+	ModelClaudeOpus4_5   = "claude-opus-4-5"
+)
+
 // ErrProviderUnavailable is returned by Complete when the provider
 // was constructed without the credentials it needs (empty API key)
 // AND the caller did not opt into a fallback. Handlers should use

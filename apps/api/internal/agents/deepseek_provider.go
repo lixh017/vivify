@@ -112,7 +112,7 @@ func (p *DeepSeekProvider) Complete(ctx context.Context, prompt string, opts Com
 	}
 	model := p.defaultModel
 	if opts.Model != "" {
-		model = string(opts.Model)
+		model = opts.Model
 	}
 	maxToks := int64(DeepSeekDefaultMaxToks)
 	if opts.MaxTokens > 0 {

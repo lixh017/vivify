@@ -108,3 +108,66 @@ func TestDemoResponseUsesOverride(t *testing.T) {
 		t.Error("DemoResponse should not route to override; expected canned data")
 	}
 }
+
+// TestBuildSuggestionsShape verifies that the rule-based fallback
+// produces suggestions with the {category, severity, problem,
+// rewrite} wire contract — matching the upgraded ScoreContentPrompt
+// and the demo pool. A regression to the older {category, message,
+// severity} shape would silently break the frontend's unified
+// suggestion renderer (it would have to branch on which mode
+// produced the response).
+func TestBuildSuggestionsShape(t *testing.T) {
+	// Force every axis to score low so all three suggestion
+	// branches (hook / structure / platform_fit) plus the
+	// word_count fallback fire — that way the test covers the
+	// full shape surface in one pass.
+	sug := buildSuggestions(
+		"a long title that is well past the douyin limit for sure", // > 28 chars
+		"短", // < 50 chars → word_count
+		"抖音",
+		20, // hook
+		20, // structure
+		20, // fit
+	)
+	if len(sug) == 0 {
+		t.Fatal("expected at least one suggestion when every axis scores low")
+	}
+	for i, s := range sug {
+		for _, field := range []string{"category", "severity", "problem", "rewrite"} {
+			if _, ok := s[field]; !ok {
+				t.Errorf("suggestion[%d] missing field %q, got: %+v", i, field, s)
+			}
+			if strings.TrimSpace(s[field]) == "" {
+				t.Errorf("suggestion[%d].%s is empty, got: %+v", i, field, s)
+			}
+		}
+		// The "message" field is from the old contract and must
+		// NOT be present, otherwise a downstream consumer could
+		// still rely on it and the contracts would diverge.
+		if _, ok := s["message"]; ok {
+			t.Errorf("suggestion[%d] still has old 'message' field, got: %+v", i, s)
+		}
+	}
+}
+
+// TestRuleBasedScoreSuggestionsShape exercises the public
+// RuleBasedScore entry point and confirms its `suggestions` field
+// is the new shape. This is the function the handler actually
+// calls, so the contract is end-to-end.
+func TestRuleBasedScoreSuggestionsShape(t *testing.T) {
+	out := RuleBasedScore("窗边的熊猫", "短的", "抖音")
+	sugs, ok := out["suggestions"].([]map[string]string)
+	if !ok {
+		t.Fatalf("suggestions has wrong type %T, want []map[string]string", out["suggestions"])
+	}
+	if len(sugs) == 0 {
+		t.Fatal("expected suggestions for a short script on 抖音")
+	}
+	for i, s := range sugs {
+		for _, field := range []string{"category", "severity", "problem", "rewrite"} {
+			if _, ok := s[field]; !ok {
+				t.Errorf("suggestion[%d] missing %q, got: %+v", i, field, s)
+			}
+		}
+	}
+}
