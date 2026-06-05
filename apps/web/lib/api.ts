@@ -249,6 +249,44 @@ export const api = {
         },
         options,
       ),
+    // score asks Claude (or the rule-based fallback, when no API key
+    // is configured) to evaluate a title+script+platform combination
+    // on hook/structure/platform_fit axes and return actionable
+    // suggestions. The handler falls back to the rule-based scorer
+    // and sets X-Demo-Mode when Claude is unavailable, so the UI
+    // should branch on `demo` to render the badge.
+    score: (
+      data: { title: string; script: string; platform: string },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<QualityScore>(
+        '/ai/score',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
+    // platformAdapt takes a single content idea (title + angle) and
+    // asks Claude to produce 抖音/哔哩哔哩/小红书 versions, plus a
+    // cross-platform tip list. Like score, falls back to demo
+    // responses when no API key is configured.
+    platformAdapt: (
+      data: { title: string; angle: string; source_platform: string },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<PlatformAdapt>(
+        '/ai/platform-adapt',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
+    // publishChecklist is rule-based (no Claude) and always
+    // available. It joins a content item through to its script and
+    // returns the per-rule pass/warn/fail verdicts + an overall
+    // score. The frontend uses this for the pre-publish guard rail
+    // on the content-item detail view.
+    publishChecklist: (data: { content_item_id: number }) =>
+      request<PublishChecklist>('/ai/publish-checklist', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   auth: {
     // login exchanges email+password for an HttpOnly session cookie
@@ -287,6 +325,70 @@ export type PostmortemStructured = {
   reusable_patterns: string[]
   insights: string[]
   suggestions: string[]
+}
+
+// QualitySuggestion matches the {category, message, severity} shape
+// the /ai/score endpoint returns. severity is constrained to the
+// small set the prompt asks Claude for, so the frontend can map it
+// 1:1 to a color/style without a defensive parser.
+export type QualitySuggestion = {
+  category: string
+  message: string
+  severity: 'low' | 'medium' | 'high'
+}
+
+// QualityScore is the /ai/score wire shape. All four score fields
+// are 0-100 ints; suggestions is always a non-null array (the
+// handler initializes it to [] on the server side).
+export type QualityScore = {
+  overall_score: number
+  hook_strength: number
+  structure: number
+  platform_fit: number
+  suggestions: QualitySuggestion[]
+  rewritten_hook: string
+}
+
+// PlatformAdapt is the /ai/platform-adapt wire shape. The three
+// adaptation sub-objects use the Chinese platform names as keys
+// (matching the server-side struct tags) so the frontend can index
+// directly. cross_platform_tips is always a non-null array.
+export type PlatformAdapt = {
+  adaptations: {
+    抖音: {
+      title: string
+      hashtags: string[]
+      description: string
+    }
+    哔哩哔哩: {
+      title: string
+      description: string
+      tags: string[]
+    }
+    小红书: {
+      title: string
+      body: string
+      tags: string[]
+    }
+  }
+  cross_platform_tips: string[]
+}
+
+// PublishCheckStatus is the pass/warn/fail enum the checklist uses.
+// Modeled as a string-literal union so the UI gets exhaustiveness
+// checks when it switches on the value.
+export type PublishCheckStatus = 'pass' | 'warn' | 'fail'
+
+// PublishChecklist is the /ai/publish-checklist wire shape. ready
+// is true iff no check is in the fail state.
+export type PublishChecklist = {
+  ready: boolean
+  checks: {
+    name: string
+    status: PublishCheckStatus
+    message: string
+  }[]
+  overall_score: number
 }
 
 export { ApiError }

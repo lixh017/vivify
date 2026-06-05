@@ -14,7 +14,10 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   LOCALE_COOKIE,
   DEFAULT_LOCALE,
+  LOCALE_COOKIE_MAX_AGE,
+  LOCALE_COOKIE_PATH,
   type Locale,
+  type TranslationKey,
 } from './i18n-types'
 import { t as tImpl } from './i18n-lookup'
 
@@ -34,40 +37,82 @@ function parseLocale(raw: string | null): Locale {
  * window focus (the simplest way to pick up a change made by
  * another tab or by the switcher after a redirect).
  *
- * Components should call `const t = useT()` once at the top, then
- * use `t(key)` throughout the render. The returned function is
- * stable per-locale (useCallback keyed on the locale) so it is safe
- * to pass into memoized children.
+ * The returned function supports a small `{var}` interpolation
+ * template, e.g. `t('register.password_hint', { n: 8 })` returns
+ * "At least 8 characters" (en) / "至少 8 位" (zh). Callers that
+ * need the plain key back should use the underlying `t` from
+ * `i18n-lookup.ts` directly.
+ *
+ * The translator is stable per-locale (useCallback keyed on the
+ * locale) so it is safe to pass into memoized children.
+ *
+ * Contract: the locale switcher writes the cookie and then calls
+ * `window.location.reload()`. Because we re-read on mount, a hard
+ * reload is the canonical refresh path. The `focus` listener is
+ * belt-and-suspenders for cross-tab edits where no reload happens.
  */
-export function useT(): (key: string) => string {
+export function useT(): (
+  key: TranslationKey | string,
+  vars?: Record<string, string | number>,
+) => string {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE)
 
   useEffect(() => {
     function read() {
-      const match = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith(`${LOCALE_COOKIE}=`))
-      const raw = match ? decodeURIComponent(match.split('=')[1]) : null
-      setLocale(parseLocale(raw))
+      setLocale(readLocaleFromCookie())
     }
     read()
     window.addEventListener('focus', read)
     return () => window.removeEventListener('focus', read)
   }, [])
 
-  return useCallback((key: string) => tImpl(key, locale), [locale])
+  return useCallback(
+    (key, vars) => {
+      const raw = tImpl(key, locale)
+      if (!vars) return raw
+      return interpolate(raw, vars)
+    },
+    [locale],
+  )
 }
 
 /**
  * setLocaleCookie writes the locale cookie on the client. Used by
- * the locale switcher before reloading the page.
+ * the locale switcher before reloading the page. Centralised here
+ * (and the server-side mirror lives in /api/locale) so the
+ * attributes (maxAge, path, SameSite) stay in lockstep.
  */
 export function setLocaleCookie(locale: Locale): void {
   if (typeof document === 'undefined') return
-  // 1 year, path=/, SameSite=Lax. We do NOT set Secure in dev because
-  // http://localhost would drop the cookie. The middleware in
-  // production sits behind HTTPS so the browser will treat it as
-  // secure-by-default.
-  const oneYear = 60 * 60 * 24 * 365
-  document.cookie = `${LOCALE_COOKIE}=${encodeURIComponent(locale)}; path=/; max-age=${oneYear}; SameSite=Lax`
+  document.cookie = `${LOCALE_COOKIE}=${encodeURIComponent(locale)}; path=${LOCALE_COOKIE_PATH}; max-age=${LOCALE_COOKIE_MAX_AGE}; SameSite=Lax`
+}
+
+/**
+ * readLocaleFromCookie is a no-side-effect helper that scans
+ * `document.cookie` for the locale cookie and parses it. Useful
+ * for components that need to know the active locale without
+ * subscribing to focus changes (e.g. the switcher's active highlight).
+ */
+export function readLocaleFromCookie(): Locale {
+  if (typeof document === 'undefined') return DEFAULT_LOCALE
+  const match = document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${LOCALE_COOKIE}=`))
+  const raw = match ? decodeURIComponent(match.split('=')[1]) : null
+  return parseLocale(raw)
+}
+
+// interpolate replaces `{name}` tokens in `template` with values
+// from `vars`. Unknown placeholders are left untouched so a typo
+// in the catalog is obvious in the rendered output.
+function interpolate(
+  template: string,
+  vars: Record<string, string | number>,
+): string {
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => {
+    if (Object.prototype.hasOwnProperty.call(vars, name)) {
+      return String(vars[name])
+    }
+    return match
+  })
 }

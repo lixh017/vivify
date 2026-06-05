@@ -3,17 +3,18 @@
 import { Suspense, useState, FormEvent, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
+import { useT } from '@/lib/i18n-client'
 
 // Register page for Phase 2's session-based auth. The form posts to
 // /api/auth/register; on success the browser's opc_session cookie is
 // set by the server and we navigate to `next` (or /topics by default).
 //
 // Error handling:
-//   - 409: email already registered → 邮箱已被注册
+//   - 409: email already registered → friendly localized message
 //   - 400: payload validation (server-side) → map a few common shapes
 //     to a friendly message, fall back to the raw body
-//   - anything else: keep the generic "注册失败" so the form does not
-//     leak server stack traces into the UI
+//   - anything else: keep the generic failure message so the form does
+//     not leak server stack traces into the UI
 //
 // Client-side validation:
 //   - email matches a basic email regex (the server is the source of
@@ -37,6 +38,7 @@ const MIN_PASSWORD_LEN = 8
 function RegisterForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const t = useT()
   // Where to land after a successful registration. The link from a
   // 401 on a protected page can append ?next=/foo; we honour that and
   // fall back to /topics so the user sees the most useful screen.
@@ -70,13 +72,13 @@ function RegisterForm() {
     const trimmedEmail = email.trim()
     const trimmedName = name.trim()
     if (!trimmedName) {
-      return '请填写昵称'
+      return t('register.error.name_required')
     }
     if (!EMAIL_RE.test(trimmedEmail)) {
-      return '邮箱格式不正确'
+      return t('register.error.email_invalid')
     }
     if (password.length < MIN_PASSWORD_LEN) {
-      return `密码至少 ${MIN_PASSWORD_LEN} 位`
+      return t('register.error.password_too_short', { n: MIN_PASSWORD_LEN })
     }
     return null
   }
@@ -103,14 +105,14 @@ function RegisterForm() {
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         if (err.status === 409) {
-          setError('该邮箱已被注册')
+          setError(t('register.error.email_taken'))
         } else if (err.status === 400) {
-          setError(err.body || '注册信息有误')
+          setError(err.body || t('register.error.invalid'))
         } else {
-          setError(err.body || `注册失败 (${err.status})`)
+          setError(err.body || t('register.error.generic'))
         }
       } else {
-        setError(err instanceof Error ? err.message : '注册失败')
+        setError(err instanceof Error ? err.message : t('register.error.generic'))
       }
     } finally {
       setSubmitting(false)
@@ -120,22 +122,22 @@ function RegisterForm() {
   return (
     <div className="w-full max-w-sm">
       <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
-        🐼 创建账号
+        {t('register.title')}
       </h1>
       <p className="text-sm text-claude-muted text-center mt-1">
-        熊猫 IP 创作控制台
+        {t('register.subtitle')}
       </p>
       <form
         onSubmit={handleSubmit}
         className="mt-6 space-y-4 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline"
-        aria-label="注册表单"
+        aria-label={t('register.title')}
       >
         <div>
           <label
             htmlFor="name"
             className="block text-sm font-medium text-claude-ink"
           >
-            昵称
+            {t('register.name')}
           </label>
           <input
             id="name"
@@ -155,7 +157,7 @@ function RegisterForm() {
             htmlFor="email"
             className="block text-sm font-medium text-claude-ink"
           >
-            邮箱
+            {t('register.email')}
           </label>
           <input
             id="email"
@@ -175,7 +177,7 @@ function RegisterForm() {
             htmlFor="password"
             className="block text-sm font-medium text-claude-ink"
           >
-            密码
+            {t('register.password')}
           </label>
           <input
             id="password"
@@ -191,7 +193,7 @@ function RegisterForm() {
             disabled={submitting}
           />
           <p className="mt-1 text-xs text-claude-muted">
-            至少 {MIN_PASSWORD_LEN} 位
+            {t('register.password_hint', { n: MIN_PASSWORD_LEN })}
           </p>
         </div>
 
@@ -211,18 +213,18 @@ function RegisterForm() {
           disabled={submitting}
           className="w-full px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
         >
-          {submitting ? '注册中…' : '注册'}
+          {submitting ? t('register.submit_loading') : t('register.submit')}
         </button>
       </form>
 
       <p className="mt-4 text-xs text-claude-muted text-center">
-        已有账号？
+        {t('register.have_account')}
         <a
           href="/login"
           data-testid="link-login"
           className="ml-1 text-claude-coral hover:text-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-coral focus-visible:ring-offset-2 rounded-sm transition-colors"
         >
-          去登录
+          {t('register.login_link')}
         </a>
       </p>
     </div>
@@ -236,13 +238,10 @@ function RegisterFormFallback() {
   return (
     <div className="w-full max-w-sm" aria-busy="true">
       <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
-        🐼 创建账号
+        🐼
       </h1>
-      <p className="text-sm text-claude-muted text-center mt-1">
-        熊猫 IP 创作控制台
-      </p>
       <div className="mt-6 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-        正在加载注册表单…
+        Loading…
       </div>
     </div>
   )

@@ -8,8 +8,13 @@ import type {
   ImportType,
   ImportResult,
 } from '@/lib/api'
+import { useT } from '@/lib/i18n-client'
 
-const DOC_TYPES = ['SOP', '人物', '世界观', '历史', '其它']
+// Canonical doc type vocabulary mirroring the backend's allowedDocTypes
+// set. Wire values; user-facing labels for "Character/World/History/Other"
+// are looked up by raw key from the i18n catalog so the labels switch
+// with the active locale while the API value stays the same.
+const DOC_TYPES = ['SOP', '人物', '世界观', '历史', '其它'] as const
 
 type Tab = 'docs' | 'ip-templates'
 
@@ -53,7 +58,35 @@ function docsForIP(docs: KnowledgeDoc[], ipType: string): KnowledgeDoc[] {
   return docs.filter((d) => d.path.startsWith(prefix))
 }
 
+// docTypeLabel returns the user-facing label for a raw doc type
+// value. Falls back to a localized "Unknown" key for backend values
+// we don't recognize so the UI never leaks raw wire strings to the
+// end user. The SENTINEL "未分类" value (returned from a missing
+// doc_type column) is rendered as the localized "Uncategorized"
+// label so headings stay grammatical in both locales.
+function docTypeLabel(t: (k: string) => string, raw: string): string {
+  if (raw === 'SOP') return t('knowledge.doc_type.SOP')
+  // The Chinese keys are valid TS keys (knowledge.doc_type.人物 etc.)
+  // but template-string indexing doesn't know that. The explicit
+  // lookup table below is a safe alternative.
+  switch (raw) {
+    case '人物':
+      return t('knowledge.doc_type.人物')
+    case '世界观':
+      return t('knowledge.doc_type.世界观')
+    case '历史':
+      return t('knowledge.doc_type.历史')
+    case '其它':
+      return t('knowledge.doc_type.其它')
+    case '':
+      return t('common.uncategorized')
+    default:
+      return t('common.unknown')
+  }
+}
+
 export default function KnowledgePage() {
+  const t = useT()
   const [tab, setTab] = useState<Tab>('docs')
   const [docs, setDocs] = useState<KnowledgeDoc[]>([])
   const [templates, setTemplates] = useState<IpTemplate[]>([])
@@ -80,7 +113,7 @@ export default function KnowledgePage() {
       const res = await api.knowledge.list()
       setDocs(res.items)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      setError(err instanceof Error ? err.message : t('knowledge.error.load'))
     } finally {
       setLoading(false)
     }
@@ -91,7 +124,9 @@ export default function KnowledgePage() {
       const res = await api.ipTemplates.list()
       setTemplates(res.templates)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '加载 IP 模板失败')
+      setError(
+        err instanceof Error ? err.message : t('knowledge.error.load_templates'),
+      )
     }
   }
 
@@ -115,7 +150,7 @@ export default function KnowledgePage() {
       setShowForm(false)
       await loadDocs()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '创建失败')
+      setError(err instanceof Error ? err.message : t('knowledge.error.create'))
     } finally {
       setSubmitting(false)
     }
@@ -129,7 +164,7 @@ export default function KnowledgePage() {
     try {
       await api.knowledge.delete(id)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '删除失败')
+      setError(err instanceof Error ? err.message : t('knowledge.error.delete'))
       setDocs(previous)
     }
   }
@@ -151,14 +186,20 @@ export default function KnowledgePage() {
       setShowIPForm(false)
       await Promise.all([loadTemplates(), loadDocs()])
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '创建 IP 失败')
+      setError(err instanceof Error ? err.message : t('knowledge.error.create_ip'))
     } finally {
       setIPSubmitting(false)
     }
   }
 
+  // The section key is the localized "Uncategorized" string so the
+  // heading and the React key stay aligned across locale switches
+  // (the previous implementation used a hardcoded Chinese "未分类"
+  // for both, which broke the i18n parity and would render a
+  // Chinese heading under an English locale).
+  const uncategorizedKey = t('common.uncategorized')
   const groups = docs.reduce<Record<string, KnowledgeDoc[]>>((acc, doc) => {
-    const key = doc.doc_type || '未分类'
+    const key = doc.doc_type || uncategorizedKey
     if (!acc[key]) acc[key] = []
     acc[key].push(doc)
     return acc
@@ -199,7 +240,7 @@ export default function KnowledgePage() {
       if (!items) {
         setImportExportNotice({
           kind: 'err',
-          text: '文件格式错误: 找不到 items 数组',
+          text: t('knowledge.import_export.notice.invalid'),
         })
         return
       }
@@ -210,26 +251,29 @@ export default function KnowledgePage() {
       if (errCount === 0) {
         setImportExportNotice({
           kind: 'ok',
-          text: `导入成功 ${result.imported} 条`,
+          text: t('knowledge.import_export.notice.import_ok', {
+            count: result.imported,
+          }),
         })
       } else {
         const first = result.errors[0]
         setImportExportNotice({
           kind: 'err',
-          text: `部分失败: 成功 ${result.imported} 条, 失败 ${errCount} 条 (第 ${first.index + 1} 条: ${first.message})`,
+          text: t('knowledge.import_export.notice.partial', {
+            ok: result.imported,
+            err: errCount,
+            index: first.index + 1,
+            msg: first.message,
+          }),
         })
       }
-      // Reload whatever collection we just touched. The knowledge
-      // page only owns docs, but the import could have hit scripts
-      // or content items; those are owned by other pages so we keep
-      // the reload scoped to docs.
       if (type === 'knowledge') {
         await loadDocs()
       }
     } catch (err: unknown) {
       setImportExportNotice({
         kind: 'err',
-        text: err instanceof Error ? err.message : '导入失败',
+        text: err instanceof Error ? err.message : t('knowledge.import_export.notice.failed'),
       })
     } finally {
       setImporting(null)
@@ -241,10 +285,10 @@ export default function KnowledgePage() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
-            📚 知识库
+            📚 {t('knowledge.title')}
           </h1>
           <p className="text-claude-muted text-sm mt-1">
-            IP 风格、SOP、复盘档案 — 你的第二大脑
+            {t('knowledge.subhead')}
           </p>
         </div>
         {tab === 'docs' ? (
@@ -252,14 +296,14 @@ export default function KnowledgePage() {
             onClick={() => setShowForm((v) => !v)}
             className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
           >
-            {showForm ? '取消' : '+ 新建文档'}
+            {showForm ? t('common.cancel') : t('knowledge.create_doc')}
           </button>
         ) : (
           <button
             onClick={() => setShowIPForm((v) => !v)}
             className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-success text-claude-on-primary rounded-md hover:opacity-90 transition-opacity"
           >
-            {showIPForm ? '取消' : '+ 新建 IP'}
+            {showIPForm ? t('common.cancel') : t('knowledge.create_ip')}
           </button>
         )}
       </div>
@@ -277,7 +321,7 @@ export default function KnowledgePage() {
               : 'border-transparent text-claude-muted hover:text-claude-ink')
           }
         >
-          文档
+          {t('knowledge.tab.docs')}
         </button>
         <button
           onClick={() => setTab('ip-templates')}
@@ -288,7 +332,7 @@ export default function KnowledgePage() {
               : 'border-transparent text-claude-muted hover:text-claude-ink')
           }
         >
-          IP 模板
+          {t('knowledge.tab.ip_templates')}
         </button>
       </div>
 
@@ -378,6 +422,7 @@ function DocsTab({
   sortedKeys,
   onDelete,
 }: DocsTabProps) {
+  const t = useT()
   return (
     <>
       {showForm && (
@@ -387,7 +432,7 @@ function DocsTab({
         >
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              标题
+              {t('knowledge.form.title')}
             </label>
             <input
               type="text"
@@ -400,13 +445,13 @@ function DocsTab({
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              路径
+              {t('knowledge.form.path')}
             </label>
             <input
               type="text"
               required
               data-testid="input-test-path"
-              placeholder="例如: panda/characters/mama"
+              placeholder={t('knowledge.form.path_placeholder')}
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
@@ -414,7 +459,7 @@ function DocsTab({
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              类型
+              {t('knowledge.form.doc_type')}
             </label>
             <select
               data-testid="input-test-doc_type"
@@ -422,16 +467,16 @@ function DocsTab({
               onChange={(e) => setForm({ ...form, doc_type: e.target.value })}
               className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink"
             >
-              {DOC_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {DOC_TYPES.map((dt) => (
+                <option key={dt} value={dt}>
+                  {docTypeLabel(t, dt)}
                 </option>
               ))}
             </select>
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              内容
+              {t('knowledge.form.content')}
             </label>
             <textarea
               required
@@ -448,23 +493,25 @@ function DocsTab({
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
-            {submitting ? '提交中...' : '保存'}
+            {submitting
+              ? t('knowledge.form.submit_loading')
+              : t('knowledge.form.submit_idle')}
           </button>
         </form>
       )}
 
       {loading ? (
-        <div className="text-sm text-claude-body">加载中…</div>
+        <div className="text-sm text-claude-body">{t('common.loading')}</div>
       ) : sortedKeys.length === 0 ? (
         <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-          还没有数据
+          {t('knowledge.empty.docs')}
         </div>
       ) : (
         <div className="space-y-4">
           {sortedKeys.map((key) => (
             <section key={key} className="space-y-2">
               <h2 className="font-serif text-lg text-claude-ink">
-                {key}
+                {docTypeLabel(t, key)}
                 <span className="ml-2 text-xs md:text-sm text-claude-muted-soft">
                   ({groups[key].length})
                 </span>
@@ -508,10 +555,10 @@ function DocsTab({
                           type="button"
                           data-testid={`btn-delete-${doc.id}`}
                           onClick={() => onDelete(doc.id)}
-                          aria-label="删除"
+                          aria-label={t('knowledge.aria.delete')}
                           className="shrink-0 px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                         >
-                          删除
+                          {t('common.delete')}
                         </button>
                       </div>
                     </div>
@@ -549,6 +596,7 @@ function IpTemplatesTab({
   onSelect,
   ipDocs,
 }: IpTemplatesTabProps) {
+  const t = useT()
   return (
     <div className="space-y-4">
       {showForm && (
@@ -559,12 +607,12 @@ function IpTemplatesTab({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs md:text-sm font-medium text-claude-ink">
-                IP 类型
+                {t('knowledge.form.ip_type')}
               </label>
               <input
                 type="text"
                 required
-                placeholder="例如: 数字人 / 古装 / 言情"
+                placeholder={t('knowledge.form.ip_type_placeholder')}
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
                 className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
@@ -572,12 +620,12 @@ function IpTemplatesTab({
             </div>
             <div>
               <label className="block text-xs md:text-sm font-medium text-claude-ink">
-                名称
+                {t('knowledge.form.ip_name')}
               </label>
               <input
                 type="text"
                 required
-                placeholder="例如: 云岚"
+                placeholder={t('knowledge.form.ip_name_placeholder')}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
@@ -586,7 +634,7 @@ function IpTemplatesTab({
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              简介 (可选)
+              {t('knowledge.form.ip_description')}
             </label>
             <textarea
               value={form.description}
@@ -598,15 +646,16 @@ function IpTemplatesTab({
             />
           </div>
           <div className="text-xs text-claude-muted">
-            提交后会自动创建 4 份标准文档：风格指南 / 语气调性 / 种子选题 /
-            反面清单
+            {t('knowledge.form.ip_hint')}
           </div>
           <button
             type="submit"
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-success text-claude-on-primary rounded-md hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            {submitting ? '提交中...' : '创建 IP 模板'}
+            {submitting
+              ? t('knowledge.form.ip_submit_loading')
+              : t('knowledge.form.ip_submit_idle')}
           </button>
         </form>
       )}
@@ -615,7 +664,7 @@ function IpTemplatesTab({
         <IpDetail ipType={selectedIP} docs={ipDocs} onBack={() => onSelect(null)} />
       ) : templates.length === 0 ? (
         <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-          还没有 IP 模板 — 点击右上角「+ 新建 IP」创建第一个
+          {t('knowledge.empty.ip_templates')}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -637,7 +686,7 @@ function IpTemplatesTab({
                 </p>
               )}
               <p className="text-xs text-claude-muted-soft mt-2">
-                {tpl.doc_count} 份文档
+                {tpl.doc_count} {t('knowledge.ip.doc_count')}
               </p>
             </button>
           ))}
@@ -654,6 +703,7 @@ interface IpDetailProps {
 }
 
 function IpDetail({ ipType, docs, onBack }: IpDetailProps) {
+  const t = useT()
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 md:gap-3 flex-wrap">
@@ -661,18 +711,18 @@ function IpDetail({ ipType, docs, onBack }: IpDetailProps) {
           onClick={onBack}
           className="px-3 py-1 text-xs md:text-sm bg-claude-surface-soft rounded hover:bg-claude-surface-card text-claude-body border border-claude-hairline"
         >
-          ← 返回
+          {t('knowledge.ip.back')}
         </button>
         <h2 className="text-lg md:text-xl font-semibold break-all text-claude-ink">
           {ipType}
         </h2>
         <span className="text-xs md:text-sm text-claude-muted">
-          ({docs.length} 份文档)
+          ({docs.length} {t('knowledge.ip.doc_count')})
         </span>
       </div>
       {docs.length === 0 ? (
         <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-          这个 IP 还没有关联文档
+          {t('knowledge.empty.ip_detail')}
         </div>
       ) : (
         <div className="space-y-2">
@@ -711,19 +761,19 @@ interface ImportExportPanelProps {
   onImport: (type: ImportType) => void
 }
 
-const EXPORT_TYPES: { value: ExportType; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'topic', label: '选题' },
-  { value: 'script', label: '脚本' },
-  { value: 'content_item', label: '发布记录' },
-  { value: 'knowledge', label: '知识库' },
+const EXPORT_TYPES: { value: ExportType; labelKey: string }[] = [
+  { value: 'all', labelKey: 'knowledge.import_export.types.all' },
+  { value: 'topic', labelKey: 'knowledge.import_export.types.topic' },
+  { value: 'script', labelKey: 'knowledge.import_export.types.script' },
+  { value: 'content_item', labelKey: 'knowledge.import_export.types.content_item' },
+  { value: 'knowledge', labelKey: 'knowledge.import_export.types.knowledge' },
 ]
 
-const IMPORT_TYPES: { value: ImportType; label: string }[] = [
-  { value: 'topic', label: '选题' },
-  { value: 'script', label: '脚本' },
-  { value: 'content_item', label: '发布记录' },
-  { value: 'knowledge', label: '知识库' },
+const IMPORT_TYPES: { value: ImportType; labelKey: string }[] = [
+  { value: 'topic', labelKey: 'knowledge.import_export.types.topic' },
+  { value: 'script', labelKey: 'knowledge.import_export.types.script' },
+  { value: 'content_item', labelKey: 'knowledge.import_export.types.content_item' },
+  { value: 'knowledge', labelKey: 'knowledge.import_export.types.knowledge' },
 ]
 
 // ImportExportPanel exposes the JSON-based bulk import/export from a
@@ -736,46 +786,49 @@ function ImportExportPanel({
   onExport,
   onImport,
 }: ImportExportPanelProps) {
+  const t = useT()
   return (
     <details className="p-3 md:p-4 bg-claude-surface-soft border border-claude-hairline rounded-lg">
       <summary className="cursor-pointer text-xs md:text-sm font-medium text-claude-ink select-none">
-        ⚙️ 数据导入 / 导出 (JSON)
+        {t('knowledge.import_export.title')}
       </summary>
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
         <section>
           <h3 className="text-xs md:text-sm font-semibold text-claude-ink mb-2">
-            导出
+            {t('knowledge.import_export.export')}
           </h3>
           <div className="flex flex-wrap gap-2">
-            {EXPORT_TYPES.map((t) => (
+            {EXPORT_TYPES.map((entry) => (
               <button
-                key={t.value}
-                onClick={() => onExport(t.value)}
+                key={entry.value}
+                onClick={() => onExport(entry.value)}
                 className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-claude-canvas border border-claude-hairline rounded hover:bg-claude-surface-card text-claude-body"
               >
-                导出 {t.label}
+                {t('knowledge.import_export.export_label')} {t(entry.labelKey)}
               </button>
             ))}
           </div>
         </section>
         <section>
           <h3 className="text-xs md:text-sm font-semibold text-claude-ink mb-2">
-            导入
+            {t('knowledge.import_export.import')}
           </h3>
           <div className="flex flex-wrap gap-2">
-            {IMPORT_TYPES.map((t) => (
+            {IMPORT_TYPES.map((entry) => (
               <button
-                key={t.value}
-                onClick={() => onImport(t.value)}
+                key={entry.value}
+                onClick={() => onImport(entry.value)}
                 disabled={importing !== null}
-                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-claude-canvas border border-claude-hairline rounded hover:bg-claude-surface-card text-claude-body disabled:opacity-50"
+                className="px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm bg-claude-canvas border border-claude-hairline rounded hover:bg-bg-claude-surface-card text-claude-body disabled:opacity-50"
               >
-                {importing === t.value ? '导入中…' : `导入 ${t.label}`}
+                {importing === entry.value
+                  ? t('knowledge.import_export.import_loading')
+                  : `${t('knowledge.import_export.import_label')} ${t(entry.labelKey)}`}
               </button>
             ))}
           </div>
           <p className="mt-2 text-xs text-claude-muted">
-            导入文件需为导出的 JSON (包含 items 数组)。导入会跳过原 ID 并分配新主键。
+            {t('knowledge.import_export.hint')}
           </p>
         </section>
       </div>

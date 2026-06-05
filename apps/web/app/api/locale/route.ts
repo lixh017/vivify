@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getCatalog,
   LOCALE_COOKIE,
+  LOCALE_COOKIE_MAX_AGE,
+  LOCALE_COOKIE_PATH,
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   type Locale,
@@ -56,12 +58,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Mirror the cookie attributes used by the client-side helper so
   // both paths produce the same Set-Cookie header.
-  const oneYear = 60 * 60 * 24 * 365
   response.cookies.set({
     name: LOCALE_COOKIE,
     value: body.locale,
-    path: '/',
-    maxAge: oneYear,
+    path: LOCALE_COOKIE_PATH,
+    maxAge: LOCALE_COOKIE_MAX_AGE,
     sameSite: 'lax',
   })
 

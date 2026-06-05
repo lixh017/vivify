@@ -20,7 +20,10 @@ import {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
   LOCALE_LABELS,
+  LOCALE_COOKIE_MAX_AGE,
+  LOCALE_COOKIE_PATH,
   type Locale,
+  type TranslationKey,
 } from './i18n-types'
 
 // Re-export the public surface so existing server-side call sites
@@ -30,7 +33,10 @@ export {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
   LOCALE_LABELS,
+  LOCALE_COOKIE_MAX_AGE,
+  LOCALE_COOKIE_PATH,
   type Locale,
+  type TranslationKey,
 } from './i18n-types'
 export { getCatalog } from './i18n-lookup'
 
@@ -70,15 +76,22 @@ export function getLocale(): Locale {
 }
 
 /**
- * t looks up `key` in the catalog for the active locale (read from
- * the cookie) and returns the translation. Server-side convenience
- * that delegates to `i18n-lookup.ts` after resolving the locale.
+ * Server-side `t` that resolves the locale from the cookie. A second
+ * arg can be passed to override (useful in middleware / tests that
+ * already know the active locale). For client code, use `useT()` from
+ * `i18n-client.ts` instead.
  */
-export function t(key: string, locale?: Locale): string {
-  const effective = locale ?? getLocale()
-  return tWithLocale(key, effective)
+export function t(
+  key: TranslationKey | string,
+  locale?: Locale,
+): string {
+  return tWithLocale(key, locale ?? getLocale())
 }
 
 // Touch getCatalogImpl so the re-export above doesn't get tree-shaken
 // in case downstream code imports it from this module too.
 void getCatalogImpl
+
+// Mark the cookie helpers as used for tree-shaking friendliness.
+void LOCALE_COOKIE_MAX_AGE
+void LOCALE_COOKIE_PATH

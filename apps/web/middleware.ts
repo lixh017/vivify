@@ -17,7 +17,13 @@
 //   - We only use `NextResponse.cookies.set`, which is allowed.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { LOCALE_COOKIE, DEFAULT_LOCALE, type Locale } from './lib/i18n'
+import {
+  LOCALE_COOKIE,
+  DEFAULT_LOCALE,
+  LOCALE_COOKIE_MAX_AGE,
+  LOCALE_COOKIE_PATH,
+  type Locale,
+} from './lib/i18n-types'
 
 function isLocale(value: string | undefined): value is Locale {
   return value === 'zh' || value === 'en'
@@ -38,11 +44,10 @@ export function middleware(request: NextRequest): NextResponse {
   response.cookies.set({
     name: LOCALE_COOKIE,
     value: DEFAULT_LOCALE,
-    path: '/',
-    // Short max-age for the seed cookie: if the user picks a real
-    // locale via the switcher it overrides this anyway. A year is
-    // fine — it just means "until the user explicitly changes it."
-    maxAge: 60 * 60 * 24 * 365,
+    path: LOCALE_COOKIE_PATH,
+    // 1 year: the user explicitly changes locale via the switcher
+    // when they want to, so we just keep the seed alive across sessions.
+    maxAge: LOCALE_COOKIE_MAX_AGE,
     sameSite: 'lax',
   })
   return response

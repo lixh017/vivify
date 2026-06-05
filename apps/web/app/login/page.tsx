@@ -3,11 +3,12 @@
 import { Suspense, useState, FormEvent, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
+import { useT } from '@/lib/i18n-client'
 
 // Login page for Phase 2's session-based auth. The form posts to
 // /api/auth/login; on success the browser's opc_session cookie is
 // set by the server and we navigate to `next` (or /topics by
-// default). On 401 we surface a generic "邮箱或密码错误" message —
+// default). On 401 we surface a generic "wrong credentials" message —
 // the server intentionally does not distinguish unknown-email from
 // wrong-password so the endpoint can't be used to enumerate users.
 //
@@ -20,6 +21,7 @@ import { api, ApiError } from '@/lib/api'
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const t = useT()
   // Where to land after a successful login. The link from a 401 on
   // a protected page can append ?next=/foo; we honour that and
   // fall back to /topics so the user sees the most useful screen.
@@ -60,9 +62,9 @@ function LoginForm() {
       router.replace(next)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('邮箱或密码错误')
+        setError(t('login.error.invalid'))
       } else {
-        setError(err instanceof Error ? err.message : '登录失败')
+        setError(err instanceof Error ? err.message : t('login.error.generic'))
       }
     } finally {
       setSubmitting(false)
@@ -72,22 +74,22 @@ function LoginForm() {
   return (
     <div className="w-full max-w-sm">
       <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
-        🐼 OPC 登录
+        {t('login.title')}
       </h1>
       <p className="text-sm text-claude-muted text-center mt-1">
-        熊猫 IP 创作控制台
+        {t('login.subtitle')}
       </p>
       <form
         onSubmit={handleSubmit}
         className="mt-6 space-y-4 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline"
-        aria-label="登录表单"
+        aria-label={t('login.title')}
       >
         <div>
           <label
             htmlFor="email"
             className="block text-sm font-medium text-claude-ink"
           >
-            邮箱
+            {t('login.email')}
           </label>
           <input
             id="email"
@@ -107,7 +109,7 @@ function LoginForm() {
             htmlFor="password"
             className="block text-sm font-medium text-claude-ink"
           >
-            密码
+            {t('login.password')}
           </label>
           <input
             id="password"
@@ -139,18 +141,18 @@ function LoginForm() {
           disabled={submitting}
           className="w-full px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
         >
-          {submitting ? '登录中…' : '登录'}
+          {submitting ? t('login.submit_loading') : t('login.submit')}
         </button>
       </form>
 
       <p className="mt-4 text-xs text-claude-muted text-center">
-        还没有账号？
+        {t('login.no_account')}
         <a
           href="/register"
           data-testid="link-register"
           className="ml-1 text-claude-coral hover:text-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-coral focus-visible:ring-offset-2 rounded-sm transition-colors"
         >
-          立即注册
+          {t('login.register_link')}
         </a>
       </p>
     </div>
@@ -159,18 +161,15 @@ function LoginForm() {
 
 function LoginFormFallback() {
   // Render-only fallback shown while Suspense is hydrating the
-  // client form. Kept dependency-free (no hooks) so it is safe to
-  // serve from the static prerender.
+  // client form. Kept dependency-free (no hooks, no translator)
+  // so it is safe to serve from the static prerender.
   return (
     <div className="w-full max-w-sm" aria-busy="true">
       <h1 className="font-serif text-2xl text-center text-claude-ink tracking-tight">
-        🐼 OPC 登录
+        🐼 OPC
       </h1>
-      <p className="text-sm text-claude-muted text-center mt-1">
-        熊猫 IP 创作控制台
-      </p>
       <div className="mt-6 p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-        正在加载登录表单…
+        Loading…
       </div>
     </div>
   )

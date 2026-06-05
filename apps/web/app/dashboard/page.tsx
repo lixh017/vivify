@@ -4,7 +4,10 @@ import { useEffect, useState, FormEvent } from 'react'
 import { api } from '@/lib/api'
 import type { PostmortemStructured } from '@/lib/api'
 import type { ContentItem } from '@/lib/types'
+import { useT } from '@/lib/i18n-client'
 
+// Canonical platform vocabulary mirroring the backend's allowedPlatforms
+// set. Wire values; the surrounding chrome is rendered via i18n.
 const PLATFORMS = ['抖音', '小红书', 'B站', '视频号', 'YouTube']
 
 interface FormState {
@@ -19,10 +22,10 @@ const EMPTY_FORM: FormState = {
   performance_metrics: '',
 }
 
-// PostmortemModal — inline component for the AI 复盘 report viewer.
-// State machine: null (closed) | {loading} (in flight) | {result} (done)
-// | {error} (failed). The modal stays mounted while the result is
-// shown so the Close button can dismiss it cleanly.
+// PostmortemModal — inline component for the AI postmortem report
+// viewer. State machine: null (closed) | {loading} (in flight) |
+// {result} (done) | {error} (failed). The modal stays mounted while
+// the result is shown so the Close button can dismiss it cleanly.
 interface PostmortemModalState {
   loading: boolean
   report: string
@@ -40,6 +43,7 @@ const INITIAL_MODAL: PostmortemModalState = {
 }
 
 export default function DashboardPage() {
+  const t = useT()
   const [items, setItems] = useState<ContentItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -55,7 +59,7 @@ export default function DashboardPage() {
       const res = await api.contentItems.list()
       setItems(res.items)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      setError(err instanceof Error ? err.message : t('dashboard.error.load'))
     } finally {
       setLoading(false)
     }
@@ -79,7 +83,7 @@ export default function DashboardPage() {
       setShowForm(false)
       await loadItems()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '创建失败')
+      setError(err instanceof Error ? err.message : t('dashboard.error.create'))
     } finally {
       setSubmitting(false)
     }
@@ -93,7 +97,7 @@ export default function DashboardPage() {
     try {
       await api.contentItems.delete(id)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : '删除失败')
+      setError(err instanceof Error ? err.message : t('dashboard.error.delete'))
       setItems(previous)
     }
   }
@@ -119,7 +123,7 @@ export default function DashboardPage() {
           loading: false,
           report: '',
           structured: null,
-          error: err instanceof Error ? err.message : 'AI 复盘失败',
+          error: err instanceof Error ? err.message : t('dashboard.postmortem_failed'),
           demo: false,
         },
       })
@@ -138,27 +142,31 @@ export default function DashboardPage() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-serif text-3xl text-claude-ink tracking-tight">
-            📊 表现
+            📊 {t('dashboard.title')}
           </h1>
           <p className="text-claude-muted text-sm mt-1">
-            数据说话,爆款可复盘
+            {t('dashboard.subhead')}
           </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
           className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
         >
-          {showForm ? '取消' : '+ 新建记录'}
+          {showForm ? t('common.cancel') : t('dashboard.create')}
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:gap-4">
         <div className="p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline">
-          <p className="text-xs md:text-sm text-claude-muted">总记录数</p>
+          <p className="text-xs md:text-sm text-claude-muted">
+            {t('dashboard.metric.total')}
+          </p>
           <p className="font-serif text-3xl mt-2 text-claude-ink">{totalCount}</p>
         </div>
         <div className="p-4 md:p-6 bg-claude-surface-card rounded-lg border border-claude-hairline">
-          <p className="text-xs md:text-sm text-claude-muted">含平台链接</p>
+          <p className="text-xs md:text-sm text-claude-muted">
+            {t('dashboard.metric.with_url')}
+          </p>
           <p className="font-serif text-3xl mt-2 text-claude-ink">{withUrlCount}</p>
         </div>
       </div>
@@ -170,7 +178,7 @@ export default function DashboardPage() {
         >
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              平台
+              {t('dashboard.form.platform_label')}
             </label>
             <select
               data-testid="input-test-platform"
@@ -187,7 +195,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              平台链接
+              {t('dashboard.form.url_label')}
             </label>
             <input
               type="url"
@@ -202,7 +210,7 @@ export default function DashboardPage() {
           </div>
           <div>
             <label className="block text-xs md:text-sm font-medium text-claude-ink">
-              表现数据
+              {t('dashboard.form.metrics_label')}
             </label>
             <textarea
               data-testid="input-test-performance_metrics"
@@ -210,7 +218,7 @@ export default function DashboardPage() {
               onChange={(e) =>
                 setForm({ ...form, performance_metrics: e.target.value })
               }
-              placeholder="例如: 播放 12k, 点赞 800, 评论 45"
+              placeholder={t('dashboard.form.metrics_placeholder')}
               className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
               rows={3}
             />
@@ -221,7 +229,9 @@ export default function DashboardPage() {
             disabled={submitting}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
           >
-            {submitting ? '提交中...' : '保存'}
+            {submitting
+              ? t('dashboard.form.submit_loading')
+              : t('dashboard.form.submit_idle')}
           </button>
         </form>
       )}
@@ -233,10 +243,10 @@ export default function DashboardPage() {
       )}
 
       {loading ? (
-        <div className="text-sm text-claude-body">加载中…</div>
+        <div className="text-sm text-claude-body">{t('common.loading')}</div>
       ) : items.length === 0 ? (
         <div className="p-4 bg-claude-surface-card rounded-lg border border-claude-hairline text-sm text-claude-muted text-center">
-          还没有数据
+          {t('dashboard.empty')}
         </div>
       ) : (
         <div className="space-y-3">
@@ -250,11 +260,12 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-3 flex-col sm:flex-row">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs md:text-sm text-claude-body">
-                    Script #{item.script_id}
+                    {t('dashboard.field.script')}
+                    {item.script_id}
                   </p>
                   {item.published_at && (
                     <p className="text-xs text-claude-success mt-1 break-all">
-                      已发布: {item.published_at}
+                      {t('calendar.field.published_at')} {item.published_at}
                     </p>
                   )}
                   {item.platform_url ? (
@@ -267,7 +278,9 @@ export default function DashboardPage() {
                       {item.platform_url}
                     </a>
                   ) : (
-                    <p className="text-xs text-claude-muted-soft mt-1">无链接</p>
+                    <p className="text-xs text-claude-muted-soft mt-1">
+                      {t('dashboard.metric.no_url')}
+                    </p>
                   )}
                   {item.performance_metrics && (
                     <p className="text-xs md:text-sm text-claude-ink mt-2 whitespace-pre-wrap">
@@ -286,17 +299,17 @@ export default function DashboardPage() {
                     className="px-2.5 md:px-3 py-1 text-xs bg-claude-accent-amber text-white rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
                   >
                     {postmortem?.item.id === item.id && postmortem.state.loading
-                      ? '复盘中...'
-                      : 'AI 复盘'}
+                      ? t('dashboard.postmortem_loading')
+                      : t('dashboard.postmortem')}
                   </button>
                   <button
                     type="button"
                     data-testid={`btn-delete-${item.id}`}
                     onClick={() => deleteItem(item.id)}
-                    aria-label="删除"
+                    aria-label={t('dashboard.aria.delete')}
                     className="px-2 py-1 text-xs bg-claude-canvas hover:bg-claude-surface-soft text-claude-error rounded border border-claude-hairline"
                   >
-                    删除
+                    {t('common.delete')}
                   </button>
                 </div>
               </div>
@@ -328,6 +341,7 @@ interface PostmortemModalProps {
 }
 
 function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
+  const t = useT()
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4"
@@ -339,12 +353,12 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
       >
         <div className="p-3 sm:p-4 border-b border-claude-hairline flex items-center justify-between gap-2">
           <h2 className="text-base sm:text-lg font-semibold text-claude-ink">
-            AI 复盘 #{item.id}
+            {t('dashboard.postmortem')} #{item.id}
             <span className="ml-2 text-xs text-claude-muted">({item.platform})</span>
           </h2>
           <button
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t('dashboard.aria.close')}
             className="text-claude-muted-soft hover:text-claude-ink text-2xl leading-none"
           >
             ×
@@ -357,11 +371,13 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
               data-testid="demo-badge-postmortem"
               className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-claude-accent-amber/15 text-claude-accent-amber border border-claude-accent-amber/30"
             >
-              🎭 Demo Mode (no API key)
+              {t('dashboard.postmortem_demo')}
             </div>
           )}
           {state.loading && (
-            <div className="text-sm text-claude-body">复盘中，请稍候...</div>
+            <div className="text-sm text-claude-body">
+              {t('dashboard.postmortem_loading_view')}
+            </div>
           )}
 
           {state.error && (
@@ -377,7 +393,7 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
           {!state.loading && !state.error && state.report && (
             <details className="text-sm">
               <summary className="cursor-pointer text-claude-body hover:text-claude-ink">
-                查看原始报告
+                {t('dashboard.postmortem_raw')}
               </summary>
               <pre className="mt-2 p-3 bg-claude-surface-card rounded whitespace-pre-wrap break-words text-xs text-claude-ink">
                 {state.report}
@@ -391,7 +407,7 @@ function PostmortemModal({ item, state, onClose }: PostmortemModalProps) {
             onClick={onClose}
             className="w-full sm:w-auto px-4 py-2 text-sm bg-claude-surface-card text-claude-ink rounded hover:bg-claude-surface-soft border border-claude-hairline"
           >
-            关闭
+            {t('dashboard.aria.close')}
           </button>
         </div>
       </div>
@@ -407,12 +423,29 @@ interface PostmortemStructuredViewProps {
 }
 
 function PostmortemStructuredView({ structured }: PostmortemStructuredViewProps) {
+  const t = useT()
   return (
     <div className="space-y-3">
-      <BucketSection title="成功要素" items={structured.success_factors} accent="bg-claude-success/10 text-claude-success" />
-      <BucketSection title="可复用模式" items={structured.reusable_patterns} accent="bg-claude-accent-teal/10 text-claude-accent-teal" />
-      <BucketSection title="数据洞察" items={structured.insights} accent="bg-claude-accent-amber/10 text-claude-accent-amber" />
-      <BucketSection title="改进建议" items={structured.suggestions} accent="bg-claude-coral/10 text-claude-coral" />
+      <BucketSection
+        title={t('dashboard.bucket.success')}
+        items={structured.success_factors}
+        accent="bg-claude-success/10 text-claude-success"
+      />
+      <BucketSection
+        title={t('dashboard.bucket.patterns')}
+        items={structured.reusable_patterns}
+        accent="bg-claude-accent-teal/10 text-claude-accent-teal"
+      />
+      <BucketSection
+        title={t('dashboard.bucket.insights')}
+        items={structured.insights}
+        accent="bg-claude-accent-amber/10 text-claude-accent-amber"
+      />
+      <BucketSection
+        title={t('dashboard.bucket.suggestions')}
+        items={structured.suggestions}
+        accent="bg-claude-coral/10 text-claude-coral"
+      />
     </div>
   )
 }

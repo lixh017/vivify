@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
 import type { AuthUser } from '@/lib/types'
@@ -9,20 +9,22 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from '@/lib/i18n-types'
+import {
+  useT,
+  setLocaleCookie,
+  readLocaleFromCookie,
+} from '@/lib/i18n-client'
 
 interface NavLink {
   href: string
-  label: string
   icon: string
+  key:
+    | 'nav.topics'
+    | 'nav.scripts'
+    | 'nav.calendar'
+    | 'nav.dashboard'
+    | 'nav.knowledge'
 }
-
-const NAV_LINKS: NavLink[] = [
-  { href: '/topics', label: '选题', icon: '📋' },
-  { href: '/scripts', label: '脚本', icon: '📝' },
-  { href: '/calendar', label: '日历', icon: '📅' },
-  { href: '/dashboard', label: '表现', icon: '📊' },
-  { href: '/knowledge', label: '知识库', icon: '📚' },
-]
 
 // The /login page renders inside this layout but never wants a
 // "loading user" placeholder — the user is by definition unauthenticated
@@ -44,18 +46,24 @@ const PUBLIC_PATHS = new Set<string>(['/login'])
 // the UX gap flagged in QA.
 type UserState = 'loading' | AuthUser | null
 
+// Locale labels are stored in a small const table rather than
+// re-reading the cookie on every render. We only re-evaluate
+// `activeLocale` after a successful switch + reload.
+const NAV_LINKS: NavLink[] = [
+  { href: '/topics', key: 'nav.topics', icon: '📋' },
+  { href: '/scripts', key: 'nav.scripts', icon: '📝' },
+  { href: '/calendar', key: 'nav.calendar', icon: '📅' },
+  { href: '/dashboard', key: 'nav.dashboard', icon: '📊' },
+  { href: '/knowledge', key: 'nav.knowledge', icon: '📚' },
+]
+
 export default function NavBar() {
   const [open, setOpen] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const [loggingOut, setLoggingOut] = useState(false)
   const [user, setUser] = useState<UserState>('loading')
-  // startTransition wraps the locale switch so React can prioritize
-  // a fresh render in the new language. We don't need isPending
-  // here — a spinner would just flicker before the page reloads —
-  // but the transition is still useful for keeping the click
-  // handler low-priority during the brief moment before reload.
-  const [, startTransition] = useTransition()
+  const t = useT()
 
   // Resolve the current user once on mount, and re-resolve when the
   // route changes (so a fresh login on /login transitions the navbar
@@ -120,20 +128,12 @@ export default function NavBar() {
   // Read the active locale directly from the cookie at render time
   // (not via useT) so the switcher always highlights the live value
   // even before useT has re-run on focus. This is cheap: it's a
-  // single document.cookie scan.
-  function readActiveLocale(): Locale {
-    if (typeof document === 'undefined') return 'zh'
-    const match = document.cookie
-      .split('; ')
-      .find((row) => row.startsWith('opc_locale='))
-    const raw = match ? decodeURIComponent(match.split('=')[1]) : null
-    if (raw === 'zh' || raw === 'en') return raw
-    return 'zh'
-  }
-
-  const [activeLocale, setActiveLocale] = useState<Locale>('zh')
+  // single document.cookie scan via the shared helper.
+  const [activeLocale, setActiveLocale] = useState<Locale>(
+    readLocaleFromCookie(),
+  )
   useEffect(() => {
-    setActiveLocale(readActiveLocale())
+    setActiveLocale(readLocaleFromCookie())
   }, [])
 
   // handleLocaleChange persists the new locale to the cookie and
@@ -145,14 +145,8 @@ export default function NavBar() {
   function handleLocaleChange(next: Locale) {
     if (next === activeLocale) return
     setActiveLocale(next)
-    startTransition(() => {
-      const oneYear = 60 * 60 * 24 * 365
-      document.cookie = `opc_locale=${encodeURIComponent(next)}; path=/; max-age=${oneYear}; SameSite=Lax`
-      // Use location.reload rather than router.refresh: the entire
-      // app tree (including the layout) needs to re-evaluate the
-      // cookie, and a fresh load is the simplest way to do that.
-      window.location.reload()
-    })
+    setLocaleCookie(next)
+    window.location.reload()
   }
 
   const isAuthenticated = user !== 'loading' && user !== null
@@ -183,7 +177,7 @@ export default function NavBar() {
                       : 'text-claude-body hover:text-claude-coral transition-colors'
                   }
                 >
-                  {link.icon} {link.label}
+                  {link.icon} {t(link.key)}
                 </a>
               )
             })}
@@ -201,10 +195,10 @@ export default function NavBar() {
                 onClick={handleLogout}
                 disabled={loggingOut}
                 data-testid="btn-logout"
-                aria-label="登出"
+                aria-label={t('nav.logout')}
                 className="text-sm px-3 py-1.5 rounded-md text-claude-ink hover:bg-claude-surface-card disabled:opacity-50 transition-colors"
               >
-                {loggingOut ? '登出中…' : '登出'}
+                {loggingOut ? t('nav.logout_loading') : t('nav.logout')}
               </button>
             ) : (
               <a
@@ -212,14 +206,14 @@ export default function NavBar() {
                 data-testid="btn-login"
                 className="bg-claude-coral text-claude-on-primary px-4 py-2 rounded-md text-sm font-medium hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
               >
-                登录
+                {t('nav.login')}
               </a>
             )}
           </div>
 
           <button
             type="button"
-            aria-label="切换导航菜单"
+            aria-label={t('nav.menu_toggle')}
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
             className="md:hidden inline-flex items-center justify-center p-2 rounded-md text-claude-ink hover:bg-claude-surface-card transition-colors"
@@ -273,7 +267,7 @@ export default function NavBar() {
                 onClick={() => setOpen(false)}
                 className="block px-3 py-2 rounded-md text-base font-medium text-claude-ink hover:bg-claude-surface-card transition-colors"
               >
-                {link.icon} {link.label}
+                {link.icon} {t(link.key)}
               </a>
             ))}
             <div className="px-3 py-2">
@@ -287,7 +281,7 @@ export default function NavBar() {
                 data-testid="btn-logout-mobile"
                 className="w-full text-left px-3 py-2 rounded-md text-base font-medium text-claude-ink hover:bg-claude-surface-card disabled:opacity-50 transition-colors"
               >
-                {loggingOut ? '登出中…' : '登出'}
+                {loggingOut ? t('nav.logout_loading') : t('nav.logout')}
               </button>
             ) : user !== 'loading' ? (
               <a
@@ -295,7 +289,7 @@ export default function NavBar() {
                 data-testid="btn-login-mobile"
                 className="block px-3 py-2 rounded-md text-base font-medium bg-claude-coral text-claude-on-primary hover:bg-claude-coral-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-claude-ink focus-visible:ring-offset-2 active:translate-y-px transition-colors"
               >
-                登录
+                {t('nav.login')}
               </a>
             ) : null}
           </div>
@@ -354,10 +348,11 @@ function LocaleSwitcher({
   active: Locale
   onChange: (next: Locale) => void
 }) {
+  const t = useT()
   return (
     <div
       role="group"
-      aria-label="Language"
+      aria-label={t('nav.locale_group_label')}
       data-testid="locale-switcher"
       className="inline-flex rounded-md border border-claude-hairline overflow-hidden"
     >
@@ -368,7 +363,7 @@ function LocaleSwitcher({
             key={loc}
             type="button"
             aria-pressed={isActive}
-            aria-label={loc === 'zh' ? 'Switch to Chinese' : 'Switch to English'}
+            aria-label={t(loc === 'zh' ? 'nav.switch_to.zh' : 'nav.switch_to.en')}
             onClick={() => onChange(loc)}
             data-testid={`locale-btn-${loc}`}
             className={
