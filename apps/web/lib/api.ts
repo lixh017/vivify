@@ -322,6 +322,30 @@ export const api = {
         { method: 'POST', body: JSON.stringify(data) },
         options,
       ),
+    // pipeline runs the full content-creation chain in ONE call:
+    // topics -> script (best topic expanded) -> score ->
+    // 3-platform adapt. include_knowledge gates the RAG step
+    // that injects style guidance from the user's knowledge base
+    // into the topic + script prompts. steps is an explicit
+    // allow-list; an empty array means "all four". knowledge_used
+    // is always present in the response (possibly empty) so the
+    // UI can show "grounded in N docs" uniformly. Falls back to
+    // the canned demo pool when no API key is configured
+    // (X-Demo-Mode header).
+    pipeline: (
+      data: {
+        seed: string
+        platform: string
+        include_knowledge: boolean
+        steps?: PipelineStep[]
+      },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<PipelineResult>(
+        '/ai/pipeline',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
   },
   auth: {
     // login exchanges email+password for an HttpOnly session cookie
@@ -362,13 +386,18 @@ export type PostmortemStructured = {
   suggestions: string[]
 }
 
-// QualitySuggestion matches the {category, message, severity} shape
-// the /ai/score endpoint returns. severity is constrained to the
-// small set the prompt asks Claude for, so the frontend can map it
-// 1:1 to a color/style without a defensive parser.
+// QualitySuggestion matches the {category, problem, rewrite,
+// severity} shape the upgraded /ai/score endpoint returns. Each
+// suggestion is a "before/after" pair: problem is what the
+// heuristic flagged, rewrite is the concrete fix the user can paste
+// back into their script. The legacy `message` field is gone — the
+// rule-based fallback and the live Claude path now emit the same
+// fields, so the frontend does not need to branch on which mode
+// produced the response.
 export type QualitySuggestion = {
   category: string
-  message: string
+  problem: string
+  rewrite: string
   severity: 'low' | 'medium' | 'high'
 }
 
@@ -508,6 +537,35 @@ export type ViralFormulaResult = {
   steps: string[]
   example_application: string
   variations: string[]
+}
+
+// PipelineStep enumerates the steps the /ai/pipeline endpoint
+// understands. The server drops unknown step names so a typo
+// (e.g. "Scripts" with a capital S) silently skips that step —
+// the UI should send the lowercase form.
+export type PipelineStep = 'topics' | 'script' | 'score' | 'adapt'
+
+// PipelineScript is the trimmed script shape the pipeline emits.
+// Different from Script in lib/types.ts (which is the persisted
+// row shape): the pipeline returns a generation surface, not a
+// persistence surface, so it omits timestamps, ids, etc.
+export type PipelineScript = {
+  title: string
+  content: string
+  angle: string
+  topic: string
+}
+
+// PipelineResult is the wire shape for /ai/pipeline. All four
+// sub-fields are omitempty because the caller can gate them via
+// the `steps` parameter; knowledge_used is always present (even
+// when empty) so the UI can render "grounded in N docs" uniformly.
+export type PipelineResult = {
+  topics?: GeneratedTopic[]
+  script?: PipelineScript
+  score?: QualityScore
+  adaptations?: PlatformAdapt
+  knowledge_used: string[]
 }
 
 export { ApiError }
