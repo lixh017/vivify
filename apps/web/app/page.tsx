@@ -248,11 +248,22 @@ function PipelinePanel({ onClose }: { onClose: () => void }) {
                       <ScoreCell label="平台" value={result.score.platform_fit} />
                     </div>
                     {result.score.suggestions && result.score.suggestions.length > 0 && (
-                      <ul className="text-xs text-claude-body space-y-1">
+                      <ul className="text-xs text-claude-body space-y-2">
                         {result.score.suggestions.map(
                           (s: QualitySuggestion, i: number) => (
-                            <li key={i}>
-                              <span className="text-claude-muted">[{s.severity}]</span> {s.problem}
+                            <li
+                              key={i}
+                              className="border-l-2 border-claude-hairline pl-2"
+                            >
+                              <div>
+                                <span className="text-claude-muted">[{s.severity}]</span>{' '}
+                                {s.problem}
+                              </div>
+                              {s.rewrite && (
+                                <div className="mt-1 text-claude-ink italic">
+                                  改法:{s.rewrite}
+                                </div>
+                              )}
                             </li>
                           ),
                         )}
@@ -265,26 +276,35 @@ function PipelinePanel({ onClose }: { onClose: () => void }) {
               {/* ④ Adapt */}
               {result.adaptations && (
                 <PipelineSection title={t('home.pipeline.section.adapt')}>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <AdaptCard
-                      title={result.adaptations.adaptations.抖音.title}
-                      tags={result.adaptations.adaptations.抖音.hashtags}
-                      body={result.adaptations.adaptations.抖音.description}
-                      label="抖音"
-                    />
-                    <AdaptCard
-                      title={result.adaptations.adaptations.哔哩哔哩.title}
-                      tags={result.adaptations.adaptations.哔哩哔哩.tags}
-                      body={result.adaptations.adaptations.哔哩哔哩.description}
-                      label="哔哩哔哩"
-                    />
-                    <AdaptCard
-                      title={result.adaptations.adaptations.小红书.title}
-                      tags={result.adaptations.adaptations.小红书.tags}
-                      body={result.adaptations.adaptations.小红书.body}
-                      label="小红书"
-                    />
-                  </div>
+                  {(() => {
+                    // Destructure the double "adaptations" indirection
+                    // (server returns {adaptations: {抖音: ...}}) so
+                    // each AdaptCard stays readable and a future
+                    // server rename is caught in one place.
+                    const a = result.adaptations.adaptations
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <AdaptCard
+                          title={a.抖音.title}
+                          tags={a.抖音.hashtags}
+                          body={a.抖音.description}
+                          label="抖音"
+                        />
+                        <AdaptCard
+                          title={a.哔哩哔哩.title}
+                          tags={a.哔哩哔哩.tags}
+                          body={a.哔哩哔哩.description}
+                          label="哔哩哔哩"
+                        />
+                        <AdaptCard
+                          title={a.小红书.title}
+                          tags={a.小红书.tags}
+                          body={a.小红书.body}
+                          label="小红书"
+                        />
+                      </div>
+                    )
+                  })()}
                 </PipelineSection>
               )}
             </div>

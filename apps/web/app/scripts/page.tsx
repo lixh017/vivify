@@ -219,7 +219,14 @@ export default function ScriptsPage() {
     setError(null)
     try {
       const suggestionLines = cached.suggestions
-        .map((s) => `- (${s.category}/${s.severity}) ${s.message}`)
+        .map((s) => {
+          // Phase-1 wire shape: each suggestion is a "before/after"
+          // pair (problem → rewrite). When rewrite is empty, fall
+          // back to the problem so the humanize prompt still gets
+          // actionable copy.
+          const fix = s.rewrite ? `${s.problem} → ${s.rewrite}` : s.problem
+          return `- (${s.category}/${s.severity}) ${fix}`
+        })
         .join('\n')
       const brief = suggestionLines
         ? `请按以下建议改写脚本:\n${suggestionLines}\n\n原始脚本:\n${script.content}`
@@ -529,7 +536,18 @@ export default function ScriptsPage() {
                                   {sg.category}
                                 </span>
                                 <span className="text-claude-muted"> · </span>
-                                {sg.message}
+                                {sg.problem}
+                                {sg.rewrite && (
+                                  <>
+                                    <span className="text-claude-muted">
+                                      {' '}
+                                      →{' '}
+                                    </span>
+                                    <span className="text-claude-ink">
+                                      {sg.rewrite}
+                                    </span>
+                                  </>
+                                )}
                               </span>
                             </li>
                           ))}

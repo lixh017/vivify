@@ -34,7 +34,9 @@ const config: Config = {
         'claude-on-dark-soft': '#a09d96',
         // Accents
         'claude-accent-teal': '#5db8a6',
+        'claude-accent-teal-active': '#3f8a7c',
         'claude-accent-amber': '#e8a55a',
+        'claude-accent-amber-active': '#c08a45',
         // Semantic
         'claude-success': '#5db872',
         'claude-warning': '#d4a017',
