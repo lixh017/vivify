@@ -58,3 +58,6 @@ apps/web/test-results/
 # Test artifacts (image gen / TTS smoke tests)
 image_*.jpg
 speech_*.mp3
+
+# Integration test env (real API keys; copy from .env.test.example)
+apps/api/.env.test

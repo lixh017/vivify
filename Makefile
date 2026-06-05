@@ -14,18 +14,19 @@ GO_TEST      := $(GO) test -race -tags $(FTS5_TAG)
 GO_BUILD     := $(GO) build -tags $(FTS5_TAG)
 PKG          := ./...
 
-.PHONY: help test test-plain build smoke lint fmt vet clean bench
+.PHONY: help test test-integration test-plain build smoke lint fmt vet clean bench
 
 help:
 	@echo "OPC make targets:"
-	@echo "  test         Run API test suite (race + fts5)"
-	@echo "  test-plain   Run API tests WITHOUT -tags fts5 (smoke; FTS integration tests are skipped)"
-	@echo "  build        Build the API server binary (with fts5 tag)"
-	@echo "  bench        Run API benchmarks (FTS search)"
-	@echo "  smoke        Build the binary and run healthcheck"
-	@echo "  fmt          gofmt -w all .go files under apps/api"
-	@echo "  vet          go vet -tags fts5 ./..."
-	@echo "  clean        Remove build artifacts"
+	@echo "  test             Run API test suite (race + fts5)"
+	@echo "  test-integration Run real Claude API integration tests (gated by ANTHROPIC_API_KEY)"
+	@echo "  test-plain       Run API tests WITHOUT -tags fts5 (smoke; FTS integration tests are skipped)"
+	@echo "  build            Build the API server binary (with fts5 tag)"
+	@echo "  bench            Run API benchmarks (FTS search)"
+	@echo "  smoke            Build the binary and run healthcheck"
+	@echo "  fmt              gofmt -w all .go files under apps/api"
+	@echo "  vet              go vet -tags fts5 ./..."
+	@echo "  clean            Remove build artifacts"
 
 # Full test suite with race detector and FTS5 enabled.
 test:
@@ -36,6 +37,20 @@ test:
 # still run.
 test-plain:
 	cd $(API_DIR) && $(GO) test -race $(PKG)
+
+# Real Claude API integration tests. Gated by the `integration` build
+# tag AND the ANTHROPIC_API_KEY env var. When the key is missing we
+# skip with a clear message — never fail — so a developer with no key
+# can still run `make test-integration` and see the regular suite
+# pass with the integration tests Skip-not-Fail. The suite uses
+# Claude Haiku 4.5 by default to keep cost well under a cent.
+# Example: ANTHROPIC_API_KEY=sk-ant-... make test-integration
+test-integration:
+	@if [ -n "$$ANTHROPIC_API_KEY" ]; then \
+		cd $(API_DIR) && $(GO) test -tags integration -race $(PKG); \
+	else \
+		echo 'ANTHROPIC_API_KEY not set; skipping integration tests'; \
+	fi
 
 build:
 	cd $(API_DIR) && $(GO_BUILD) -trimpath -ldflags="-s -w" -o ../bin/opc-api ./cmd/server
