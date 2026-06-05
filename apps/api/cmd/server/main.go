@@ -184,6 +184,18 @@ func main() {
 	authH := handlers.NewAuthHandler(gormDB, slog.Default())
 	authH.RegisterRoutes(r)
 
+	// Phase 2 AI batch + cover generation. The batch handler
+	// reuses the same PipelineClient as /ai/pipeline, and the
+	// cover handler wraps the Kling/即梦 image generation
+	// client (mock fallback when no API key is configured).
+	// Both live on the protected /api group so the response
+	// can be scoped to the caller's rows in a future
+	// iteration (the cover handler is also where the
+	// topic_id persistence seam will land).
+	batchH := handlers.NewBatchHandler(pipelineH.PipelineClient(), gormDB)
+	coverClient := agents.EnvFirstCoverClient()
+	coverH := handlers.NewCoverHandler(coverClient)
+
 	// Protected business surface. Every route in this group runs
 	// through RequireAuth, which resolves the session cookie via
 	// auth.ValidateSession and sets the user_id on the Gin context.
@@ -205,6 +217,8 @@ func main() {
 	pipelineH.RegisterRoutes(apiGroup)
 	ipTemplateH.RegisterRoutes(apiGroup)
 	importExportH.RegisterRoutes(apiGroup)
+	batchH.RegisterRoutes(apiGroup)
+	coverH.RegisterRoutes(apiGroup)
 
 	// API reference surface — /openapi.json serves the OpenAPI 3.0
 	// spec embedded at compile time, /docs serves the Swagger UI

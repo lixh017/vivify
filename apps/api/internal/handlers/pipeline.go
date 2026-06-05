@@ -62,6 +62,16 @@ func (h *PipelineHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/pipeline", h.RunPipeline)
 }
 
+// PipelineClient exposes the underlying AI client so sibling
+// handlers (e.g. /ai/batch) can share the same Claude surface
+// without a second constructor. Returning the concrete
+// interface keeps the dependency direction one-way: the
+// batch handler depends on the pipeline handler, not on the
+// agents package directly.
+func (h *PipelineHandler) PipelineClient() PipelineClient {
+	return h.claude
+}
+
 // pipelineRequest is the JSON body for POST /ai/pipeline.
 //
 // seed is the starting concept the operator hands the machine;
@@ -73,10 +83,10 @@ func (h *PipelineHandler) RegisterRoutes(r gin.IRouter) {
 // script and just wants the score + adapt). steps defaults to the
 // full four-step pipeline when empty.
 type pipelineRequest struct {
-	Seed            string   `json:"seed"`
-	Platform        string   `json:"platform"`
+	Seed             string   `json:"seed"`
+	Platform         string   `json:"platform"`
 	IncludeKnowledge bool     `json:"include_knowledge"`
-	Steps           []string `json:"steps"`
+	Steps            []string `json:"steps"`
 }
 
 // pipelineResponse is the wire shape returned by /ai/pipeline.
@@ -86,11 +96,11 @@ type pipelineRequest struct {
 // promise — the frontend can show "grounded in N docs" even when
 // the answer is zero.
 type pipelineResponse struct {
-	Topics        []generatedTopic        `json:"topics,omitempty"`
-	Script        *pipelineScript         `json:"script,omitempty"`
-	Score         *qualityScoreResponse   `json:"score,omitempty"`
-	Adaptations   *platformAdaptResponse  `json:"adaptations,omitempty"`
-	KnowledgeUsed []string                `json:"knowledge_used"`
+	Topics        []generatedTopic       `json:"topics,omitempty"`
+	Script        *pipelineScript        `json:"script,omitempty"`
+	Score         *qualityScoreResponse  `json:"score,omitempty"`
+	Adaptations   *platformAdaptResponse `json:"adaptations,omitempty"`
+	KnowledgeUsed []string               `json:"knowledge_used"`
 }
 
 // pipelineScript is the trimmed script shape the pipeline emits.
@@ -347,9 +357,20 @@ func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platf
 	if perr != nil {
 		// Gracefully degrade to the rule-based scorer on parse
 		// failure, matching the /ai/score handler. The frontend
-		// gets a usable answer instead of a 502.
+		// gets a usable answer instead of a 502. We log the
+		// original parse error AND the fallback error (if any) so
+		// an operator can still see what the rule-based scorer
+		// produced when debugging a regression.
+		h.logger.Warn("pipeline score: parse failed, falling back to rule-based scorer",
+			"err", perr.Error(),
+			"title", title,
+		)
 		fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(title, script, platform))
 		if fbErr != nil {
+			h.logger.Error("pipeline score: rule-based fallback also failed",
+				"parse_err", perr.Error(),
+				"fallback_err", fbErr.Error(),
+			)
 			return nil, perr
 		}
 		return &fb, nil
