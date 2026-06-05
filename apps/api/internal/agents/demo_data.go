@@ -157,3 +157,93 @@ func pickDemoIndex(seed int, n int) int {
 	}
 	return seed % n
 }
+
+// DemoQualityScores is a small pool of pre-canned content-quality
+// scores for the panda-IP sample script. The shape mirrors the
+// QualityScoreResponse struct defined in
+// internal/handlers/quality.go. The first entry corresponds to a
+// "good" script; the second to a "needs work" script so the demo
+// shows a range of outputs.
+var DemoQualityScores = []string{
+	`{
+  "overall_score": 82,
+  "hook_strength": 88,
+  "structure": 80,
+  "platform_fit": 78,
+  "suggestions": [
+    {"category":"hook","message":"前 3 秒钩子很好,建议保持 30 字以内","severity":"low"},
+    {"category":"structure","message":"中段可以再加一次情绪转折提升完播","severity":"medium"},
+    {"category":"platform_fit","message":"小红书版本可加 emoji 增加可读性","severity":"low"}
+  ],
+  "rewritten_hook": ""
+}`,
+	`{
+  "overall_score": 58,
+  "hook_strength": 42,
+  "structure": 65,
+  "platform_fit": 70,
+  "suggestions": [
+    {"category":"hook","message":"钩子偏弱,缺少具体场景或反差","severity":"high"},
+    {"category":"hook","message":"建议把'今天想给大家讲'换成具体画面:窗边的熊猫看着雨","severity":"high"},
+    {"category":"structure","message":"中段结构 OK,但结尾 CTA 较弱","severity":"medium"},
+    {"category":"platform_fit","message":"标题 24 字偏长,小红书会被截断","severity":"medium"}
+  ],
+  "rewritten_hook": "窗边的熊猫,看着雨,一句话都没说。"
+}`,
+}
+
+// DemoPlatformAdapts is a small pool of pre-canned 3-platform
+// adaptations for the panda IP. The first entry is the default;
+// the second provides variety if the demo runs multiple calls.
+var DemoPlatformAdapts = []string{
+	`{
+  "adaptations": {
+    "抖音": {
+      "title": "雨夜窗边的熊猫",
+      "hashtags": ["#治愈系", "#熊猫日记", "#深夜emo", "#情绪释放"],
+      "description": "窗边的熊猫,看着雨,一句话都没说。"
+    },
+    "哔哩哔哩": {
+      "title": "【熊猫日记 EP03】雨夜窗边,我和自己聊了聊",
+      "description": "今晚的雨下得有点久。窗边的熊猫,看着外面,不说话。其实有时候,陪着就够了。",
+      "tags": ["治愈", "熊猫", "深夜", "情绪", "解压", "慢节奏", "氛围感", "独处"]
+    },
+    "小红书": {
+      "title": "雨夜🐼窗边发呆",
+      "body": "今晚的雨下得有点久。\\n\\n窗边的熊猫,就那么坐着,看着外面。\\n\\n不说话。其实有时候吧,不需要说什么,陪着就够了。",
+      "tags": ["#治愈", "#独处", "#深夜", "#情绪", "#氛围感"]
+    }
+  },
+  "cross_platform_tips": [
+    "核心信息'陪着就够了'在三个平台都保留,作为情绪锚点",
+    "IP 角色(熊猫)必须出现在画面或文字中,不要替换成其他形象",
+    "小红书可加 emoji,抖音不加,哔哩哔哩看 UP 主风格",
+    "BGM 选雨声+轻钢琴,适配三个平台的氛围调性"
+  ]
+}`,
+	`{
+  "adaptations": {
+    "抖音": {
+      "title": "熊猫读《庄子》",
+      "hashtags": ["#国潮", "#哲学", "#熊猫", "#庄子", "#文化"],
+      "description": "熊猫翻开《庄子》:何为逍遥?"
+    },
+    "哔哩哔哩": {
+      "title": "【熊猫读庄子】乘天地之正,而御六气之辩——什么是真正的逍遥?",
+      "description": "熊猫翻开《庄子》,慢慢念:'乘天地之正,而御六气之辩,以游无穷者'。我也不太懂,但大概意思是:别太较劲。",
+      "tags": ["哲学", "庄子", "国学", "熊猫", "逍遥", "慢节奏", "知识", "文化"]
+    },
+    "小红书": {
+      "title": "熊猫翻《庄子》🐼",
+      "body": "你有没有想过——'逍遥'到底是什么?\\n\\n熊猫翻开《庄子》,慢慢念:乘天地之正,而御六气之辩,以游无穷者。\\n\\n我也不太懂,但是吧,大概意思是:别太较劲。",
+      "tags": ["#哲学", "#庄子", "#国学", "#熊猫", "#治愈"]
+    }
+  },
+  "cross_platform_tips": [
+    "原文'乘天地之正,而御六气之辩'必须保留,这是 IP 的内容护城河",
+    "三个平台标题都要带'熊猫'关键词,强化 IP 识别",
+    "哔哩哔哩适合展开哲学讨论,小红书偏情绪共鸣,抖音偏钩子",
+    "B 站可用长视频(3-5 分钟),抖音拆成 15-30 秒系列"
+  ]
+}`,
+}

@@ -15,6 +15,13 @@ const (
 	// DemoOpPostmortem returns a pre-canned postmortem JSON
 	// object matching the shape /ai/postmortem expects.
 	DemoOpPostmortem DemoOperation = "postmortem"
+	// DemoOpScore returns a pre-canned QualityScoreResponse for
+	// the panda-IP sample script — used by /ai/score demo mode.
+	DemoOpScore DemoOperation = "score"
+	// DemoOpPlatformAdapt returns a pre-canned set of three
+	// platform adaptations (抖音/哔哩哔哩/小红书) for the panda
+	// IP, used by /ai/platform-adapt demo mode.
+	DemoOpPlatformAdapt DemoOperation = "platform_adapt"
 )
 
 // IsDemoMode reports whether the Claude agent should be served from
@@ -52,6 +59,12 @@ func (c *Claude) DemoResponse(op DemoOperation, seed int) (string, error) {
 	case DemoOpPostmortem:
 		idx := pickDemoIndex(seed, len(DemoPostmortems))
 		return DemoPostmortems[idx], nil
+	case DemoOpScore:
+		idx := pickDemoIndex(seed, len(DemoQualityScores))
+		return DemoQualityScores[idx], nil
+	case DemoOpPlatformAdapt:
+		idx := pickDemoIndex(seed, len(DemoPlatformAdapts))
+		return DemoPlatformAdapts[idx], nil
 	default:
 		// Unknown op — fall back to topics so the demo still has
 		// *something* useful to show. We do not error here because

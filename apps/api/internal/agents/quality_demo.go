@@ -1,0 +1,280 @@
+package agents
+
+import "strings"
+
+// RuleBasedScore returns a deterministic 0-100 score breakdown for a
+// piece of content based purely on simple heuristics over the
+// title/script. The handler uses this when Claude is unavailable and
+// the caller did not pass ?demo=true, so the API still returns a
+// useful (if conservative) answer instead of 503.
+//
+// The output shape mirrors the QualityScoreResponse fields consumed
+// by the frontend: overall/hook/structure/platform_fit, plus
+// suggestions keyed off which axis scored low.
+//
+// This function is intentionally simple — it exists so demo and
+// fallback paths are decoupled from Claude and so unit tests can
+// pin its behaviour without spinning up the Anthropic SDK.
+func RuleBasedScore(title, script, platform string) map[string]any {
+	hook := scoreHook(title)
+	structure := scoreStructure(script)
+	fit := scorePlatformFit(title, platform)
+	overall := (hook*40 + structure*35 + fit*25) / 100
+	suggestions := buildSuggestions(title, script, platform, hook, structure, fit)
+	rewritten := ""
+	if hook < 70 && len(script) > 0 {
+		rewritten = suggestRewrittenHook(title, script)
+	}
+	out := map[string]any{
+		"overall_score":  overall,
+		"hook_strength":  hook,
+		"structure":      structure,
+		"platform_fit":   fit,
+		"suggestions":    suggestions,
+		"rewritten_hook": rewritten,
+	}
+	return out
+}
+
+// scoreHook — 0-100. Looks at the first ~30 chars of the title for
+// strong verbs, questions, numeric anchors, or quoted dialogue,
+// which are the markers of a good short-form hook.
+func scoreHook(title string) int {
+	t := strings.TrimSpace(title)
+	if t == "" {
+		return 20
+	}
+	score := 50
+	// Short, punchy titles (< 18 chars) tend to read better on
+	// every platform.
+	if len([]rune(t)) <= 18 {
+		score += 15
+	} else if len([]rune(t)) > 28 {
+		score -= 15
+	}
+	// Has a question mark? Hooks that pose a question outperform.
+	if strings.Contains(t, "？") || strings.Contains(t, "?") {
+		score += 10
+	}
+	// Has an exclamation? Same idea.
+	if strings.Contains(t, "！") || strings.Contains(t, "!") {
+		score += 5
+	}
+	// Strong verbs that show up a lot in successful scripts.
+	for _, kw := range []string{"看", "听", "想", "翻", "写", "走", "看", "陪", "等", "发现", "原来", "终于"} {
+		if strings.Contains(t, kw) {
+			score += 5
+			break
+		}
+	}
+	// Dialogue / quotation — hooks that quote something the panda
+	// says outperform third-person descriptions.
+	if strings.Contains(t, "“") || strings.Contains(t, "\"") || strings.Contains(t, "\"") {
+		score += 10
+	}
+	return clampScore(score)
+}
+
+// scoreStructure — 0-100. Length sweet spot for short-form is
+// 80-300 chars (one paragraph, one breath). Paragraph breaks
+// (blank lines) signal intentional pacing.
+func scoreStructure(script string) int {
+	s := strings.TrimSpace(script)
+	if s == "" {
+		return 30
+	}
+	score := 50
+	runes := len([]rune(s))
+	switch {
+	case runes < 30:
+		score -= 25
+	case runes < 80:
+		score -= 5
+	case runes <= 300:
+		score += 20
+	case runes <= 600:
+		score += 5
+	default:
+		score -= 10
+	}
+	// Paragraph breaks = intentional pacing.
+	breaks := strings.Count(s, "\n\n")
+	if breaks >= 1 {
+		score += 8
+	}
+	if breaks >= 3 {
+		score += 4
+	}
+	// Pauses & white space in the body are signs the writer cares
+	// about breath.
+	if strings.Contains(s, "...") || strings.Contains(s, "——") {
+		score += 5
+	}
+	return clampScore(score)
+}
+
+// scorePlatformFit — 0-100. Each platform has its own title-length
+// sweet spot. Other axes (hashtags, body length) are checked by the
+// handler layer, which has the full content-item context.
+func scorePlatformFit(title, platform string) int {
+	score := 60
+	runes := len([]rune(strings.TrimSpace(title)))
+	switch platform {
+	case "抖音":
+		// 抖音 caps visible title at ~22 chars.
+		switch {
+		case runes == 0:
+			score = 20
+		case runes <= 22:
+			score += 25
+		case runes <= 28:
+			score += 5
+		default:
+			score -= 20
+		}
+	case "哔哩哔哩":
+		// B站 accepts up to ~80 chars.
+		switch {
+		case runes == 0:
+			score = 20
+		case runes <= 80:
+			score += 20
+		case runes <= 100:
+			score += 5
+		default:
+			score -= 15
+		}
+	case "小红书":
+		// 小红书 caps visible title at ~20 chars.
+		switch {
+		case runes == 0:
+			score = 20
+		case runes <= 20:
+			score += 25
+		case runes <= 26:
+			score += 5
+		default:
+			score -= 20
+		}
+	default:
+		// Unknown platform — give a neutral score so the rest of
+		// the breakdown still makes sense.
+		score = 60
+	}
+	return clampScore(score)
+}
+
+// buildSuggestions turns the three axis scores into actionable
+// suggestions. Each suggestion is shaped {category, message,
+// severity} to match the JSON contract the real Claude prompt asks
+// for. We only emit a suggestion when its corresponding axis
+// actually scored low — emitting a "fix your hook" line on a
+// 90-score hook would be noise.
+func buildSuggestions(title, script, platform string, hook, structure, fit int) []map[string]string {
+	out := make([]map[string]string, 0, 4)
+	if hook < 70 {
+		sev := "medium"
+		if hook < 50 {
+			sev = "high"
+		}
+		out = append(out, map[string]string{
+			"category": "hook",
+			"message":  "前 3 秒钩子偏弱,建议用具体画面或对话开场,避免 '今天想给大家讲' 这类铺垫句式",
+			"severity": sev,
+		})
+	}
+	if structure < 70 {
+		sev := "medium"
+		if structure < 50 {
+			sev = "high"
+		}
+		out = append(out, map[string]string{
+			"category": "structure",
+			"message":  "脚本结构松散,建议加入 1-2 个换行做呼吸,并在结尾留一句情绪锚点",
+			"severity": sev,
+		})
+	}
+	if fit < 70 {
+		sev := "low"
+		if fit < 50 {
+			sev = "high"
+		}
+		out = append(out, map[string]string{
+			"category": "platform_fit",
+			"message":  platformFitSuggestion(platform, len([]rune(title))),
+			"severity": sev,
+		})
+	}
+	if len(strings.TrimSpace(script)) < 50 {
+		out = append(out, map[string]string{
+			"category": "structure",
+			"message":  "脚本字数过少(< 50),建议扩展到 80-300 字区间以提升完播率",
+			"severity": "high",
+		})
+	}
+	return out
+}
+
+// platformFitSuggestion returns a platform-specific title-length
+// hint. Kept as a separate function so the test can pin per-platform
+// copy without re-running the scoring logic.
+func platformFitSuggestion(platform string, runes int) string {
+	switch platform {
+	case "抖音":
+		return "抖音标题超过 22 字会被截断,建议压缩到 22 字以内并加 1 个 emoji"
+	case "哔哩哔哩":
+		return "B 站标题可以更长(≤80),建议补充内容关键词便于搜索流量"
+	case "小红书":
+		return "小红书标题超过 20 字会折叠,建议把核心词前置并加 emoji"
+	default:
+		return "标题长度需根据目标平台调整,主流建议 ≤ 22 字"
+	}
+}
+
+// suggestRewrittenHook returns a simple, deterministic rewrite of
+// the original title that leans on the structural cues that
+// scoreHook rewards: shorter, more concrete, and (when possible)
+// quoting the panda.
+func suggestRewrittenHook(title, script string) string {
+	t := strings.TrimSpace(title)
+	if t == "" {
+		// If there is no title but there is a script, lift the
+		// first non-empty line as a candidate hook.
+		for _, line := range strings.Split(script, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				return trimToRuneCount(line, 22)
+			}
+		}
+		return "窗边的熊猫,一句话都没说。"
+	}
+	// Quote it. Quoted dialogue is a reliable signal that the
+	// script speaks directly to the viewer.
+	if !strings.HasPrefix(t, "“") && !strings.HasPrefix(t, "\"") {
+		t = "“" + t + "”"
+	}
+	return trimToRuneCount(t, 22)
+}
+
+// trimToRuneCount shortens s to at most n runes, appending an
+// ellipsis when truncation actually happened. Safe for Chinese text
+// (works on runes, not bytes).
+func trimToRuneCount(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n-1]) + "…"
+}
+
+// clampScore returns a score clamped to [0, 100]. Pure function so
+// it shows up in coverage as a fully-tested helper.
+func clampScore(s int) int {
+	if s < 0 {
+		return 0
+	}
+	if s > 100 {
+		return 100
+	}
+	return s
+}

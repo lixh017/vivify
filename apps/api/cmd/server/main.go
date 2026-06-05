@@ -135,6 +135,7 @@ func main() {
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
+	qualityH := handlers.NewQualityHandler(claudeAgent, gormDB)
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
@@ -171,6 +172,7 @@ func main() {
 	knowledgeDocH.RegisterRoutes(apiGroup)
 	seriesH.RegisterRoutes(apiGroup)
 	aiH.RegisterRoutes(apiGroup)
+	qualityH.RegisterRoutes(apiGroup)
 	ipTemplateH.RegisterRoutes(apiGroup)
 	importExportH.RegisterRoutes(apiGroup)
 
