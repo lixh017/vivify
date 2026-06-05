@@ -287,6 +287,41 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    // deconstruct breaks a video transcript into hook / structure /
+    // CTA / emotional arc / reusable patterns. Returns the full
+    // parsed shape so the UI can render all sections without
+    // re-parsing a raw report. Falls back to demo data when no
+    // API key is configured (X-Demo-Mode header).
+    deconstruct: (
+      data: {
+        transcript: string
+        metadata?: {
+          platform?: string
+          duration_sec?: number
+          views?: number
+          likes?: number
+        }
+      },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<DeconstructResult>(
+        '/ai/deconstruct',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
+    // viralFormula extracts a named, reusable formula from a
+    // transcript — formula name, variable slots, ordered steps,
+    // example application, and variations. Called from the
+    // dashboard's "提取爆款公式" action after a deconstruct.
+    viralFormula: (
+      data: { transcript: string },
+      options?: AiCallOptions,
+    ) =>
+      requestAi<ViralFormulaResult>(
+        '/ai/viral-formula',
+        { method: 'POST', body: JSON.stringify(data) },
+        options,
+      ),
   },
   auth: {
     // login exchanges email+password for an HttpOnly session cookie
@@ -389,6 +424,90 @@ export type PublishChecklist = {
     message: string
   }[]
   overall_score: number
+}
+
+// DeconstructHook is the hook analysis block of the deconstruct
+// response. Type is free-form (Claude can invent new hook
+// categories); Strength is a 0-100 int normalized server-side.
+export type DeconstructHook = {
+  type: string
+  text: string
+  analysis: string
+  strength: number
+}
+
+// DeconstructBeat is one beat in the structural arc. time_pct is
+// 0-100; role is free-form (opening/hook/.../coda).
+export type DeconstructBeat = {
+  time_pct: number
+  role: string
+  description: string
+}
+
+// DeconstructStructure describes the video's overall structure.
+// Density is 0-100 (information density per second). Pacing is
+// a short Chinese phrase like "前快后慢" / "匀速".
+export type DeconstructStructure = {
+  pattern: string
+  beats: DeconstructBeat[]
+  pacing: string
+  density: number
+}
+
+// DeconstructCTA describes the call-to-action: whether present,
+// what kind (follow/like/share/click/buy), and where it lands.
+export type DeconstructCTA = {
+  present: boolean
+  type: string
+  placement: string
+}
+
+// DeconstructArcPoint is one sample on the emotional intensity
+// curve. time_pct is 0-100; emotion is a Chinese label
+// (e.g. 紧张 / 平静 / 感动); intensity is 0-100.
+export type DeconstructArcPoint = {
+  time_pct: number
+  emotion: string
+  intensity: number
+}
+
+// DeconstructPlatformFit carries per-platform recommendations
+// keyed by the Chinese platform names (matching the server-side
+// struct tags) so the UI can index directly.
+export type DeconstructPlatformFit = {
+  抖音: string
+  哔哩哔哩: string
+  小红书: string
+}
+
+// DeconstructResult is the full wire shape for /ai/deconstruct.
+// All array fields are normalized to [] on the server, never null.
+export type DeconstructResult = {
+  hook: DeconstructHook
+  structure: DeconstructStructure
+  cta: DeconstructCTA
+  emotional_arc: DeconstructArcPoint[]
+  reusable_patterns: string[]
+  platform_fit_notes: DeconstructPlatformFit
+  overall_score: number
+}
+
+// ViralFormulaVariable is one slot in the extracted formula.
+// weight is a free string (Claude picks low/medium/high); the
+// UI falls back gracefully if a non-standard value comes back.
+export type ViralFormulaVariable = {
+  name: string
+  example: string
+  weight: string
+}
+
+// ViralFormulaResult is the wire shape for /ai/viral-formula.
+export type ViralFormulaResult = {
+  formula_name: string
+  variables: ViralFormulaVariable[]
+  steps: string[]
+  example_application: string
+  variations: string[]
 }
 
 export { ApiError }

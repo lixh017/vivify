@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import type { PostmortemStructured } from '@/lib/api'
 import type { ContentItem } from '@/lib/types'
 import { useT } from '@/lib/i18n-client'
+import { DeconstructPanel } from './DeconstructPanel'
 
 // Canonical platform vocabulary mirroring the backend's allowedPlatforms
 // set. Wire values; the surrounding chrome is rendered via i18n.
@@ -51,6 +52,7 @@ export default function DashboardPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [postmortem, setPostmortem] = useState<{ item: ContentItem; state: PostmortemModalState } | null>(null)
+  const [showDeconstruct, setShowDeconstruct] = useState(false)
 
   async function loadItems() {
     setLoading(true)
@@ -153,6 +155,14 @@ export default function DashboardPage() {
           className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
         >
           {showForm ? t('common.cancel') : t('dashboard.create')}
+        </button>
+        <button
+          type="button"
+          data-testid="btn-deconstruct-open"
+          onClick={() => setShowDeconstruct(true)}
+          className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-accent-teal text-white rounded-md hover:opacity-90 transition-opacity"
+        >
+          {t('dashboard.deconstruct.button')}
         </button>
       </div>
 
@@ -324,6 +334,10 @@ export default function DashboardPage() {
           state={postmortem.state}
           onClose={closePostmortem}
         />
+      )}
+
+      {showDeconstruct && (
+        <DeconstructPanel onClose={() => setShowDeconstruct(false)} />
       )}
     </div>
   )

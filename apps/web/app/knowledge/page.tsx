@@ -9,6 +9,7 @@ import type {
   ImportResult,
 } from '@/lib/api'
 import { useT } from '@/lib/i18n-client'
+import { KnowledgeDeconstructPanel } from './KnowledgeDeconstructPanel'
 
 // Canonical doc type vocabulary mirroring the backend's allowedDocTypes
 // set. Wire values; user-facing labels for "Character/World/History/Other"
@@ -105,6 +106,7 @@ export default function KnowledgePage() {
   const [importing, setImporting] = useState<ImportType | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImportRef = useRef<ImportType | null>(null)
+  const [showDeconstruct, setShowDeconstruct] = useState(false)
 
   async function loadDocs() {
     setLoading(true)
@@ -292,12 +294,22 @@ export default function KnowledgePage() {
           </p>
         </div>
         {tab === 'docs' ? (
-          <button
-            onClick={() => setShowForm((v) => !v)}
-            className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
-          >
-            {showForm ? t('common.cancel') : t('knowledge.create_doc')}
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              data-testid="btn-knowledge-deconstruct-open"
+              onClick={() => setShowDeconstruct(true)}
+              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-accent-teal text-white rounded-md hover:opacity-90 transition-opacity"
+            >
+              {t('dashboard.deconstruct.button')}
+            </button>
+            <button
+              onClick={() => setShowForm((v) => !v)}
+              className="px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active transition-colors"
+            >
+              {showForm ? t('common.cancel') : t('knowledge.create_doc')}
+            </button>
+          </div>
         ) : (
           <button
             onClick={() => setShowIPForm((v) => !v)}
@@ -393,6 +405,15 @@ export default function KnowledgePage() {
           selectedIP={selectedIP}
           onSelect={setSelectedIP}
           ipDocs={ipDocs}
+        />
+      )}
+
+      {showDeconstruct && (
+        <KnowledgeDeconstructPanel
+          onClose={() => setShowDeconstruct(false)}
+          onSaved={() => {
+            void loadDocs()
+          }}
         />
       )}
     </div>
