@@ -22,6 +22,15 @@ const (
 	// platform adaptations (抖音/哔哩哔哩/小红书) for the panda
 	// IP, used by /ai/platform-adapt demo mode.
 	DemoOpPlatformAdapt DemoOperation = "platform_adapt"
+	// DemoOpDeconstruct returns a pre-canned OpusClip-style video
+	// deconstruction (hook + structure + cta + emotional_arc +
+	// reusable_patterns) for the panda-IP sample video, used by
+	// /ai/deconstruct demo mode.
+	DemoOpDeconstruct DemoOperation = "deconstruct"
+	// DemoOpViralFormula returns a pre-canned reusable formula
+	// extracted from the panda-IP sample video, used by
+	// /ai/viral-formula demo mode.
+	DemoOpViralFormula DemoOperation = "viral_formula"
 )
 
 // IsDemoMode reports whether the Claude agent should be served from
@@ -65,6 +74,12 @@ func (c *Claude) DemoResponse(op DemoOperation, seed int) (string, error) {
 	case DemoOpPlatformAdapt:
 		idx := pickDemoIndex(seed, len(DemoPlatformAdapts))
 		return DemoPlatformAdapts[idx], nil
+	case DemoOpDeconstruct:
+		idx := pickDemoIndex(seed, len(DemoDeconstructs))
+		return DemoDeconstructs[idx], nil
+	case DemoOpViralFormula:
+		idx := pickDemoIndex(seed, len(DemoViralFormulas))
+		return DemoViralFormulas[idx], nil
 	default:
 		// Unknown op — fall back to topics so the demo still has
 		// *something* useful to show. We do not error here because

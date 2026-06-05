@@ -136,6 +136,7 @@ func main() {
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
 	qualityH := handlers.NewQualityHandler(claudeAgent, gormDB)
+	deconstructH := handlers.NewDeconstructHandler(claudeAgent)
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
@@ -173,6 +174,7 @@ func main() {
 	seriesH.RegisterRoutes(apiGroup)
 	aiH.RegisterRoutes(apiGroup)
 	qualityH.RegisterRoutes(apiGroup)
+	deconstructH.RegisterRoutes(apiGroup)
 	ipTemplateH.RegisterRoutes(apiGroup)
 	importExportH.RegisterRoutes(apiGroup)
 
