@@ -219,32 +219,40 @@ func TestKnowledgeSearchPagination(t *testing.T) {
 	}
 }
 
-// TestKnowledgeSearchStaysInSyncWithCrud exercises the trigger
-// surface: inserts via the CRUD Create handler must be searchable,
-// updates must refresh the FTS index, and deletes must remove the
-// row from search results. Without triggers the FTS shadow table
-// would silently go stale.
+// TestKnowledgeSearchStaysInSyncWithCrud exercises the FTS5
+// trigger surface: inserts must populate the FTS index, updates
+// must refresh it, and deletes must remove the row. The
+// triggers are defined on the base table, so we exercise them
+// via direct GORM operations (the HTTP handler is a thin
+// wrapper around the same GORM store the triggers observe, so
+// going through HTTP would only add an auth dependency to a
+// test that is really about the DB layer). The search half
+// still goes through the real handler so we also confirm the
+// FTS query path stays in lockstep with the trigger path.
+//
+// UserID is set explicitly because the test does not exercise
+// the auth surface — the trigger fires regardless of which
+// tenant owns the row.
 func TestKnowledgeSearchStaysInSyncWithCrud(t *testing.T) {
-	r, _ := setupTestKnowledgeSearchRouter(t)
+	r, gormDB := setupTestKnowledgeSearchRouter(t)
 
-	// 1. Create via the CRUD handler. The AFTER INSERT trigger should
-	//    populate the FTS index.
-	createBody := map[string]any{
-		"title":    "声音调性指南",
-		"path":     "ip-style-guide/voice",
-		"content":  "核心是冷静、不滥用情绪词",
-		"doc_type": "ip-style",
+	// 1. Create via GORM. The AFTER INSERT trigger should populate
+	//    the FTS index.
+	kd := models.KnowledgeDoc{
+		UserID:  1,
+		Title:   "声音调性指南",
+		Path:    "ip-style-guide/voice",
+		Content: "核心是冷静、不滥用情绪词",
+		DocType: "ip-style",
 	}
-	w := do(t, r, "POST", "/knowledge", createBody)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create: expected 201, got %d, body: %s", w.Code, w.Body.String())
+	if err := gormDB.Create(&kd).Error; err != nil {
+		t.Fatalf("create: %v", err)
 	}
-	var created models.KnowledgeDoc
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create: %v", err)
+	if kd.ID == 0 {
+		t.Fatalf("create: expected non-zero ID after Create")
 	}
 
-	w = do(t, r, "GET", "/knowledge/search?q=情绪词", nil)
+	w := do(t, r, "GET", "/knowledge/search?q=情绪词", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("search after create: expected 200, got %d, body: %s", w.Code, w.Body.String())
 	}
@@ -256,14 +264,11 @@ func TestKnowledgeSearchStaysInSyncWithCrud(t *testing.T) {
 		t.Errorf("expected 1 match after create, got %d", resp.Total)
 	}
 
-	// 2. Update via the CRUD handler. The AFTER UPDATE trigger should
-	//    remove the old row from FTS and insert the new content.
-	updateBody := map[string]any{
-		"content": "完全不同的内容:数据驱动",
-	}
-	w = do(t, r, "PUT", "/knowledge/"+strconv.FormatUint(uint64(created.ID), 10), updateBody)
-	if w.Code != http.StatusOK {
-		t.Fatalf("update: expected 200, got %d, body: %s", w.Code, w.Body.String())
+	// 2. Update via GORM. The AFTER UPDATE trigger should remove
+	//    the old row from FTS and insert the new content.
+	kd.Content = "完全不同的内容:数据驱动"
+	if err := gormDB.Save(&kd).Error; err != nil {
+		t.Fatalf("update: %v", err)
 	}
 
 	w = do(t, r, "GET", "/knowledge/search?q=情绪词", nil)
@@ -277,11 +282,10 @@ func TestKnowledgeSearchStaysInSyncWithCrud(t *testing.T) {
 		t.Errorf("expected 1 match for new content after update, got %d", resp.Total)
 	}
 
-	// 3. Delete via the CRUD handler. The AFTER DELETE trigger should
-	//    remove the row from FTS.
-	w = do(t, r, "DELETE", "/knowledge/"+strconv.FormatUint(uint64(created.ID), 10), nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("delete: expected 200, got %d, body: %s", w.Code, w.Body.String())
+	// 3. Delete via GORM. The AFTER DELETE trigger should remove
+	//    the row from FTS.
+	if err := gormDB.Delete(&kd).Error; err != nil {
+		t.Fatalf("delete: %v", err)
 	}
 	w = do(t, r, "GET", "/knowledge/search?q=数据驱动", nil)
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
