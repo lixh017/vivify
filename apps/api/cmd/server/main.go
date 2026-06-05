@@ -50,6 +50,32 @@ func main() {
 	// call time.
 	claudeAgent := agents.NewClaude(cfg.AnthropicAPIKey)
 
+	// Multi-model router: wires Claude / DeepSeek / Gemini providers
+	// behind a per-task model strategy. Providers with no API key
+	// still get registered (they report Available()==false so the
+	// router falls back to demo data without an explicit dev-mode
+	// check at every handler call site).
+	overrides, overrideWarnings := agents.ParseOverrides(cfg.ModelOverrides)
+	for _, w := range overrideWarnings {
+		slog.Warn("ai_model_overrides", "warning", w)
+	}
+	aiRouter := agents.NewRouterWithOverrides(
+		[]agents.Provider{
+			agents.NewClaudeProvider(cfg.AnthropicAPIKey),
+			agents.NewDeepSeekProvider(cfg.DeepSeekAPIKey),
+			agents.NewGeminiProvider(cfg.GeminiAPIKey),
+		},
+		overrides,
+	)
+	for _, p := range aiRouter.Providers() {
+		slog.Info("ai_provider_registered", "name", p.Name(), "available", p.Available())
+	}
+	// _ = aiRouter keeps the router live for /readyz and the
+	// router-aware handler migration coming in the next phase.
+	// Existing handlers still consume *agents.Claude directly so
+	// the wire-shape is unchanged this phase.
+	_ = aiRouter
+
 	// Construct the MCP server. The stdio transport blocks for the
 	// lifetime of the process, so we run it in its own goroutine and
 	// let SIGINT/SIGTERM cancel the context to shut it down cleanly.

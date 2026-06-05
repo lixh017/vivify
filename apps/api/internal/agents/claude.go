@@ -22,6 +22,14 @@ import (
 // it without depending on the agents package's internal wording.
 var ErrNoAPIKey = errors.New("ANTHROPIC_API_KEY not configured")
 
+// ErrNoContent is returned by Complete when the SDK response has
+// zero content blocks. The previous behaviour returned ("", nil)
+// which silently produced empty envelopes (e.g. {"text":""}) for
+// callers that wrap the result in JSON. Surfacing it as a typed
+// sentinel lets the handler log it and return a proper 502 to the
+// frontend instead of shipping a successful but empty body.
+var ErrNoContent = errors.New("claude returned empty content")
+
 // Default model + max-tokens for the OPC MCP server. Other tools
 // (e.g. viral deconstruction) can override these per-call through
 // CompleteOptions.
@@ -266,6 +274,67 @@ func (c *Claude) PostmortemPrompt(title, script, metrics, topicAngle string) str
 	)
 }
 
+// Name implements agents.Provider for the legacy *Claude shim.
+// New code should construct ClaudeProvider directly and let the
+// Router pick the model; *Claude is kept for the existing handlers
+// (handlers/ai.go, handlers/quality.go, handlers/deconstruct.go,
+// handlers/pipeline.go, mcp/server.go) that own the prompt
+// builders and only need a single-provider single-model surface.
+func (c *Claude) Name() string { return ProviderClaude }
+
+// Available implements agents.Provider for the legacy *Claude shim.
+// Mirrors keyConfigured so dev mode is observable from the Provider
+// surface (router fallback path).
+func (c *Claude) Available() bool { return c.keyConfigured }
+
+// CompleteWithOptions is the Provider-style variant of Complete:
+// it takes a CompleteOptions struct so the router can pin per-task
+// model + max-tokens + timeout without mutating the agent. The
+// existing Complete(ctx, prompt) remains the single source of
+// truth for the legacy handlers; this method just lets the router
+// satisfy the Provider interface against the legacy *Claude.
+func (c *Claude) CompleteWithOptions(ctx context.Context, prompt string, opts CompleteOptions) (string, error) {
+	if c.override != nil {
+		return c.override(ctx, prompt)
+	}
+	if !c.keyConfigured {
+		return "", fmt.Errorf("claude complete: %w", ErrNoAPIKey)
+	}
+	model := c.model
+	if opts.Model != "" {
+		model = opts.Model
+	}
+	maxTokens := c.maxTokens
+	if opts.MaxTokens > 0 {
+		maxTokens = opts.MaxTokens
+	}
+	timeout := c.timeout
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := c.client.Messages.New(cctx, anthropic.MessageNewParams{
+		Model:     model,
+		MaxTokens: maxTokens,
+		Messages: []anthropic.MessageParam{
+			{
+				Role: anthropic.MessageParamRoleUser,
+				Content: []anthropic.ContentBlockParamUnion{
+					anthropic.NewTextBlock(prompt),
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("claude complete: %w", err)
+	}
+	if len(resp.Content) == 0 {
+		return "", fmt.Errorf("claude complete: %w", ErrNoContent)
+	}
+	return resp.Content[0].Text, nil
+}
+
 // Complete sends a single user-turn prompt to Claude and returns
 // the first text content block. A per-call timeout is applied (see
 // CompleteOptions) so a hung Anthropic call cannot pin a request
@@ -299,7 +368,11 @@ func (c *Claude) Complete(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("claude complete: %w", err)
 	}
 	if len(resp.Content) == 0 {
-		return "", nil
+		// Surface as a typed sentinel so handlers can log a
+		// meaningful diagnostic and return a real 502 — the
+		// previous ("", nil) silently produced empty JSON
+		// envelopes for callers that wrap the result.
+		return "", fmt.Errorf("claude complete: %w", ErrNoContent)
 	}
 	return resp.Content[0].Text, nil
 }
