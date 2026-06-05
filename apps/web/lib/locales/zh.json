@@ -1,0 +1,77 @@
+{
+  "nav.topics": "选题",
+  "nav.scripts": "脚本",
+  "nav.calendar": "日历",
+  "nav.dashboard": "表现",
+  "nav.knowledge": "知识库",
+  "nav.login": "登录",
+  "nav.logout": "登出",
+  "nav.register": "注册",
+
+  "home.eyebrow": "Phase 1 · 熊猫 IP · Content Studio",
+  "home.title": "A quiet room for your short video work.",
+  "home.subhead": "选题、脚本、素材、知识库 — 一处安放,安静创作.",
+  "home.cta.primary": "进入工作室",
+  "home.cta.secondary": "了解更多",
+  "home.cta.demo": "🎭 Try Demo (no signup)",
+  "home.features.eyebrow": "5 块能力",
+  "home.features.title": "Content Studio,end-to-end.",
+
+  "topics.title": "选题",
+  "topics.subhead": "从灵感到发布,一处搞定.",
+  "topics.create": "新建选题",
+  "topics.empty": "还没有选题.先记下一个想法吧.",
+  "topics.ai_button": "AI 生成选题",
+  "topics.kanban": "看板",
+  "topics.list": "列表",
+
+  "scripts.title": "脚本",
+  "scripts.subhead": "可拍可用的草稿,在原地润色.",
+  "scripts.create": "新建脚本",
+  "scripts.empty": "还没有脚本.",
+  "scripts.ai_button": "AI 拟人化",
+
+  "calendar.title": "日历",
+  "calendar.subhead": "发布排期,一目了然.",
+  "calendar.empty": "还没有排期内容.",
+  "calendar.unscheduled": "未排期",
+
+  "dashboard.title": "表现",
+  "dashboard.subhead": "让数据告诉你下一步做什么.",
+  "dashboard.empty": "还没有内容.",
+  "dashboard.total_items": "内容总数",
+  "dashboard.total_views": "总播放量",
+
+  "knowledge.title": "知识库",
+  "knowledge.subhead": "你的 IP 风格、SOP、复盘 — 第二大脑.",
+  "knowledge.create": "新建文档",
+  "knowledge.empty": "还没有知识文档.",
+  "knowledge.search.placeholder": "搜索文档...",
+
+  "login.title": "登录 OPC",
+  "login.email": "邮箱",
+  "login.password": "密码",
+  "login.submit": "登录",
+  "login.no_account": "还没有账号?",
+  "login.register_link": "注册",
+
+  "register.title": "创建账号",
+  "register.name": "昵称",
+  "register.email": "邮箱",
+  "register.password": "密码(8 位以上)",
+  "register.submit": "创建账号",
+  "register.have_account": "已有账号?",
+
+  "common.save": "保存",
+  "common.cancel": "取消",
+  "common.delete": "删除",
+  "common.edit": "编辑",
+  "common.loading": "加载中...",
+  "common.error": "出了点问题",
+
+  "demo.badge": "🎭 演示模式",
+  "demo.try_button": "🎭 试试 Demo",
+
+  "auth.required": "需要登录",
+  "auth.login_required": "请先登录后再继续."
+}

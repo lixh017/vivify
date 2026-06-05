@@ -1,0 +1,77 @@
+{
+  "nav.topics": "Topics",
+  "nav.scripts": "Scripts",
+  "nav.calendar": "Calendar",
+  "nav.dashboard": "Dashboard",
+  "nav.knowledge": "Knowledge",
+  "nav.login": "Login",
+  "nav.logout": "Logout",
+  "nav.register": "Register",
+
+  "home.eyebrow": "Phase 1 · Panda IP · Content Studio",
+  "home.title": "A quiet room for your short video work.",
+  "home.subhead": "Topics, scripts, footage, knowledge — one place to think, draft, and ship.",
+  "home.cta.primary": "Enter the studio",
+  "home.cta.secondary": "Learn more",
+  "home.cta.demo": "🎭 Try Demo (no signup)",
+  "home.features.eyebrow": "5 core capabilities",
+  "home.features.title": "Everything you need to ship short video, in one quiet tool.",
+
+  "topics.title": "Topics",
+  "topics.subhead": "From idea to publish, all in one place.",
+  "topics.create": "New topic",
+  "topics.empty": "No topics yet. Start by capturing an idea.",
+  "topics.ai_button": "AI generate topics",
+  "topics.kanban": "Kanban",
+  "topics.list": "List",
+
+  "scripts.title": "Scripts",
+  "scripts.subhead": "Shootable drafts, polished in place.",
+  "scripts.create": "New script",
+  "scripts.empty": "No scripts yet.",
+  "scripts.ai_button": "AI humanize",
+
+  "calendar.title": "Calendar",
+  "calendar.subhead": "Publish schedule, at a glance.",
+  "calendar.empty": "No scheduled content yet.",
+  "calendar.unscheduled": "Unscheduled",
+
+  "dashboard.title": "Performance",
+  "dashboard.subhead": "Let the numbers tell you what to do next.",
+  "dashboard.empty": "No content yet.",
+  "dashboard.total_items": "Total content",
+  "dashboard.total_views": "Total views",
+
+  "knowledge.title": "Knowledge",
+  "knowledge.subhead": "Your IP style, SOPs, and post-mortems — a second brain.",
+  "knowledge.create": "New doc",
+  "knowledge.empty": "No knowledge docs yet.",
+  "knowledge.search.placeholder": "Search docs...",
+
+  "login.title": "Sign in to OPC",
+  "login.email": "Email",
+  "login.password": "Password",
+  "login.submit": "Sign in",
+  "login.no_account": "Don't have an account?",
+  "login.register_link": "Register",
+
+  "register.title": "Create an account",
+  "register.name": "Name",
+  "register.email": "Email",
+  "register.password": "Password (8+ chars)",
+  "register.submit": "Create account",
+  "register.have_account": "Already have an account?",
+
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "common.delete": "Delete",
+  "common.edit": "Edit",
+  "common.loading": "Loading...",
+  "common.error": "Something went wrong",
+
+  "demo.badge": "🎭 Demo Mode",
+  "demo.try_button": "🎭 Try Demo",
+
+  "auth.required": "Sign in required",
+  "auth.login_required": "Please sign in to continue."
+}
