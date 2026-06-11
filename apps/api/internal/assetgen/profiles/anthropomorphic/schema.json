@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "name", "type", "species", "body_shape", "body_color", "eye_color", "eye_expression", "palette"],
+  "properties": {
+    "version": { "type": "string" },
+    "name": { "type": "string" },
+    "type": { "const": "anthropomorphic" },
+    "species": { "type": "string" },
+    "body_shape": { "type": "string" },
+    "body_color": { "type": "string" },
+    "eye_color": { "type": "string" },
+    "eye_expression": { "type": "string" },
+    "palette": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "string" }
+    }
+  }
+}

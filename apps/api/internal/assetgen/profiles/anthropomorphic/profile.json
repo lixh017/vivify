@@ -1,0 +1,11 @@
+{
+  "version": "fengge_v1",
+  "name": "峰哥",
+  "type": "anthropomorphic",
+  "species": "成年熊猫",
+  "body_shape": "头身比 1:1.2 圆胖身材",
+  "body_color": "rgb(245,240,225)",
+  "eye_color": "rgb(26,26,26)",
+  "eye_expression": "半阖带笑意, 不直视镜头",
+  "palette": ["朱红#C73E1D", "暖橙#E89B45", "翠绿#3B8C5A", "宝蓝#1F5FA8", "米白#F5F0E1"]
+}

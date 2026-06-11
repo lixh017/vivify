@@ -1,6 +1,6 @@
 // Package assetgen_test contains table-driven unit tests for the
-// opc asset-generation primitives: the canonical panda IP profile,
-// the prompt builders, and the brand-consistency check.
+// opc asset-generation primitives: the canonical IP profile, the
+// prompt builders, and the brand-consistency check.
 package assetgen_test
 
 import (
@@ -8,40 +8,45 @@ import (
 	"testing"
 
 	"github.com/opc/api/internal/assetgen"
+	"github.com/opc/api/internal/assetgen/profiles/anthropomorphic"
 )
 
-// TestProfileFenggeV1 verifies GetProfile's known/unknown/empty
-// behavior. The default fallback to FenggeV1 is intentional — the
-// CLI uses "" as "the only profile we ship" so callers don't need
-// to hardcode the version string.
+// TestProfileFenggeV1 (updated) — verifies LoadProfile's
+// known/unknown/empty behavior. The default empty typeName
+// defaults to anthropomorphic / fengge_v1 is intentional —
+// the CLI uses "" as "the only profile we ship" so callers
+// don't need to hardcode the type string.
 func TestProfileFenggeV1(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name        string
-		version     string
+		typeName    string
 		wantNil     bool
+		wantType    string
 		wantVersion string
 		wantName    string
 	}{
 		{
-			name:        "explicit fengge_v1",
-			version:     "fengge_v1",
+			name:        "explicit anthropomorphic / fengge_v1",
+			typeName:    "anthropomorphic",
 			wantNil:     false,
+			wantType:    "anthropomorphic",
 			wantVersion: "fengge_v1",
 			wantName:    "峰哥",
 		},
 		{
-			name:        "empty string defaults to FenggeV1",
-			version:     "",
+			name:        "empty string defaults to anthropomorphic / fengge_v1",
+			typeName:    "",
 			wantNil:     false,
+			wantType:    "anthropomorphic",
 			wantVersion: "fengge_v1",
 			wantName:    "峰哥",
 		},
 		{
-			name:    "unknown version returns nil",
-			version: "nonexistent",
-			wantNil: true,
+			name:     "unknown type returns error",
+			typeName: "nonexistent",
+			wantNil:  true,
 		},
 	}
 
@@ -50,51 +55,55 @@ func TestProfileFenggeV1(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := assetgen.GetProfile(tt.version)
-
+			got, err := assetgen.LoadProfile(tt.typeName)
 			if tt.wantNil {
-				if got != nil {
-					t.Fatalf("GetProfile(%q) = %+v, want nil", tt.version, got)
+				if err == nil {
+					t.Fatalf("LoadProfile(%q) = %+v, want error", tt.typeName, got)
 				}
 				return
 			}
-
+			if err != nil {
+				t.Fatalf("LoadProfile(%q) error: %v", tt.typeName, err)
+			}
 			if got == nil {
-				t.Fatalf("GetProfile(%q) = nil, want non-nil *Profile", tt.version)
+				t.Fatalf("LoadProfile(%q) = nil, want non-nil Profile", tt.typeName)
 			}
-			if got.Version != tt.wantVersion {
-				t.Errorf("Version = %q, want %q", got.Version, tt.wantVersion)
+			if got.Type() != tt.wantType {
+				t.Errorf("Type() = %q, want %q", got.Type(), tt.wantType)
 			}
-			if got.Name != tt.wantName {
-				t.Errorf("Name = %q, want %q", got.Name, tt.wantName)
+			if got.Version() != tt.wantVersion {
+				t.Errorf("Version() = %q, want %q", got.Version(), tt.wantVersion)
+			}
+			if got.Name() != tt.wantName {
+				t.Errorf("Name() = %q, want %q", got.Name(), tt.wantName)
 			}
 		})
 	}
 }
 
 // TestBuildPromptImage verifies the image-prompt path of BuildPrompt:
-// every brand anchor from FenggeV1 must appear, the scene and
-// outfit must be threaded through, and the image tail must carry
-// the aspect-ratio flag (but not the video-only flags).
+// every brand anchor from the anthropomorphic profile must appear,
+// the scene and outfit must be threaded through, and the image tail
+// must carry the aspect-ratio flag (but not the video-only flags).
 func TestBuildPromptImage(t *testing.T) {
 	t.Parallel()
 
-	p := assetgen.FenggeV1
+	p := anthropomorphic.DefaultInstance()
 	const scene = "竹林小院"
 	const outfit = "朱红"
 	got := assetgen.BuildPrompt(p, scene, outfit, assetgen.TypeImage)
 
 	// Required brand anchors.
 	wantContains := []string{
-		"峰哥",               // name
-		"成年熊猫",             // species
-		"rgb(245,240,225)",   // body white
-		"rgb(26,26,26)",      // eye black
-		"国潮",               // national-trend theme
-		"不露爪",              // anti-claws
-		"--ratio 9:16",       // image-only aspect ratio
-		scene,                // scene must be threaded in
-		outfit,               // outfit must be threaded in
+		"峰哥",             // name
+		"成年熊猫",           // species
+		"rgb(245,240,225)", // body white
+		"rgb(26,26,26)",    // eye black
+		"国潮",             // national-trend theme
+		"不露爪",            // anti-claws
+		"--ratio 9:16",     // image-only aspect ratio
+		scene,              // scene must be threaded in
+		outfit,             // outfit must be threaded in
 	}
 
 	for _, s := range wantContains {
@@ -130,7 +139,7 @@ func TestBuildPromptImage(t *testing.T) {
 func TestBuildPromptVideo(t *testing.T) {
 	t.Parallel()
 
-	p := assetgen.FenggeV1
+	p := anthropomorphic.DefaultInstance()
 	const scene = "竹林小院"
 	const outfit = "翠绿"
 	got := assetgen.BuildPrompt(p, scene, outfit, assetgen.TypeVideo)
@@ -158,10 +167,10 @@ func TestBuildPromptVideo(t *testing.T) {
 // TestConsistencyCheck verifies ConsistencyCheck's scoring across
 // three meaningful cases:
 //
-//   1. A full prompt (round-tripped from BuildPrompt) scores ~1.0.
-//      The "anti-AI tokens" anchor ("不要 AI 生成感") is NOT in
-//      BuildPrompt's output, so the canonical-image score is
-//      0.95, not 1.0.
+//   1. A full prompt (round-tripped from BuildPrompt) scores 1.0.
+//      Phase 2's prompt builder includes all 7 anchors (including
+//      "不要 AI 生成感"), so a canonical-image prompt scores 1.0
+//      with 0 fails.
 //   2. A prompt with zero anchors scores 0.0 and fails all 7
 //      checks.
 //   3. A prompt with only the name scores exactly 0.20 and fails
@@ -169,6 +178,7 @@ func TestBuildPromptVideo(t *testing.T) {
 func TestConsistencyCheck(t *testing.T) {
 	t.Parallel()
 
+	p := anthropomorphic.DefaultInstance()
 	tests := []struct {
 		name      string
 		prompt    string
@@ -176,10 +186,10 @@ func TestConsistencyCheck(t *testing.T) {
 		wantFails int
 	}{
 		{
-			name:      "full prompt from BuildPrompt scores 0.95",
-			prompt:    assetgen.BuildPrompt(assetgen.FenggeV1, "x", "y", assetgen.TypeImage),
-			wantScore: 0.95,
-			wantFails: 1, // missing "不要 AI 生成感"
+			name:      "full prompt from BuildPrompt scores 1.0",
+			prompt:    assetgen.BuildPrompt(p, "x", "y", assetgen.TypeImage),
+			wantScore: 1.0,
+			wantFails: 0,
 		},
 		{
 			name:      "no anchors scores 0.0 and fails all 7",
@@ -200,7 +210,7 @@ func TestConsistencyCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := assetgen.ConsistencyCheck(assetgen.FenggeV1, tt.prompt)
+			got := assetgen.ConsistencyCheck(p, tt.prompt)
 
 			if got.Score != tt.wantScore {
 				t.Errorf("Score = %v, want %v", got.Score, tt.wantScore)

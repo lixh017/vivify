@@ -129,7 +129,6 @@ Run 'opc-asset <subcommand> --help' for subcommand-specific flags.
 func runCheck(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	prompt := fs.String("prompt", "", "the prompt to score (required)")
-	profileVersion := fs.String("profile", "fengge_v1", "profile version (default fengge_v1)")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -139,13 +138,10 @@ func runCheck(args []string) error {
 	if *prompt == "" {
 		return fmt.Errorf("--prompt is required")
 	}
-	prof := assetgen.GetProfile(*profileVersion)
-	if prof == nil {
-		return fmt.Errorf("unknown profile version %q", *profileVersion)
-	}
-	res := assetgen.ConsistencyCheck(*prof, *prompt)
+	prof := assetgen.MustLoadProfile("anthropomorphic")
+	res := assetgen.ConsistencyCheck(prof, *prompt)
 	out := map[string]interface{}{
-		"profile":    prof.Version,
+		"profile":    prof.Version(),
 		"score":      res.Score,
 		"fails":      res.Fails,
 		"prompt_len": len(*prompt),
@@ -161,7 +157,6 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	scene := fs.String("scene", "竹林小院", "scene description (default 竹林小院)")
 	outfit := fs.String("outfit", "朱红", "outfit description (default 朱红)")
 	out := fs.String("out", "", "output file path (required)")
-	profileVersion := fs.String("profile", "fengge_v1", "profile version (default fengge_v1)")
 	sceneID := fs.String("scene-id", "manual", "logical scene id (recorded in ledger)")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -175,12 +170,9 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	if *out == "" {
 		return fmt.Errorf("--out is required")
 	}
-	prof := assetgen.GetProfile(*profileVersion)
-	if prof == nil {
-		return fmt.Errorf("unknown profile version %q", *profileVersion)
-	}
-	prompt := assetgen.BuildPrompt(*prof, *scene, *outfit, *assetType)
-	consistency := assetgen.ConsistencyCheck(*prof, prompt)
+	prof := assetgen.MustLoadProfile("anthropomorphic")
+	prompt := assetgen.BuildPrompt(prof, *scene, *outfit, *assetType)
+	consistency := assetgen.ConsistencyCheck(prof, prompt)
 
 	startedAt := time.Now()
 	// MiniMax picks the API key from MINIMAX_API_KEY in the env
@@ -189,7 +181,7 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	// the server uses the same quota + key.
 	mm := agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
 	if !mm.Available() {
-		entry := newLedgerEntry(*sceneID, prof.Version, "minimax", *assetType, *outfit, startedAt, consistency.Score, int64(0), *out, "", "missing-api-key")
+		entry := newLedgerEntry(*sceneID, prof.Version(), "minimax", *assetType, *outfit, startedAt, consistency.Score, int64(0), *out, "", "missing-api-key")
 		appendLedger(entry)
 		return fmt.Errorf("MINIMAX_API_KEY is not configured; cannot generate. Wrote a 'missing-api-key' row to the ledger for audit")
 	}
@@ -200,16 +192,16 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	assetPath, err := callMiniMax(ctx, mm, *assetType, prompt, *out)
 	dur := time.Since(startedAt).Milliseconds()
 	if err != nil {
-		entry := newLedgerEntry(*sceneID, prof.Version, "minimax", *assetType, *outfit, startedAt, consistency.Score, int64(0), *out, "", err.Error())
+		entry := newLedgerEntry(*sceneID, prof.Version(), "minimax", *assetType, *outfit, startedAt, consistency.Score, int64(0), *out, "", err.Error())
 		appendLedger(entry)
 		return err
 	}
-	entry := newLedgerEntry(*sceneID, prof.Version, "minimax", *assetType, *outfit, startedAt, consistency.Score, dur, assetPath, promptHash(prompt), "")
+	entry := newLedgerEntry(*sceneID, prof.Version(), "minimax", *assetType, *outfit, startedAt, consistency.Score, dur, assetPath, promptHash(prompt), "")
 	entry.CostCNY = computeCostCNY(*assetType)
 	appendLedger(entry)
 
 	out_ := map[string]interface{}{
-		"profile":          prof.Version,
+		"profile":          prof.Version(),
 		"type":             *assetType,
 		"asset_path":       assetPath,
 		"consistency":      consistency.Score,
