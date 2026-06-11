@@ -27,8 +27,9 @@
 // Examples:
 //
 //	opc-asset check --prompt "峰哥在竹林"
-//	opc-asset generate --type image --scene 竹林小院 --outfit 朱红 --out /tmp/x.jpg
-//	opc-asset generate --type video --scene 竹林小院 --outfit 翠绿 --out /tmp/x.mp4
+//	opc-asset check --type digital_human --prompt "莉娜 ..."
+//	opc-asset generate --asset-type image --scene 竹林小院 --outfit 朱红 --out /tmp/x.jpg
+//	opc-asset generate --asset-type video --scene 竹林小院 --outfit 翠绿 --out /tmp/x.mp4
 //	opc-asset ledger --last 10
 package main
 
@@ -46,8 +47,18 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/opc/api/internal/assetgen"
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/assetgen"
+
+	// Blank-import sub-packages so their init() functions register
+	// the IP-type schemas into assetgen's dispatcher. Without
+	// these, MustLoadProfile("anthropomorphic") would panic with
+	// "unknown IP type". Same list the platform's server uses
+	// (see apps/api/cmd/server).
+	_ "github.com/opc/api/internal/assetgen/profiles/anthropomorphic"
+	_ "github.com/opc/api/internal/assetgen/profiles/costume"
+	_ "github.com/opc/api/internal/assetgen/profiles/digital_human"
+	_ "github.com/opc/api/internal/assetgen/profiles/info"
 )
 
 // ledgerPath is the canonical JSONL ledger where opc-asset appends
@@ -129,6 +140,7 @@ Run 'opc-asset <subcommand> --help' for subcommand-specific flags.
 func runCheck(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	prompt := fs.String("prompt", "", "the prompt to score (required)")
+	ipType := fs.String("type", "anthropomorphic", "IP type: anthropomorphic/digital_human/costume/info")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -138,7 +150,7 @@ func runCheck(args []string) error {
 	if *prompt == "" {
 		return fmt.Errorf("--prompt is required")
 	}
-	prof := assetgen.MustLoadProfile("anthropomorphic")
+	prof := assetgen.MustLoadProfile(*ipType)
 	res := assetgen.ConsistencyCheck(prof, *prompt)
 	out := map[string]interface{}{
 		"profile":    prof.Version(),
@@ -153,7 +165,8 @@ func runCheck(args []string) error {
 
 func runGenerate(args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
-	assetType := fs.String("type", "", "image or video (required)")
+	assetType := fs.String("asset-type", "", "image or video (required)")
+	ipType := fs.String("type", "anthropomorphic", "IP type: anthropomorphic/digital_human/costume/info")
 	scene := fs.String("scene", "竹林小院", "scene description (default 竹林小院)")
 	outfit := fs.String("outfit", "朱红", "outfit description (default 朱红)")
 	out := fs.String("out", "", "output file path (required)")
@@ -165,12 +178,12 @@ func runGenerate(args []string, logger *slog.Logger) error {
 		return err
 	}
 	if *assetType == "" {
-		return fmt.Errorf("--type is required (image or video)")
+		return fmt.Errorf("--asset-type is required (image or video)")
 	}
 	if *out == "" {
 		return fmt.Errorf("--out is required")
 	}
-	prof := assetgen.MustLoadProfile("anthropomorphic")
+	prof := assetgen.MustLoadProfile(*ipType)
 	prompt := assetgen.BuildPrompt(prof, *scene, *outfit, *assetType)
 	consistency := assetgen.ConsistencyCheck(prof, prompt)
 
@@ -201,13 +214,13 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	appendLedger(entry)
 
 	out_ := map[string]interface{}{
-		"profile":          prof.Version(),
-		"type":             *assetType,
-		"asset_path":       assetPath,
-		"consistency":      consistency.Score,
+		"profile":           prof.Version(),
+		"type":              *assetType,
+		"asset_path":        assetPath,
+		"consistency":       consistency.Score,
 		"consistency_fails": consistency.Fails,
-		"duration_ms":      dur,
-		"prompt":           prompt,
+		"duration_ms":       dur,
+		"prompt":            prompt,
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
