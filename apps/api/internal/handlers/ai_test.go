@@ -17,14 +17,39 @@ import (
 	"github.com/opc/api/internal/models"
 )
 
-func setupAITestRouter(t *testing.T, override agents.CompleteFunc) *gin.Engine {
+// textOverrideFn is the shape of the test seam that replaces
+// the legacy agents.CompleteFunc. Each AI test builds a
+// MiniMax client with NewMiniMaxWithTextOverride so the live
+// path can be exercised without spawning the mmx CLI.
+type textOverrideFn func(ctx context.Context, prompt string) (string, error)
+
+func setupAITestRouter(t *testing.T, override textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaudeWithOverride(override)
+	m := agents.NewMiniMaxWithTextOverride(toTextResult(override))
 	r := gin.New()
-	h := NewAIHandler(claude)
+	h := NewAIHandler(m)
 	h.RegisterRoutes(r)
 	return r
+}
+
+// toTextResult lifts a string-only override to the
+// MiniMaxTextResult shape. Token counts are reported as 1/0
+// (a sentinel that lets tests assert the cost was stamped
+// when they care to).
+func toTextResult(fn textOverrideFn) func(ctx context.Context, prompt string, opts agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+	return func(ctx context.Context, prompt string, opts agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		text, err := fn(ctx, prompt)
+		if err != nil {
+			return nil, err
+		}
+		return &agents.MiniMaxTextResult{
+			Text:         text,
+			InputTokens:  1,
+			OutputTokens: 0,
+			Model:        opts.Model,
+		}, nil
+	}
 }
 
 func doJSON(t *testing.T, r *gin.Engine, method, path string, body any) *httptest.ResponseRecorder {
@@ -126,10 +151,10 @@ func TestGenerateTopicsIncludesPatternAndVoiceTags(t *testing.T) {
 	}
 }
 
-// TestGenerateTopicsNoAPIKey: when the agent returns a "no API key"
-// error, the handler must surface 503 with a clear message so the
-// frontend can show a useful hint instead of a generic 500.
-func TestGenerateTopicsNoAPIKey(t *testing.T) {
+// TestGenerateTopicsUnavailable: when the MiniMax client returns
+// an error, the handler must surface 503 with a clear message so
+// the frontend can show a useful hint instead of a generic 500.
+func TestGenerateTopicsUnavailable(t *testing.T) {
 	r := setupAITestRouter(t, func(_ context.Context, _ string) (string, error) {
 		return "", errAIUnavailable
 	})
@@ -141,8 +166,8 @@ func TestGenerateTopicsNoAPIKey(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503, body = %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "API key") && !strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") {
-		t.Errorf("body should mention API key, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "minimax unavailable") {
+		t.Errorf("body should mention minimax unavailable, got: %s", w.Body.String())
 	}
 }
 
@@ -161,8 +186,8 @@ func TestGenerateTopicsInvalidBody(t *testing.T) {
 	}
 }
 
-// errAIUnavailable simulates the "no API key" branch.
-var errAIUnavailable = &aiTestError{msg: "claude complete: no Anthropic API key configured (set ANTHROPIC_API_KEY)"}
+// errAIUnavailable simulates the "upstream unavailable" branch.
+var errAIUnavailable = &aiTestError{msg: "minimax unavailable: simulated upstream failure"}
 
 type aiTestError struct{ msg string }
 
@@ -191,9 +216,9 @@ func TestHumanizeScriptSuccess(t *testing.T) {
 	}
 }
 
-// TestHumanizeScriptNoAPIKey: when the agent returns a "no API key"
-// error, the handler must surface 503 with a clear message.
-func TestHumanizeScriptNoAPIKey(t *testing.T) {
+// TestHumanizeScriptUnavailable: when MiniMax returns an error,
+// the handler must surface 503 with a clear message.
+func TestHumanizeScriptUnavailable(t *testing.T) {
 	r := setupAITestRouter(t, func(_ context.Context, _ string) (string, error) {
 		return "", errAIUnavailable
 	})
@@ -203,8 +228,8 @@ func TestHumanizeScriptNoAPIKey(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503, body = %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "API key") && !strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") {
-		t.Errorf("body should mention API key, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "minimax unavailable") {
+		t.Errorf("body should mention minimax unavailable, got: %s", w.Body.String())
 	}
 }
 
@@ -242,12 +267,12 @@ func setupPostmortemRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 }
 
 // newPostmortemRouterWithOverride wires the router with the given
-// override function so each test can supply its own Claude response.
-func newPostmortemRouterWithOverride(db *gorm.DB, fn agents.CompleteFunc) *gin.Engine {
+// override function so each test can supply its own MiniMax response.
+func newPostmortemRouterWithOverride(db *gorm.DB, fn textOverrideFn) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaudeWithOverride(fn)
+	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewAIHandler(claude, db).RegisterRoutes(r)
+	NewAIHandler(m, db).RegisterRoutes(r)
 	return r
 }
 
@@ -377,9 +402,9 @@ func TestPostmortemNotFound(t *testing.T) {
 	}
 }
 
-// TestPostmortemNoAPIKey: when the agent returns a "no API key"
-// error, the handler must surface 503 with a clear message.
-func TestPostmortemNoAPIKey(t *testing.T) {
+// TestPostmortemUnavailable: when MiniMax returns an error,
+// the handler must surface 503 with a clear message.
+func TestPostmortemUnavailable(t *testing.T) {
 	_, db := setupPostmortemRouter(t)
 	_, _, itemID := seedPostmortemFixture(t, db)
 	r := newPostmortemRouterWithOverride(db, func(_ context.Context, _ string) (string, error) {
@@ -392,8 +417,8 @@ func TestPostmortemNoAPIKey(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503, body = %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "API key") && !strings.Contains(w.Body.String(), "ANTHROPIC_API_KEY") {
-		t.Errorf("body should mention API key, got: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "minimax unavailable") {
+		t.Errorf("body should mention minimax unavailable, got: %s", w.Body.String())
 	}
 }
 
@@ -412,14 +437,13 @@ func TestPostmortemInvalidBody(t *testing.T) {
 
 // setupDemoRouter wires the AI handler with an agent constructed
 // WITHOUT an API key, so it defaults to demo mode. The override is
-// set to a sentinel that fails the test if reached — demo mode must
-// never call Complete.
+// not set — demo mode must never call Text.
 func setupDemoRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaude("") // empty key → keyConfigured=false
+	m := agents.NewMiniMaxForDemo() // forces Available()==false
 	r := gin.New()
-	NewAIHandler(claude).RegisterRoutes(r)
+	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }
 
@@ -429,23 +453,23 @@ func setupDemoRouter(t *testing.T) *gin.Engine {
 func setupDemoRouterWithKey(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaude("fake-key-for-tests")
+	m := agents.NewMiniMax("fake-key-for-tests")
 	r := gin.New()
-	NewAIHandler(claude).RegisterRoutes(r)
+	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }
 
-// setupDemoRouterWithKeyAndOverride wires the AI handler with an
-// agent that has keyConfigured=true (via the override constructor)
-// AND a no-op override. This is used by the "with key, no demo
-// flag" test to verify the demo short-circuit is NOT taken without
-// burning 60s on a real Anthropic timeout.
-func setupDemoRouterWithKeyAndOverride(t *testing.T, fn agents.CompleteFunc) *gin.Engine {
+// setupDemoRouterWithKeyAndOverride wires the AI handler with a
+// MiniMax client that has a text-override (so Available() returns
+// true) AND a no-op override. This is used by the "with key, no
+// demo flag" test to verify the demo short-circuit is NOT taken
+// without burning time on a real MiniMax call.
+func setupDemoRouterWithKeyAndOverride(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaudeWithOverride(fn)
+	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewAIHandler(claude).RegisterRoutes(r)
+	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }
 

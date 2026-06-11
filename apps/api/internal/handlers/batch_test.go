@@ -19,14 +19,14 @@ import (
 // branch is reserved for a future PR — but wiring it
 // through the constructor keeps the test harness close
 // to the production shape.
-func setupBatchRouter(t *testing.T, fn agents.CompleteFunc) *gin.Engine {
+func setupBatchRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	var c PipelineClient
+	var c *agents.MiniMax
 	if fn != nil {
-		c = agents.NewClaudeWithOverride(fn)
+		c = agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	} else {
-		c = agents.NewClaude("")
+		c = agents.NewMiniMaxForDemo()
 	}
 	r := gin.New()
 	NewBatchHandler(c, nil).RegisterRoutes(r)

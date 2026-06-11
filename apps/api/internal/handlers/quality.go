@@ -15,29 +15,19 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/models"
 )
-
-// QualityClient extends AIClient with the two extra prompt methods
-// the quality handler needs (score + platform-adapt). The existing
-// AIHandler already has IsDemoMode / DemoResponse / Complete, so
-// the only NEW methods are the two prompt builders and the two
-// corresponding demo ops.
-type QualityClient interface {
-	AIClient
-	ScoreContentPrompt(title, script, platform string) string
-	PlatformAdaptPrompt(title, angle, sourcePlatform string) string
-}
 
 // QualityHandler exposes content-quality AI endpoints:
 //   - POST /ai/score              — rule-based or AI 0-100 scoring
 //   - POST /ai/platform-adapt     — adapt one idea to 抖音/哔哩哔哩/小红书
 //   - POST /ai/publish-checklist  — pre-publish rule-based checks
 //
-// The first two follow the same demo/Claude split as the rest of
+// The first two follow the same demo/MiniMax split as the rest of
 // the AI surface. The third is rule-based and always available.
 type QualityHandler struct {
-	claude QualityClient
+	text   *agents.MiniMax
 	db     *gorm.DB
 	logger *slog.Logger
 }
@@ -46,13 +36,21 @@ type QualityHandler struct {
 // /ai/publish-checklist endpoint needs it (to look up Script +
 // ContentItem); the other two endpoints are DB-free. Tests that
 // only need score/adapt can pass nil.
-func NewQualityHandler(claude QualityClient, db ...*gorm.DB) *QualityHandler {
+func NewQualityHandler(text *agents.MiniMax, db ...*gorm.DB) *QualityHandler {
 	l := slog.Default()
 	var d *gorm.DB
 	if len(db) > 0 {
 		d = db[0]
 	}
-	return &QualityHandler{claude: claude, db: d, logger: l}
+	return &QualityHandler{text: text, db: d, logger: l}
+}
+
+// shouldUseDemo mirrors AIHandler.shouldUseDemo: demo mode kicks in
+// when the caller passes ?demo=true or when no MiniMax API key is
+// configured. Duplicated rather than shared so the handlers stay
+// decoupled.
+func (h *QualityHandler) shouldUseDemo(c *gin.Context) bool {
+	return isDemoRequest(c) || !h.text.Available()
 }
 
 // RegisterRoutes attaches the three quality endpoints.
@@ -159,8 +157,8 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 	// script, regardless of the input. The seed is the script
 	// length so consecutive demo calls with the same input get
 	// the same output (predictable for the operator).
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
-		raw, _ := h.claude.DemoResponse(agents.DemoOpScore, len(req.Script))
+	if h.shouldUseDemo(c) {
+		raw, _ := agents.DemoResponse(agents.DemoOpScore, len(req.Script))
 		out, err := parseQualityScore(raw)
 		if err != nil {
 			h.logger.Error("score demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -172,39 +170,30 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 		return
 	}
 
-	prompt := h.claude.ScoreContentPrompt(req.Title, req.Script, req.Platform)
+	prompt := agents.ScoreContentPrompt(req.Title, req.Script, req.Platform)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	raw, err := h.claude.Complete(ctx, prompt)
+	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		if errors.Is(err, agents.ErrNoAPIKey) {
-			// No API key: fall back to the rule-based scorer so
-			// the frontend still gets a useful answer (and a
-			// clear header so it can show a "demo" badge).
-			markDemoResponse(c)
-			fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform))
-			if fbErr != nil {
-				// rule-based map desync — log loudly but
-				// still return a clamped zero response so
-				// the frontend gets a usable 200. We also
-				// set X-Score-Fallback=failed so the UI can
-				// surface a degraded banner instead of a
-				// silent 0/0/0/0.
-				h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
-				fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
-				c.Header(scoreFallbackHeader, scoreFallbackFailed)
-			}
-			c.JSON(http.StatusOK, fb)
-			return
+		// MiniMax returns its own error envelope; treat it the
+		// same way as the no-API-key case and degrade to the
+		// rule-based scorer so the frontend still gets a
+		// useful 200.
+		markDemoResponse(c)
+		fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(req.Title, req.Script, req.Platform))
+		if fbErr != nil {
+			h.logger.Error("score rule-based fallback failed", "err", fbErr.Error(), "request_id", c.GetString("request_id"))
+			fb = qualityScoreResponse{Suggestions: []qualitySuggestion{}}
+			c.Header(scoreFallbackHeader, scoreFallbackFailed)
 		}
-		h.logger.Error("score complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
+		c.JSON(http.StatusOK, fb)
 		return
 	}
+	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
 
-	out, err := parseQualityScore(raw)
+	out, err := parseQualityScore(res.Text)
 	if err != nil {
 		// Parse failure: log it but degrade gracefully to
 		// rule-based scoring. Better to give the user a
@@ -380,8 +369,8 @@ func (h *QualityHandler) PlatformAdapt(c *gin.Context) {
 	}
 
 	// Demo mode: serve pre-canned 3-platform adaptations.
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
-		raw, _ := h.claude.DemoResponse(agents.DemoOpPlatformAdapt, len(req.Title))
+	if h.shouldUseDemo(c) {
+		raw, _ := agents.DemoResponse(agents.DemoOpPlatformAdapt, len(req.Title))
 		out, err := parsePlatformAdapt(raw)
 		if err != nil {
 			h.logger.Error("platform-adapt demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -393,26 +382,20 @@ func (h *QualityHandler) PlatformAdapt(c *gin.Context) {
 		return
 	}
 
-	prompt := h.claude.PlatformAdaptPrompt(req.Title, req.Angle, req.SourcePlatform)
+	prompt := agents.PlatformAdaptPrompt(req.Title, req.Angle, req.SourcePlatform)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	raw, err := h.claude.Complete(ctx, prompt)
+	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		if errors.Is(err, agents.ErrNoAPIKey) {
-			h.logger.Warn("platform-adapt: no API key configured", "request_id", c.GetString("request_id"))
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
-			})
-			return
-		}
-		h.logger.Error("platform-adapt complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		h.logger.Error("platform-adapt text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
+	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
 
-	out, err := parsePlatformAdapt(raw)
+	out, err := parsePlatformAdapt(res.Text)
 	if err != nil {
 		h.logger.Error("platform-adapt parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})

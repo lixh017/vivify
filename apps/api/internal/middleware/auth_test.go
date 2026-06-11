@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -156,4 +157,89 @@ func TestMiddlewareRequireAuthPanicsOnNilDB(t *testing.T) {
 		}
 	}()
 	_ = middleware.RequireAuth(nil, nil)
+}
+
+// TestMiddlewareRequireAuthReason covers the machine-readable `reason`
+// field on the 401 body. Frontend devs branch on this to decide
+// whether to re-login, refresh, or fix their request, so each failure
+// path must produce the documented reason. The generic `error`
+// envelope is also asserted to be unchanged (regression guard for
+// clients that still match on the string).
+func TestMiddlewareRequireAuthReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gormDB := newMiddlewareAuthDB(t)
+
+	// Seed a user + a valid session so we can later mutate the
+	// session row to simulate an expired token without losing the
+	// user.
+	u := seedMiddlewareUser(t, gormDB, "reason@example.com", "hunter2")
+	s, err := auth.CreateSession(gormDB, u.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/api/protected",
+		middleware.RequireAuth(gormDB, nil),
+		func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		},
+	)
+
+	hit := func(t *testing.T, cookie string) (int, map[string]any) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: "opc_session", Value: cookie})
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v (raw: %s)", err, w.Body.String())
+		}
+		return w.Code, body
+	}
+
+	t.Run("no_cookie", func(t *testing.T) {
+		code, body := hit(t, "")
+		if code != http.StatusUnauthorized {
+			t.Fatalf("code = %d, want 401", code)
+		}
+		if body["error"] != "not authenticated" {
+			t.Errorf("error = %v, want \"not authenticated\"", body["error"])
+		}
+		if body["reason"] != "no_cookie" {
+			t.Errorf("reason = %v, want \"no_cookie\"", body["reason"])
+		}
+		if body["hint"] == "" {
+			t.Errorf("hint is empty; want a non-empty login pointer")
+		}
+	})
+
+	t.Run("invalid_signature", func(t *testing.T) {
+		code, body := hit(t, "not-a-real-token")
+		if code != http.StatusUnauthorized {
+			t.Fatalf("code = %d, want 401", code)
+		}
+		if body["reason"] != "invalid_signature" {
+			t.Errorf("reason = %v, want \"invalid_signature\"", body["reason"])
+		}
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		// Backdate the seeded session's ExpiresAt so the next
+		// ValidateSession returns ErrSessionExpired. We re-fetch
+		// the row to avoid stomping on GORM's zero-time handling.
+		if err := gormDB.Model(&models.Session{}).Where("token = ?", s.Token).Update("expires_at", gormDB.NowFunc().Add(-time.Hour)).Error; err != nil {
+			t.Fatalf("backdate session: %v", err)
+		}
+		code, body := hit(t, s.Token)
+		if code != http.StatusUnauthorized {
+			t.Fatalf("code = %d, want 401", code)
+		}
+		if body["reason"] != "expired" {
+			t.Errorf("reason = %v, want \"expired\"", body["reason"])
+		}
+	})
 }

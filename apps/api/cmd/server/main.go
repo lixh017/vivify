@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/auth"
 	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/db"
 	"github.com/opc/api/internal/handlers"
@@ -23,6 +25,14 @@ import (
 )
 
 func main() {
+	// Load .env from the current working directory (and parents) before
+	// any other config step. Silent on miss: prod / CI typically run
+	// without a .env file and inject real secrets via the process env,
+	// so a missing file is not an error. Existing process env wins
+	// (godotenv.Load does NOT override), so an explicit `export
+	// FOO=bar` always beats the .env value.
+	_ = godotenv.Load()
+
 	cfg := config.Load()
 
 	// Route all log output through slog so request logs, MCP logs and any
@@ -45,23 +55,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize the Claude agent. An empty API key is acceptable
-	// during development; Complete() will surface a clear error at
-	// call time.
-	claudeAgent := agents.NewClaude(cfg.AnthropicAPIKey)
+	// Initialize the MiniMax client (single provider for text +
+	// image + speech + video post-Phase-4). An empty API key is
+	// acceptable during development; Available() returns false and
+	// every handler short-circuits to demo data.
+	mmxClient := agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
 
-	// Multi-model router: wires Claude / DeepSeek / Gemini providers
-	// behind a per-task model strategy. Providers with no API key
-	// still get registered (they report Available()==false so the
-	// router falls back to demo data without an explicit dev-mode
-	// check at every handler call site).
+	// Multi-model router: kept for /readyz + the multi-model
+	// observability surface. MiniMax is wired as a Provider so
+	// the existing router-aware call sites still work; the
+	// per-handler text client is a separate *agents.MiniMax
+	// instance because the handlers consume the rich Text/Image
+	// surface that the generic Provider does not expose.
 	overrides, overrideWarnings := agents.ParseOverrides(cfg.ModelOverrides)
 	for _, w := range overrideWarnings {
 		slog.Warn("ai_model_overrides", "warning", w)
 	}
 	aiRouter := agents.NewRouterWithOverrides(
 		[]agents.Provider{
-			agents.NewClaudeProvider(cfg.AnthropicAPIKey),
 			agents.NewDeepSeekProvider(cfg.DeepSeekAPIKey),
 			agents.NewGeminiProvider(cfg.GeminiAPIKey),
 		},
@@ -72,14 +83,12 @@ func main() {
 	}
 	// _ = aiRouter keeps the router live for /readyz and the
 	// router-aware handler migration coming in the next phase.
-	// Existing handlers still consume *agents.Claude directly so
-	// the wire-shape is unchanged this phase.
 	_ = aiRouter
 
 	// Construct the MCP server. The stdio transport blocks for the
 	// lifetime of the process, so we run it in its own goroutine and
 	// let SIGINT/SIGTERM cancel the context to shut it down cleanly.
-	mcpServer, err := mcp.NewServer(gormDB, claudeAgent)
+	mcpServer, err := mcp.NewServer(gormDB, mmxClient)
 	if err != nil {
 		slog.Error("mcp server init failed", "error", err)
 		os.Exit(1)
@@ -146,9 +155,29 @@ func main() {
 	}
 	r.GET("/readyz", handlers.NewReadyz(sqlDB))
 
+	// Catch-all 404 handler. Without this, gin returns a plain-text
+	// "404 page not found" body, which makes every client that calls
+	// response.json() throw a SyntaxError. Match the rest of the API
+	// envelope so callers can rely on a single error shape.
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":  "route not found",
+			"path":   c.Request.URL.Path,
+			"method": c.Request.Method,
+		})
+	})
+
 	topicH := handlers.NewTopicHandlerFromGorm(gormDB, nil)
 	scriptH := handlers.NewScriptHandler(gormDB)
 	contentItemH := handlers.NewContentItemHandler(gormDB)
+
+	// AES master key for the credential vault. The constructor
+	// panics on a short key so a misconfigured env surfaces as a
+	// startup failure rather than a 500 on the first request.
+	// ENCRYPTION_KEY is read by the auth package — see
+	// internal/auth/crypto.go.
+	encryptionKey := auth.MustLoadKey()
+	credentialH := handlers.NewCredentialHandler(gormDB, encryptionKey, slog.Default())
 
 	// FTS5 search route must be registered on the same router BEFORE
 	// the CRUD :id route. Gin's radix tree resolves the static segment
@@ -160,16 +189,32 @@ func main() {
 	knowledgeSearchH := handlers.NewKnowledgeSearchHandler(gormDB)
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	seriesH := handlers.NewSeriesHandler(gormDB)
-	aiH := handlers.NewAIHandler(claudeAgent, gormDB)
-	qualityH := handlers.NewQualityHandler(claudeAgent, gormDB)
-	deconstructH := handlers.NewDeconstructHandler(claudeAgent)
-	pipelineH := handlers.NewPipelineHandler(claudeAgent, gormDB)
+	aiH := handlers.NewAIHandler(mmxClient, gormDB)
+	qualityH := handlers.NewQualityHandler(mmxClient, gormDB)
+	deconstructH := handlers.NewDeconstructHandler(mmxClient)
+	pipelineH := handlers.NewPipelineHandler(mmxClient, gormDB)
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
 	// handler; there are no overlapping paths with the other
 	// collections.
 	ipTemplateH := handlers.NewIPTemplateHandler(gormDB)
+
+	// Phase 3 observability surface. Reads aggregated call_log
+	// rows; protected by RequireAuth so cross-tenant data is
+	// never returned. The call_log middleware is mounted
+	// INSIDE this group so a request to /api/observability/* does
+	// not log itself (recursive aggregation would inflate the
+	// counts).
+	observabilityH := handlers.NewObservabilityHandler(gormDB)
+
+	// Phase 3 call-log query surface. The /api/logs group is
+	// multi-tenant scoped (every WHERE clause pins user_id to
+	// the caller) and is added to the call_log middleware's
+	// skip-list so reads of the log table do not log
+	// themselves (a recursive read would inflate the by_skill
+	// call count).
+	logsH := handlers.NewLogsHandler(gormDB, slog.Default())
 
 	// JSON-based data import / export endpoints. Mounted last because
 	// they live at the top-level /export and /import paths and could
@@ -185,16 +230,34 @@ func main() {
 	authH.RegisterRoutes(r)
 
 	// Phase 2 AI batch + cover generation. The batch handler
-	// reuses the same PipelineClient as /ai/pipeline, and the
-	// cover handler wraps the Kling/即梦 image generation
-	// client (mock fallback when no API key is configured).
-	// Both live on the protected /api group so the response
-	// can be scoped to the caller's rows in a future
-	// iteration (the cover handler is also where the
-	// topic_id persistence seam will land).
-	batchH := handlers.NewBatchHandler(pipelineH.PipelineClient(), gormDB)
-	coverClient := agents.EnvFirstCoverClient()
-	coverH := handlers.NewCoverHandler(coverClient)
+	// reuses the same *agents.MiniMax as /ai/pipeline, and the
+	// cover handler calls MiniMax.Image (with a deterministic
+	// SVG fallback when no API key is configured). Both live
+	// on the protected /api group so the response can be
+	// scoped to the caller's rows in a future iteration (the
+	// cover handler is also where the topic_id persistence
+	// seam will land).
+	batchH := handlers.NewBatchHandler(pipelineH.Text(), gormDB)
+	coverH := handlers.NewCoverHandler(mmxClient)
+
+	// Phase 4 media surface. SpeechHandler and VideoHandler
+	// reuse the same *agents.MiniMax as the AI/cover
+	// handlers — MiniMax is a single-provider client that
+	// exposes Text/Image/Speech/Video on the same instance.
+	// Both endpoints live on the protected /api group so the
+	// call_log middleware (mounted further below) picks up
+	// the row and the operator can audit cost in the
+	// observability dashboard.
+	speechH := handlers.NewSpeechHandler(mmxClient)
+	videoH := handlers.NewVideoHandler(mmxClient)
+
+	// Phase 4 P1 billing surface (Phase 3 console /billing
+	// route). Reads aggregated call_log rows; the
+	// month-summary + CSV export are operator-facing pages
+	// on the console. The call_log middleware's skip-list
+	// excludes /api/billing/* so a billing query does not
+	// log itself.
+	billingH := handlers.NewBillingHandler(gormDB)
 
 	// Protected business surface. Every route in this group runs
 	// through RequireAuth, which resolves the session cookie via
@@ -204,7 +267,16 @@ func main() {
 	// the caller's rows. Mounted under /api so the reverse proxy in
 	// nginx.conf can keep /api and the static frontend in separate
 	// paths.
-	apiGroup := r.Group("/api", handlers.NewRequireAuth(gormDB, slog.Default()))
+	//
+	// The call_log middleware is added to the chain so every
+	// protected /api/* request gets one row. It runs AFTER
+	// RequireAuth so the user_id is available; it runs BEFORE
+	// the per-entity handlers so handlers can stamp provider /
+	// cost / error_message on the CallLogRef.
+	apiGroup := r.Group("/api",
+		handlers.NewRequireAuth(gormDB, slog.Default()),
+		middleware.CallLog(middleware.CallLogConfig{DB: gormDB, Logger: slog.Default()}),
+	)
 	topicH.RegisterRoutes(apiGroup)
 	scriptH.RegisterRoutes(apiGroup)
 	contentItemH.RegisterRoutes(apiGroup)
@@ -219,6 +291,12 @@ func main() {
 	importExportH.RegisterRoutes(apiGroup)
 	batchH.RegisterRoutes(apiGroup)
 	coverH.RegisterRoutes(apiGroup)
+	speechH.RegisterRoutes(apiGroup)
+	videoH.RegisterRoutes(apiGroup)
+	credentialH.RegisterRoutes(apiGroup)
+	observabilityH.RegisterRoutes(apiGroup)
+	logsH.RegisterRoutes(apiGroup)
+	billingH.RegisterRoutes(apiGroup)
 
 	// API reference surface — /openapi.json serves the OpenAPI 3.0
 	// spec embedded at compile time, /docs serves the Swagger UI
@@ -228,13 +306,30 @@ func main() {
 	docsH := handlers.NewDocsHandlers(slog.Default())
 	docsH.RegisterRoutes(r)
 
+	// /static serves the on-disk media outputs (cover jpgs +
+	// speech mp3s + future video mp4s). Mounted OUTSIDE the /api
+	// group so the URLs match the relative path under ./var/
+	// (e.g. var/covers/foo.jpg → /static/covers/foo.jpg). The
+	// files are not authenticated — they are inert binary
+	// content with no per-user access control today, and
+	// gating them would force the <img>/<audio> tags in the
+	// frontend to carry a session cookie (which is fine, but
+	// adds complexity for zero security benefit when the URLs
+	// are not enumerable). A future iteration can move this
+	// behind a signed-URL helper if cross-tenant leak becomes
+	// a concern.
+	r.Static("/static", "./var")
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// WriteTimeout raised to 180s to accommodate the 4-step AI pipeline at
+		// POST /api/ai/pipeline, which reliably runs 1m28s-1m38s end-to-end
+		// (4 sequential LLM calls). 60s cut the response mid-body.
+		WriteTimeout: 180 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	serverErr := make(chan error, 1)

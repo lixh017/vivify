@@ -105,6 +105,8 @@ func Migrate(db *gorm.DB) error {
 		&models.ContentItem{},
 		&models.KnowledgeDoc{},
 		&models.Series{},
+		&models.Credential{},
+		&models.CallLog{},
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
 	}

@@ -27,12 +27,13 @@ const (
 	// stale cookies even before the server row expires.
 	sessionCookieMaxAge = 7 * 24 * 60 * 60
 
-	// registerEnabled gates POST /api/auth/register. Phase 2 ships with
-	// registration closed by default — the operator is expected to seed
-	// the first admin user out-of-band (see Phase 2 README) and any
-	// later self-service flow is a deliberate flip of this knob. We read
-	// it from REGISTRATION_ENABLED so the value is configurable per
-	// environment without rebuilding.
+	// registerEnabled gates POST /api/auth/register. Registration is
+	// OPEN by default so a fresh dev/MVP deployment can create its
+	// first user through the signup form without manual seeding. To
+	// close registration, set REGISTRATION_ENABLED to 0/false/no/off
+	// (an explicit falsy value); unset means enabled. We keep the
+	// environment-variable indirection so a production operator can
+	// lock the endpoint down without rebuilding.
 	registerEnabledEnv = "REGISTRATION_ENABLED"
 )
 
@@ -44,14 +45,33 @@ const (
 const authCookiePath = "/api"
 
 // envBool turns a "1/true/yes/on" string into true. Anything else
-// (including empty) is false. Used for the registration toggle so a
-// missing env var does not silently enable self-service sign-up.
+// (including empty) is false. Used for opt-in feature flags that
+// should default to disabled when the operator does not set the
+// variable.
 func envBool(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
 	case "1", "true", "yes", "on":
 		return true
 	default:
 		return false
+	}
+}
+
+// envBoolDefaultTrue is the inverse of envBool: it returns false only
+// when the variable is *explicitly* set to a falsy value
+// (0/false/no/off). Unset, empty, or any other value is treated as
+// true. Used for the registration toggle so a fresh deployment does
+// not need to set an env var to expose the signup form.
+func envBoolDefaultTrue(name string) bool {
+	val, ok := os.LookupEnv(name)
+	if !ok {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -294,15 +314,16 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // Body: {email, password, name}
 // 201:  {user}  (and Set-Cookie: opc_session=...)
 // 400:  invalid body
-// 403:  registration disabled (default)
+// 403:  registration disabled (REGISTRATION_ENABLED=0|false|no|off)
 // 409:  email already exists
 // 500:  backend failure
 //
-// Registration is OFF by default (REGISTRATION_ENABLED must be set
-// to 1/true/yes/on). Phase 2's first user is seeded out-of-band per
-// the migration runbook — see docs/PHASE2-AUTH.md.
+// Registration is ON by default. To lock the endpoint down, set
+// REGISTRATION_ENABLED to a falsy value (0/false/no/off); unset or
+// empty means enabled. The same env var is still honored for the
+// opt-out path, just inverted. See docs/PHASE2-AUTH.md.
 func (h *AuthHandler) Register(c *gin.Context) {
-	if !envBool(registerEnabledEnv) {
+	if !envBoolDefaultTrue(registerEnabledEnv) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "registration is disabled"})
 		return
 	}

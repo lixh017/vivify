@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -11,18 +10,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/config"
 )
-
-// PipelineClient is the contract the pipeline handler needs from a
-// Claude-like agent. It is the union of every prompt the handler
-// can drive: topics, humanize (for the per-step script), score,
-// and platform-adapt. The full AIClient surface is required so
-// the handler can run the live (non-demo) path and so the
-// existing demo short-circuits still work.
-type PipelineClient interface {
-	AIClient
-	QualityClient
-}
 
 // PipelineHandler exposes the multi-step "one-shot" content
 // pipeline endpoint:
@@ -38,23 +27,26 @@ type PipelineClient interface {
 // pre-step that augments the topic + script prompts with a
 // "STYLE REFERENCE" block pulled from the user's knowledge base.
 type PipelineHandler struct {
-	claude PipelineClient
+	text   *agents.MiniMax
 	db     *gorm.DB
 	logger *slog.Logger
 }
 
 // NewPipelineHandler wires a PipelineHandler. db is required for
 // the RAG step; if it is nil the handler still works (the RAG step
-// is silently skipped) but the demo / live Claude paths will fall
-// through to the existing AI handlers. Tests that don't need RAG
-// can pass nil.
-func NewPipelineHandler(claude PipelineClient, db ...*gorm.DB) *PipelineHandler {
+// is silently skipped) but the demo / live MiniMax paths will
+// fall through. Tests that don't need RAG can pass nil.
+func NewPipelineHandler(text *agents.MiniMax, db ...*gorm.DB) *PipelineHandler {
 	l := slog.Default()
 	var d *gorm.DB
 	if len(db) > 0 {
 		d = db[0]
 	}
-	return &PipelineHandler{claude: claude, db: d, logger: l}
+	return &PipelineHandler{
+		text:   text,
+		db:     d,
+		logger: l,
+	}
 }
 
 // RegisterRoutes attaches the pipeline endpoint to the router.
@@ -62,14 +54,20 @@ func (h *PipelineHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/pipeline", h.RunPipeline)
 }
 
-// PipelineClient exposes the underlying AI client so sibling
-// handlers (e.g. /ai/batch) can share the same Claude surface
-// without a second constructor. Returning the concrete
-// interface keeps the dependency direction one-way: the
-// batch handler depends on the pipeline handler, not on the
-// agents package directly.
-func (h *PipelineHandler) PipelineClient() PipelineClient {
-	return h.claude
+// Text returns the underlying MiniMax text client. Sibling
+// handlers (e.g. /ai/batch) can share the same text surface
+// without a second constructor. Returns the concrete struct so
+// callers don't need to depend on the agents package directly.
+func (h *PipelineHandler) Text() *agents.MiniMax {
+	return h.text
+}
+
+// shouldUseDemo mirrors AIHandler.shouldUseDemo: demo mode kicks in
+// when the caller passes ?demo=true or when no MiniMax API key is
+// configured. Duplicated rather than shared so handlers stay
+// decoupled.
+func (h *PipelineHandler) shouldUseDemo(c *gin.Context) bool {
+	return isDemoRequest(c) || !h.text.Available()
 }
 
 // pipelineRequest is the JSON body for POST /ai/pipeline.
@@ -190,7 +188,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 	// the live path. The demo topics/script/score/adapt blocks
 	// themselves are not affected by the RAG content — they come
 	// from the same canned pools the per-endpoint demos use.
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
+	if h.shouldUseDemo(c) {
 		markDemoResponse(c)
 		resp := h.buildDemoPipeline(c, req, steps, ragTitles)
 		c.JSON(http.StatusOK, resp)
@@ -216,11 +214,12 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 	for _, step := range steps {
 		switch step {
 		case "topics":
-			topics, err := h.runTopicsStep(c.Request.Context(), req.Seed, req.Platform, ragContext)
+			topics, usage, err := h.runTopicsStep(c.Request.Context(), req.Seed, req.Platform, ragContext)
 			if err != nil {
 				h.surfaceStepError(c, "topics", err)
 				return
 			}
+			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Topics = topics
 			if len(topics) > 0 {
 				bestTopic = topics[0]
@@ -236,11 +235,12 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			script, err := h.runScriptStep(c.Request.Context(), bestTopic, req.Platform, ragContext)
+			script, usage, err := h.runScriptStep(c.Request.Context(), bestTopic, req.Platform, ragContext)
 			if err != nil {
 				h.surfaceStepError(c, "script", err)
 				return
 			}
+			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Script = script
 		case "score":
 			if resp.Script == nil {
@@ -249,11 +249,12 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			score, err := h.runScoreStep(c.Request.Context(), resp.Script.Title, resp.Script.Content, req.Platform)
+			score, usage, err := h.runScoreStep(c.Request.Context(), resp.Script.Title, resp.Script.Content, req.Platform)
 			if err != nil {
 				h.surfaceStepError(c, "score", err)
 				return
 			}
+			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Score = score
 		case "adapt":
 			if resp.Script == nil {
@@ -262,11 +263,12 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			adapt, err := h.runAdaptStep(c.Request.Context(), resp.Script.Title, bestTopic.Angle, req.Platform)
+			adapt, usage, err := h.runAdaptStep(c.Request.Context(), resp.Script.Title, bestTopic.Angle, req.Platform)
 			if err != nil {
 				h.surfaceStepError(c, "adapt", err)
 				return
 			}
+			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Adaptations = adapt
 		}
 	}
@@ -295,65 +297,79 @@ func normalizePipelineSteps(in []string) []string {
 	return out
 }
 
-// runTopicsStep calls Claude for N topics with RAG augmentation.
+// textUsage is the small token-accounting return the per-step
+// helpers surface so the step loop in RunPipeline can stamp
+// cost onto the call_log row. Defined here (not in the agents
+// package) because it is a plumbing type for the handler layer.
+type textUsage struct {
+	Input  int
+	Output int
+}
+
+// runTopicsStep calls MiniMax for N topics with RAG augmentation.
 // The RAG context is injected under a "STYLE REFERENCE" banner
-// when present, BEFORE the rest of the prompt content, so Claude
+// when present, BEFORE the rest of the prompt content, so MiniMax
 // sees it as authoritative style guidance.
-func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag string) ([]generatedTopic, error) {
-	prompt := h.claude.GenerateTopicsPrompt(seed, platform, 5)
+func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag string) ([]generatedTopic, textUsage, error) {
+	prompt := agents.GenerateTopicsPrompt(seed, platform, 5)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := h.claude.Complete(cctx, prompt)
+	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		return nil, err
+		return nil, textUsage{}, err
 	}
-	return parseTopics(raw)
+	topics, perr := parseTopics(res.Text)
+	if perr != nil {
+		return nil, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, perr
+	}
+	return topics, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
 }
 
-// runScriptStep asks Claude to expand the chosen topic into a
+// runScriptStep asks MiniMax to expand the chosen topic into a
 // full script. The RAG context is injected identically to the
 // topic step; the script prompt is the same humanize prompt the
 // /ai/humanize endpoint uses, but with the topic's title and
 // angle prepended so the model knows what to expand.
-func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopic, platform, rag string) (*pipelineScript, error) {
+func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopic, platform, rag string) (*pipelineScript, textUsage, error) {
 	seedScript := topic.Angle + "\n\n" + topic.Hook
-	prompt := h.claude.HumanizeScriptPrompt(seedScript)
+	prompt := agents.HumanizeScriptPrompt(seedScript)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := h.claude.Complete(cctx, prompt)
+	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		return nil, err
+		return nil, textUsage{}, err
 	}
-	body := strings.TrimSpace(raw)
+	body := strings.TrimSpace(res.Text)
 	return &pipelineScript{
 		Title:   topic.Title,
 		Content: body,
 		Angle:   topic.Angle,
 		Topic:   topic.Title,
-	}, nil
+	}, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
 }
 
 // runScoreStep evaluates the generated script on the standard
 // hook / structure / platform_fit axes. No RAG injection here —
 // the score prompt's value comes from the script content, not
-// the IP style reference. (RAG would mostly teach Claude to
+// the IP style reference. (RAG would mostly teach MiniMax to
 // prefer the style guide over the actual data; we keep scoring
 // evidence-driven.)
-func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platform string) (*qualityScoreResponse, error) {
-	prompt := h.claude.ScoreContentPrompt(title, script, platform)
+func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platform string) (*qualityScoreResponse, textUsage, error) {
+	prompt := agents.ScoreContentPrompt(title, script, platform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := h.claude.Complete(cctx, prompt)
+	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		return nil, err
+		return nil, textUsage{}, err
 	}
-	out, perr := parseQualityScore(raw)
+	usage := textUsage{Input: res.InputTokens, Output: res.OutputTokens}
+	out, perr := parseQualityScore(res.Text)
 	if perr != nil {
 		// Gracefully degrade to the rule-based scorer on parse
 		// failure, matching the /ai/score handler. The frontend
@@ -371,31 +387,31 @@ func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platf
 				"parse_err", perr.Error(),
 				"fallback_err", fbErr.Error(),
 			)
-			return nil, perr
+			return nil, usage, perr
 		}
-		return &fb, nil
+		return &fb, usage, nil
 	}
-	return &out, nil
+	return &out, usage, nil
 }
 
-// runAdaptStep asks Claude to produce 抖音/哔哩哔哩/小红书
+// runAdaptStep asks MiniMax to produce 抖音/哔哩哔哩/小红书
 // versions of the script. No RAG injection — the per-platform
 // voice table is already in the prompt, and adding user-doc
 // style guidance tends to make the model hedge rather than
 // commit to a specific platform's voice.
-func (h *PipelineHandler) runAdaptStep(ctx context.Context, title, angle, sourcePlatform string) (*platformAdaptResponse, error) {
-	prompt := h.claude.PlatformAdaptPrompt(title, angle, sourcePlatform)
+func (h *PipelineHandler) runAdaptStep(ctx context.Context, title, angle, sourcePlatform string) (*platformAdaptResponse, textUsage, error) {
+	prompt := agents.PlatformAdaptPrompt(title, angle, sourcePlatform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := h.claude.Complete(cctx, prompt)
+	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		return nil, err
+		return nil, textUsage{}, err
 	}
-	out, perr := parsePlatformAdapt(raw)
+	out, perr := parsePlatformAdapt(res.Text)
 	if perr != nil {
-		return nil, perr
+		return nil, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, perr
 	}
-	return &out, nil
+	return &out, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
 }
 
 // injectRAG prepends the "STYLE REFERENCE" block to the prompt.
@@ -409,7 +425,7 @@ func injectRAG(prompt, ragContent string) string {
 	return banner + ragContent + closer + prompt
 }
 
-// surfaceStepError maps a step-level Claude error to a useful
+// surfaceStepError maps a step-level MiniMax error to a useful
 // HTTP status. The "no API key" sentinel is surfaced as 503 with
 // the same wording the other handlers use; everything else is
 // also 503 with the raw error message. We deliberately do NOT
@@ -417,14 +433,6 @@ func injectRAG(prompt, ragContent string) string {
 // individual step's parse / complete failures should not be
 // visible to the operator.
 func (h *PipelineHandler) surfaceStepError(c *gin.Context, step string, err error) {
-	if errors.Is(err, agents.ErrNoAPIKey) {
-		h.logger.Warn("pipeline: no API key configured", "step", step, "request_id", c.GetString("request_id"))
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
-			"step":  step,
-		})
-		return
-	}
 	h.logger.Error("pipeline step failed", "step", step, "err", err.Error(), "request_id", c.GetString("request_id"))
 	c.JSON(http.StatusServiceUnavailable, gin.H{
 		"error": "AI service failed at step " + step + ": " + err.Error(),
@@ -452,15 +460,15 @@ func (h *PipelineHandler) buildDemoPipeline(c *gin.Context, req pipelineRequest,
 		resp.KnowledgeUsed = []string{}
 	}
 
-	topicRaw, _ := h.claude.DemoResponse(agents.DemoOpTopics, len(req.Seed))
+	topicRaw, _ := agents.DemoResponse(agents.DemoOpTopics, len(req.Seed))
 	topics, terr := parseTopics(topicRaw)
 	if terr != nil {
 		h.logger.Warn("pipeline demo: topics parse failed", "err", terr.Error(), "request_id", c.GetString("request_id"))
 	}
 
-	scriptRaw, _ := h.claude.DemoResponse(agents.DemoOpHumanize, len(req.Seed))
-	scoreRaw, _ := h.claude.DemoResponse(agents.DemoOpScore, len(scriptRaw))
-	adaptRaw, _ := h.claude.DemoResponse(agents.DemoOpPlatformAdapt, len(req.Seed))
+	scriptRaw, _ := agents.DemoResponse(agents.DemoOpHumanize, len(req.Seed))
+	scoreRaw, _ := agents.DemoResponse(agents.DemoOpScore, len(scriptRaw))
+	adaptRaw, _ := agents.DemoResponse(agents.DemoOpPlatformAdapt, len(req.Seed))
 
 	var bestTopic generatedTopic
 	if len(topics) > 0 {

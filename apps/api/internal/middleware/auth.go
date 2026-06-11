@@ -61,14 +61,51 @@ func sessionTokenFromCookie(c *gin.Context) string {
 	return v
 }
 
+// Canonical reason codes for 401 responses. Exposed so handlers (and
+// tests) can build payloads without sprinkling stringly-typed values
+// around. The values are part of the API contract — changing them is
+// a breaking change for any client that branches on `reason`.
+const (
+	// AuthReasonNoCookie means the request did not include the
+	// opc_session cookie. Frontend: prompt the user to log in.
+	AuthReasonNoCookie = "no_cookie"
+	// AuthReasonInvalidSignature means the cookie was present but
+	// the token does not correspond to any known session (likely
+	// tampered, or from a different environment). Frontend: clear
+	// the stale cookie and re-login.
+	AuthReasonInvalidSignature = "invalid_signature"
+	// AuthReasonExpired means the session row existed but its
+	// ExpiresAt is in the past. Frontend: re-login to mint a fresh
+	// session.
+	AuthReasonExpired = "expired"
+	// AuthReasonWrongScope means the session is valid but the user
+	// is not allowed to call this endpoint. Reserved for future
+	// scope/role checks; not currently produced by the middleware.
+	AuthReasonWrongScope = "wrong_scope"
+	// AuthReasonUnknownUser means the session row points at a user
+	// that no longer exists. Frontend: clear the stale cookie and
+	// re-login.
+	AuthReasonUnknownUser = "unknown_user"
+)
+
+// authHint is a small UX nudge included with every 401 so a frontend
+// dev (or a human) reading the response knows which cookie to set and
+// where to obtain one. The exact login route may change; this string
+// is a deliberate "first-step pointer" rather than a strict
+// navigation target.
+const authHint = "POST /api/auth/login to obtain an opc_session cookie"
+
 // RequireAuth returns a Gin middleware that resolves the session
 // cookie via auth.ValidateSession and stashes the user on the Gin
 // context. On any failure path it short-circuits with 401 — we never
 // let an unauthenticated request through to a handler that expects a
-// user, and we never echo the underlying error to the client (the
-// body is always a generic "not authenticated" so the endpoint cannot
-// be used to distinguish "no cookie" from "stale cookie" from
-// "expired session" from "user row deleted").
+// user. The body is a generic "not authenticated" envelope plus a
+// machine-readable `reason` so a frontend can decide whether to
+// re-login (no_cookie / expired / unknown_user), retry with a
+// refreshed request (transient), or surface a bug (invalid_signature
+// from a non-malicious client). The underlying error itself is never
+// echoed to the client, so the endpoint cannot be used as an oracle
+// for which tokens are valid.
 //
 // The middleware takes a *gorm.DB explicitly (rather than reading
 // from a package-level singleton) so tests can wire a custom DB. A
@@ -84,24 +121,34 @@ func RequireAuth(db *gorm.DB, logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := sessionTokenFromCookie(c)
 		if token == "" {
-			unauthorized(c)
+			unauthorized(c, AuthReasonNoCookie)
 			return
 		}
 		u, err := auth.ValidateSession(db, token)
 		if err != nil {
 			// We log the sentinel distinction server-side so the
 			// operator can tell "client is unauthenticated" from
-			// "client sent a tampered/expired token". The body is
-			// intentionally identical.
+			// "client sent a tampered/expired token". The body's
+			// `reason` is the machine-readable counterpart.
+			reason := AuthReasonInvalidSignature
 			switch {
 			case errors.Is(err, auth.ErrSessionExpired):
+				reason = AuthReasonExpired
 				logger.Info("require auth: session expired", "request_id", c.GetString("request_id"))
 			case errors.Is(err, auth.ErrSessionNotFound):
+				// ValidateSession collapses "unknown token" and
+				// "user row deleted" into the same sentinel; from
+				// the client's perspective both are "your cookie
+				// does not authorize you" and the right recovery is
+				// identical (clear + re-login), so we label this
+				// the more common case.
+				reason = AuthReasonInvalidSignature
 				logger.Info("require auth: session not found", "request_id", c.GetString("request_id"))
 			default:
+				reason = AuthReasonInvalidSignature
 				logger.Error("require auth: validate session", "err", err.Error(), "request_id", c.GetString("request_id"))
 			}
-			unauthorized(c)
+			unauthorized(c, reason)
 			return
 		}
 		c.Set(CtxUserID, u.ID)
@@ -113,10 +160,15 @@ func RequireAuth(db *gorm.DB, logger *slog.Logger) gin.HandlerFunc {
 // unauthorized writes the canonical 401 body. Centralized so the
 // RequireAuth middleware and any future handler-level guard produce
 // byte-identical responses (a small but useful property for clients
-// and tests).
-func unauthorized(c *gin.Context) {
+// and tests). The `reason` is a machine-readable code from the
+// AuthReason* constants; the `hint` is a static pointer to the login
+// endpoint so a frontend dev never has to dig through the OpenAPI to
+// figure out where to obtain a session.
+func unauthorized(c *gin.Context, reason string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-		"error": "not authenticated",
+		"error":  "not authenticated",
+		"reason": reason,
+		"hint":   authHint,
 	})
 }
 

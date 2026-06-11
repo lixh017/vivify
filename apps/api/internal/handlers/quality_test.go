@@ -17,28 +17,28 @@ import (
 	"github.com/opc/api/internal/models"
 )
 
-// setupQualityTestRouter wires the quality handler with an
-// override-based Claude agent so each test can pin the response.
+// setupQualityTestRouter wires the quality handler with a
+// MiniMax text-override so each test can pin the response.
 // The DB is nil because the score/adapt endpoints don't touch it.
-func setupQualityTestRouter(t *testing.T, fn agents.CompleteFunc) *gin.Engine {
+func setupQualityTestRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaudeWithOverride(fn)
+	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewQualityHandler(claude).RegisterRoutes(r)
+	NewQualityHandler(m).RegisterRoutes(r)
 	return r
 }
 
-// setupQualityDemoRouter wires the quality handler with an
-// agent constructed WITHOUT an API key so it defaults to demo mode.
+// setupQualityDemoRouter wires the quality handler with a
+// MiniMax client WITHOUT an API key so it defaults to demo mode.
 // Tests that want to verify the canned panda-IP scores should use
 // this.
 func setupQualityDemoRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaude("")
+	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(claude).RegisterRoutes(r)
+	NewQualityHandler(m).RegisterRoutes(r)
 	return r
 }
 
@@ -72,10 +72,10 @@ func TestScoreDemoNoKey(t *testing.T) {
 // TestScoreForcedDemoWithKey verifies ?demo=true overrides even
 // when an API key is configured.
 func TestScoreForcedDemoWithKey(t *testing.T) {
-	claude := agents.NewClaude("fake-key-for-tests")
+	m := agents.NewMiniMax("fake-key-for-tests")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	NewQualityHandler(claude).RegisterRoutes(r)
+	NewQualityHandler(m).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/score?demo=true", map[string]any{
 		"title":    "标题",
@@ -172,15 +172,12 @@ func TestScoreFallsBackOnParseError(t *testing.T) {
 }
 
 // TestScoreFallsBackOnNoAPIKey: when the agent is real (key set)
-// but the underlying call returns an ErrNoAPIKey error, the handler
+// but the underlying call returns an upstream error, the handler
 // MUST fall back to the rule-based scorer with the X-Demo-Mode
 // header so the frontend can show a "demo" badge.
-func TestScoreFallsBackOnNoAPIKey(t *testing.T) {
+func TestScoreFallsBackOnUpstreamError(t *testing.T) {
 	r := setupQualityTestRouter(t, func(_ context.Context, _ string) (string, error) {
-		// Return the sentinel wrapped the same way agents.Complete
-		// does, so errors.Is(err, agents.ErrNoAPIKey) succeeds in
-		// the handler.
-		return "", fmt.Errorf("claude complete: %w", agents.ErrNoAPIKey)
+		return "", fmt.Errorf("minimax: simulated upstream error")
 	})
 	w := doJSON(t, r, http.MethodPost, "/ai/score", map[string]any{
 		"title":    "好标题",
@@ -381,9 +378,9 @@ func setupChecklistRouter(t *testing.T, userID uint, schedule *time.Time) (*gin.
 		t.Fatalf("create ci: %v", err)
 	}
 
-	claude := agents.NewClaude("")
+	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(claude, db).RegisterRoutes(r)
+	NewQualityHandler(m, db).RegisterRoutes(r)
 	return r, db, ci.ID
 }
 
@@ -560,9 +557,9 @@ func TestPublishChecklistScriptMissing(t *testing.T) {
 	if err := db.Create(&ci).Error; err != nil {
 		t.Fatalf("create ci: %v", err)
 	}
-	claude := agents.NewClaude("")
+	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(claude, db).RegisterRoutes(r)
+	NewQualityHandler(m, db).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/publish-checklist", map[string]any{
 		"content_item_id": ci.ID,

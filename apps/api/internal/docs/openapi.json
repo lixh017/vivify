@@ -399,6 +399,26 @@
         }
       }
     },
+    "/ai/score": {
+      "post": {
+        "tags": ["ai"],
+        "summary": "Score a script's content quality",
+        "description": "Returns a 0-100 rollup plus per-axis scores and concrete suggestions for the given title/script/platform. When `?demo=true` is set, or when no `ANTHROPIC_API_KEY` is configured, the handler returns a canned response from the demo pool; the response shape is identical in both modes so the frontend does not need to branch.",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIScoreRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Quality score and suggestions",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AIScoreResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "502": {"description": "AI response could not be parsed"},
+          "503": {"description": "AI service unavailable (no API key, or upstream error)"}
+        }
+      }
+    },
     "/ai/postmortem": {
       "post": {
         "tags": ["ai"],
@@ -788,6 +808,37 @@
         "required": ["humanized"],
         "properties": {
           "humanized": {"type": "string"}
+        }
+      },
+      "AIScoreRequest": {
+        "type": "object",
+        "required": ["title", "script"],
+        "properties": {
+          "title": {"type": "string"},
+          "script": {"type": "string"},
+          "platform": {"type": "string", "description": "Target platform; defaults to 抖音 when omitted"}
+        }
+      },
+      "QualitySuggestion": {
+        "type": "object",
+        "required": ["category", "problem", "rewrite", "severity"],
+        "properties": {
+          "category": {"type": "string", "description": "Suggestion category, e.g. hook / pacing / platform-fit"},
+          "problem": {"type": "string", "description": "What the heuristic flagged"},
+          "rewrite": {"type": "string", "description": "Concrete fix the user can paste back into the script"},
+          "severity": {"type": "string", "description": "low | medium | high"}
+        }
+      },
+      "AIScoreResponse": {
+        "type": "object",
+        "required": ["overall_score", "hook_strength", "structure", "platform_fit", "suggestions", "rewritten_hook"],
+        "properties": {
+          "overall_score": {"type": "integer", "description": "0-100 rollup"},
+          "hook_strength": {"type": "integer", "description": "0-100 score for the opening hook"},
+          "structure": {"type": "integer", "description": "0-100 score for narrative structure"},
+          "platform_fit": {"type": "integer", "description": "0-100 score for platform fit"},
+          "suggestions": {"type": "array", "items": {"$ref": "#/components/schemas/QualitySuggestion"}},
+          "rewritten_hook": {"type": "string", "description": "Suggested replacement for the opening hook"}
         }
       },
       "AIPostmortemRequest": {

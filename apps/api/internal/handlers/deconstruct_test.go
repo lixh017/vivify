@@ -13,25 +13,25 @@ import (
 	"github.com/opc/api/internal/agents"
 )
 
-// setupDeconstructTestRouter wires the deconstruct handler with an
-// override-based Claude agent so each test can pin the response.
-func setupDeconstructTestRouter(t *testing.T, fn agents.CompleteFunc) *gin.Engine {
+// setupDeconstructTestRouter wires the deconstruct handler with a
+// MiniMax text-override so each test can pin the response.
+func setupDeconstructTestRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaudeWithOverride(fn)
+	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewDeconstructHandler(claude).RegisterRoutes(r)
+	NewDeconstructHandler(m).RegisterRoutes(r)
 	return r
 }
 
-// setupDeconstructDemoRouter wires the handler with an agent
-// constructed WITHOUT an API key so it defaults to demo mode.
+// setupDeconstructDemoRouter wires the handler with a MiniMax
+// client WITHOUT an API key so it defaults to demo mode.
 func setupDeconstructDemoRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaude("")
+	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewDeconstructHandler(claude).RegisterRoutes(r)
+	NewDeconstructHandler(m).RegisterRoutes(r)
 	return r
 }
 
@@ -81,9 +81,9 @@ func TestDeconstructDemoNoKey(t *testing.T) {
 // even when an API key is configured.
 func TestDeconstructForcedDemoWithKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	claude := agents.NewClaude("fake-key-for-tests")
+	m := agents.NewMiniMax("fake-key-for-tests")
 	r := gin.New()
-	NewDeconstructHandler(claude).RegisterRoutes(r)
+	NewDeconstructHandler(m).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/deconstruct?demo=true", map[string]any{
 		"transcript": "任意文本",
@@ -240,12 +240,12 @@ func TestDeconstructRejectsHugeTranscript(t *testing.T) {
 	}
 }
 
-// TestDeconstructHandlesNoAPIKey: a real Complete that returns
-// ErrNoAPIKey should surface as 503 (consistent with the rest of
-// the AI surface).
-func TestDeconstructHandlesNoAPIKey(t *testing.T) {
+// TestDeconstructHandlesUpstreamError: a MiniMax Text call that
+// returns an upstream error should surface as 503 (consistent with
+// the rest of the AI surface).
+func TestDeconstructHandlesUpstreamError(t *testing.T) {
 	r := setupDeconstructTestRouter(t, func(_ context.Context, _ string) (string, error) {
-		return "", fmt.Errorf("claude complete: %w", agents.ErrNoAPIKey)
+		return "", fmt.Errorf("minimax: simulated upstream error")
 	})
 	w := doJSON(t, r, http.MethodPost, "/ai/deconstruct", map[string]any{
 		"transcript": "text",
@@ -378,11 +378,11 @@ func TestViralFormulaRejectsHugeTranscript(t *testing.T) {
 	}
 }
 
-// TestViralFormulaHandlesNoAPIKey: ErrNoAPIKey through the live
-// path must surface as 503.
-func TestViralFormulaHandlesNoAPIKey(t *testing.T) {
+// TestViralFormulaHandlesUpstreamError: upstream errors through
+// the live path must surface as 503.
+func TestViralFormulaHandlesUpstreamError(t *testing.T) {
 	r := setupDeconstructTestRouter(t, func(_ context.Context, _ string) (string, error) {
-		return "", fmt.Errorf("claude complete: %w", agents.ErrNoAPIKey)
+		return "", fmt.Errorf("minimax: simulated upstream error")
 	})
 	w := doJSON(t, r, http.MethodPost, "/ai/viral-formula", map[string]any{
 		"transcript": "text",

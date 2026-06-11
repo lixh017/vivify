@@ -110,11 +110,12 @@ type batchResponse struct {
 }
 
 // BatchHandler exposes the batch endpoint. It reuses the
-// existing PipelineClient (topics + script + score + adapt) so
-// no new agent code is needed — the batch logic is a
-// concurrency shell over the same prompt builders.
+// same *agents.MiniMax (topics + script + score + adapt) as
+// the pipeline handler so no new agent code is needed — the
+// batch logic is a concurrency shell over the same prompt
+// builders.
 type BatchHandler struct {
-	claude PipelineClient
+	text   *agents.MiniMax
 	db     *gorm.DB
 	logger *slog.Logger
 }
@@ -123,12 +124,19 @@ type BatchHandler struct {
 // when auto_create_content_items is true; the rest of the
 // handler works without it. A nil logger falls back to
 // slog.Default().
-func NewBatchHandler(claude PipelineClient, db *gorm.DB) *BatchHandler {
+func NewBatchHandler(text *agents.MiniMax, db *gorm.DB) *BatchHandler {
+	l := slog.Default()
 	return &BatchHandler{
-		claude: claude,
+		text:   text,
 		db:     db,
-		logger: slog.Default(),
+		logger: l,
 	}
+}
+
+// shouldUseDemo mirrors AIHandler.shouldUseDemo. Duplicated
+// rather than shared so handlers stay decoupled.
+func (h *BatchHandler) shouldUseDemo(c *gin.Context) bool {
+	return isDemoRequest(c) || !h.text.Available()
 }
 
 // RegisterRoutes attaches the batch endpoint.
@@ -236,7 +244,7 @@ func (h *BatchHandler) RunBatch(c *gin.Context) {
 	// N copies so the count field in the response matches
 	// the caller's request, and we tag the response with
 	// X-Demo-Mode for frontend rendering.
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
+	if h.shouldUseDemo(c) {
 		markDemoResponse(c)
 		items := h.buildDemoBatch(req, steps, platforms, ragTitles)
 		c.JSON(http.StatusOK, h.summarize(items, ragTitles))
@@ -345,7 +353,7 @@ func (h *BatchHandler) runBatch(ctx context.Context, req batchRequest, steps, pl
 // already returned at the top level via batchResponse.KnowledgeUsed.
 func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform string, platforms, steps []string, ragContext string, _ []string) batchGeneratedItem {
 	res := batchGeneratedItem{}
-	topics, err := runBatchTopicsStep(ctx, h.claude, seed, sourcePlatform, ragContext, 1)
+	topics, err := runBatchTopicsStep(ctx, h.text, seed, sourcePlatform, ragContext, 1)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -368,7 +376,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 	// scriptContent is tracked across iterations of the steps
 	// loop so a caller that lists "script" twice (e.g. once to
 	// also force regeneration after a future flag) only pays for
-	// one Claude call. Today normalizeBatchSteps dedupes by
+	// one MiniMax call. Today normalizeBatchSteps dedupes by
 	// string, so this is a defensive no-op, but the variable
 	// keeps the loop correct if that policy ever relaxes.
 	var scriptContent string
@@ -381,7 +389,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 			if scriptContent != "" {
 				continue
 			}
-			s, err := runBatchScriptStep(ctx, h.claude, bt.generatedTopic, sourcePlatform, ragContext)
+			s, err := runBatchScriptStep(ctx, h.text, bt.generatedTopic, sourcePlatform, ragContext)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -393,7 +401,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 				res.Error = "score step requires a script"
 				return res
 			}
-			sc, err := runBatchScoreStep(ctx, h.claude, res.Script.Title, res.Script.Content, sourcePlatform)
+			sc, err := runBatchScoreStep(ctx, h.text, res.Script.Title, res.Script.Content, sourcePlatform)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -404,7 +412,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 				res.Error = "adapt step requires a script"
 				return res
 			}
-			a, err := runBatchAdaptStep(ctx, h.claude, res.Script.Title, bt.Angle, sourcePlatform, platforms)
+			a, err := runBatchAdaptStep(ctx, h.text, res.Script.Title, bt.Angle, sourcePlatform, platforms)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -457,12 +465,12 @@ func (h *BatchHandler) buildDemoBatch(req batchRequest, steps, platforms []strin
 
 // buildDemoOneTopic reuses the pipeline handler's demo path
 // shape so the demo data is identical between /ai/pipeline
-// and /ai/batch. We call the agent's DemoResponse directly
-// rather than instantiating a PipelineHandler because the
-// batch handler is not the pipeline handler's caller.
+// and /ai/batch. We call agents.DemoResponse directly rather
+// than instantiating a PipelineHandler because the batch
+// handler is not the pipeline handler's caller.
 func (h *BatchHandler) buildDemoOneTopic(steps, platforms []string) batchGeneratedItem {
 	res := batchGeneratedItem{}
-	topicRaw, _ := h.claude.DemoResponse(agents.DemoOpTopics, len(steps))
+	topicRaw, _ := agents.DemoResponse(agents.DemoOpTopics, len(steps))
 	topics, terr := parseTopics(topicRaw)
 	if terr != nil || len(topics) == 0 {
 		res.Error = "demo topics parse failed"
@@ -474,9 +482,9 @@ func (h *BatchHandler) buildDemoOneTopic(steps, platforms []string) batchGenerat
 		return res
 	}
 
-	scriptRaw, _ := h.claude.DemoResponse(agents.DemoOpHumanize, len(steps))
-	scoreRaw, _ := h.claude.DemoResponse(agents.DemoOpScore, len(scriptRaw))
-	adaptRaw, _ := h.claude.DemoResponse(agents.DemoOpPlatformAdapt, len(steps))
+	scriptRaw, _ := agents.DemoResponse(agents.DemoOpHumanize, len(steps))
+	scoreRaw, _ := agents.DemoResponse(agents.DemoOpScore, len(scriptRaw))
+	adaptRaw, _ := agents.DemoResponse(agents.DemoOpPlatformAdapt, len(steps))
 
 	for _, step := range steps {
 		switch step {
@@ -515,45 +523,44 @@ func (h *BatchHandler) buildDemoOneTopic(steps, platforms []string) batchGenerat
 // dependencies and we don't want to widen the public API just
 // for the batch endpoint to share step helpers.
 
-// runBatchTopicsStep calls the underlying PipelineClient to
-// generate a single topic for the batch. The count parameter
-// is reserved for a future "give me 3 ideas per slot" UX —
-// today we always ask for 1 because the batch is itself the
-// count parameter. rag is injected under the same banner the
-// pipeline uses.
-func runBatchTopicsStep(ctx context.Context, c PipelineClient, seed, platform, rag string, _ int) ([]generatedTopic, error) {
-	prompt := c.GenerateTopicsPrompt(seed, platform, 1)
+// runBatchTopicsStep calls MiniMax to generate a single topic
+// for the batch. The count parameter is reserved for a future
+// "give me 3 ideas per slot" UX — today we always ask for 1
+// because the batch is itself the count parameter. rag is
+// injected under the same banner the pipeline uses.
+func runBatchTopicsStep(ctx context.Context, m *agents.MiniMax, seed, platform, rag string, _ int) ([]generatedTopic, error) {
+	prompt := agents.GenerateTopicsPrompt(seed, platform, 1)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := c.Complete(cctx, prompt)
+	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, err
 	}
-	return parseTopics(raw)
+	return parseTopics(res.Text)
 }
 
-// runBatchScriptStep asks Claude to expand the topic into a
+// runBatchScriptStep asks MiniMax to expand the topic into a
 // full script. Mirrors the pipeline handler's step exactly so
 // the batch output is consistent with the per-call pipeline
 // output.
-func runBatchScriptStep(ctx context.Context, c PipelineClient, topic generatedTopic, platform, rag string) (*pipelineScript, error) {
+func runBatchScriptStep(ctx context.Context, m *agents.MiniMax, topic generatedTopic, platform, rag string) (*pipelineScript, error) {
 	seedScript := topic.Angle + "\n\n" + topic.Hook
-	prompt := c.HumanizeScriptPrompt(seedScript)
+	prompt := agents.HumanizeScriptPrompt(seedScript)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := c.Complete(cctx, prompt)
+	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, err
 	}
 	return &pipelineScript{
 		Title:   topic.Title,
-		Content: strings.TrimSpace(raw),
+		Content: strings.TrimSpace(res.Text),
 		Angle:   topic.Angle,
 		Topic:   topic.Title,
 	}, nil
@@ -562,16 +569,16 @@ func runBatchScriptStep(ctx context.Context, c PipelineClient, topic generatedTo
 // runBatchScoreStep evaluates the generated script on the
 // standard axes. On parse failure it falls back to the
 // rule-based scorer so the batch never returns a hard 502 for
-// a slightly off-shape Claude response.
-func runBatchScoreStep(ctx context.Context, c PipelineClient, title, script, platform string) (*qualityScoreResponse, error) {
-	prompt := c.ScoreContentPrompt(title, script, platform)
+// a slightly off-shape MiniMax response.
+func runBatchScoreStep(ctx context.Context, m *agents.MiniMax, title, script, platform string) (*qualityScoreResponse, error) {
+	prompt := agents.ScoreContentPrompt(title, script, platform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := c.Complete(cctx, prompt)
+	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, err
 	}
-	out, perr := parseQualityScore(raw)
+	out, perr := parseQualityScore(res.Text)
 	if perr != nil {
 		fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(title, script, platform))
 		if fbErr != nil {
@@ -582,20 +589,26 @@ func runBatchScoreStep(ctx context.Context, c PipelineClient, title, script, pla
 	return &out, nil
 }
 
-// runBatchAdaptStep asks Claude to produce per-platform
+// runBatchAdaptStep asks MiniMax to produce per-platform
 // versions. The platforms slice is the per-batch target list
 // (e.g. 抖音/哔哩哔哩/小红书); the sourcePlatform is the
-// platform the topic + script steps used.
-func runBatchAdaptStep(ctx context.Context, c PipelineClient, title, angle, sourcePlatform string, platforms []string) (*platformAdaptResponse, error) {
-	prompt := c.PlatformAdaptPrompt(title, angle, sourcePlatform)
-	_ = platforms // platforms are encoded into the prompt by the agent
+// platform the topic + script steps used. The platforms list is
+// appended as an explicit "TARGETS" line so the model gets a
+// stable, machine-checkable list of which platforms to emit
+// versions for — defends against drift when the canonical
+// default changes and a caller passes a non-default set.
+func runBatchAdaptStep(ctx context.Context, m *agents.MiniMax, title, angle, sourcePlatform string, platforms []string) (*platformAdaptResponse, error) {
+	prompt := agents.PlatformAdaptPrompt(title, angle, sourcePlatform)
+	if len(platforms) > 0 {
+		prompt = prompt + "\n\n## TARGETS (per-batch override)\n" + strings.Join(platforms, " / ")
+	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	raw, err := c.Complete(cctx, prompt)
+	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, err
 	}
-	out, perr := parsePlatformAdapt(raw)
+	out, perr := parsePlatformAdapt(res.Text)
 	if perr != nil {
 		return nil, perr
 	}

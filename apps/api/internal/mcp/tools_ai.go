@@ -6,15 +6,16 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/opc/api/internal/agents"
 	"github.com/opc/api/internal/models"
 )
 
-// toolGenerateTopics implements opc_generate_topics. Asks Claude
+// toolGenerateTopics implements opc_generate_topics. Asks MiniMax
 // for N differentiated topic ideas for the "熊猫" IP and returns
 // the raw model output as text.
 func (s *Server) toolGenerateTopics(ctx context.Context, in ToolInput) (*mcpsdk.CallToolResult, ToolOutput, error) {
-	if s.claude == nil {
-		return nil, ToolOutput{}, fmt.Errorf("claude agent not configured")
+	if s.text == nil {
+		return nil, ToolOutput{}, fmt.Errorf("text client not configured")
 	}
 	var payload struct {
 		Seed     string `json:"seed"`
@@ -27,19 +28,19 @@ func (s *Server) toolGenerateTopics(ctx context.Context, in ToolInput) (*mcpsdk.
 	if payload.Count <= 0 {
 		payload.Count = 5
 	}
-	prompt := s.claude.GenerateTopicsPrompt(payload.Seed, payload.Platform, payload.Count)
-	text, err := s.claude.Complete(ctx, prompt)
+	prompt := agents.GenerateTopicsPrompt(payload.Seed, payload.Platform, payload.Count)
+	res, err := s.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, ToolOutput{}, fmt.Errorf("generate topics: %w", err)
 	}
-	return &mcpsdk.CallToolResult{}, ToolOutput{Text: text}, nil
+	return &mcpsdk.CallToolResult{}, ToolOutput{Text: res.Text}, nil
 }
 
 // toolHumanizeScript implements opc_humanize_script. Loads the
-// target script, asks Claude to rewrite it so it does not feel
+// target script, asks MiniMax to rewrite it so it does not feel
 // AI-generated, and persists the rewritten content back to the DB.
 func (s *Server) toolHumanizeScript(ctx context.Context, in ToolInput) (*mcpsdk.CallToolResult, ToolOutput, error) {
-	if s.claude == nil || s.db == nil {
+	if s.text == nil || s.db == nil {
 		return nil, ToolOutput{}, fmt.Errorf("server not fully configured")
 	}
 	id, err := readID(in.Params, "script_id")
@@ -50,12 +51,12 @@ func (s *Server) toolHumanizeScript(ctx context.Context, in ToolInput) (*mcpsdk.
 	if err := s.db.WithContext(ctx).First(&sc, id).Error; err != nil {
 		return nil, ToolOutput{}, fmt.Errorf("load script: %w", err)
 	}
-	prompt := s.claude.HumanizeScriptPrompt(sc.Content)
-	rewritten, err := s.claude.Complete(ctx, prompt)
+	prompt := agents.HumanizeScriptPrompt(sc.Content)
+	res, err := s.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, ToolOutput{}, fmt.Errorf("humanize script: %w", err)
 	}
-	sc.Content = rewritten
+	sc.Content = res.Text
 	if err := s.db.WithContext(ctx).Save(&sc).Error; err != nil {
 		return nil, ToolOutput{}, fmt.Errorf("save humanized script: %w", err)
 	}
@@ -63,12 +64,12 @@ func (s *Server) toolHumanizeScript(ctx context.Context, in ToolInput) (*mcpsdk.
 }
 
 // toolDeconstructViral implements opc_deconstruct_viral. Asks
-// Claude to break down a viral piece of content (by URL or raw
+// MiniMax to break down a viral piece of content (by URL or raw
 // text) and returns a structured AnalysisResult that the 复盘
 // dashboard can render.
 func (s *Server) toolDeconstructViral(ctx context.Context, in ToolInput) (*mcpsdk.CallToolResult, ToolOutput, error) {
-	if s.claude == nil {
-		return nil, ToolOutput{}, fmt.Errorf("claude agent not configured")
+	if s.text == nil {
+		return nil, ToolOutput{}, fmt.Errorf("text client not configured")
 	}
 	var payload struct {
 		URL string `json:"url"`
@@ -81,10 +82,11 @@ func (s *Server) toolDeconstructViral(ctx context.Context, in ToolInput) (*mcpsd
 		return nil, ToolOutput{}, fmt.Errorf("either url or raw must be provided")
 	}
 	prompt := buildDeconstructPrompt(payload.URL, payload.Raw)
-	text, err := s.claude.Complete(ctx, prompt)
+	res, err := s.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
 		return nil, ToolOutput{}, fmt.Errorf("deconstruct viral: %w", err)
 	}
+	text := res.Text
 	return &mcpsdk.CallToolResult{}, ToolOutput{Analysis: &AnalysisResult{
 		Hook:        extractSection(text, "钩子"),
 		Structure:   extractSection(text, "结构"),

@@ -2,9 +2,9 @@
 //
 // The server is built on the official Go MCP SDK
 // (github.com/modelcontextprotocol/go-sdk) and exposes 10 tools over
-// the stdio transport so that MCP-compatible clients (e.g. Claude
+// the stdio transport so that MCP-compatible clients (e.g. Claude Code,
 // Code CLI) can drive the "熊猫" IP content pipeline. Handlers
-// delegate to GORM for persistence and to the agents.Claude agent
+// delegate to GORM for persistence and to the agents.MiniMax agent
 // for AI-assisted tasks (topic generation, humanization, viral
 // deconstruction).
 //
@@ -36,28 +36,28 @@ import (
 type toolHandler func(ctx context.Context, in ToolInput) (*mcpsdk.CallToolResult, ToolOutput, error)
 
 // Server wraps the official Go MCP SDK server with the OPC-specific
-// dependencies (GORM DB, Claude agent). It is the only public surface
-// the rest of the application needs to interact with MCP.
+// dependencies (GORM DB, MiniMax client). It is the only public
+// surface the rest of the application needs to interact with MCP.
 type Server struct {
-	sdk    *mcpsdk.Server
-	db     *gorm.DB
-	claude *agents.Claude
+	sdk  *mcpsdk.Server
+	db   *gorm.DB
+	text *agents.MiniMax
 }
 
 // NewServer constructs a fully-configured MCP server. Both db and
-// claude are required: every OPC tool depends on the GORM handle, and
+// text are required: every OPC tool depends on the GORM handle, and
 // the AI-backed tools (opc_generate_topics, opc_humanize_script,
-// opc_deconstruct_viral) additionally need the Claude agent. Use
-// NewRegistryServer for tests that only want to inspect the tool
-// list without invoking handlers.
-func NewServer(db *gorm.DB, claude *agents.Claude) (*Server, error) {
+// opc_deconstruct_viral) additionally need the MiniMax text client.
+// Use NewRegistryServer for tests that only want to inspect the
+// tool list without invoking handlers.
+func NewServer(db *gorm.DB, text *agents.MiniMax) (*Server, error) {
 	if db == nil {
 		return nil, fmt.Errorf("mcp: db is required")
 	}
-	if claude == nil {
-		return nil, fmt.Errorf("mcp: claude agent is required")
+	if text == nil {
+		return nil, fmt.Errorf("mcp: text client is required")
 	}
-	s := &Server{db: db, claude: claude}
+	s := &Server{db: db, text: text}
 	s.sdk = mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "opc-mcp",
 		Version: "v0.1.0",

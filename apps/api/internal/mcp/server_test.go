@@ -90,7 +90,7 @@ func newTestServer(t *testing.T) *Server {
 	if err := db.Migrate(gormDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	claude := agents.NewClaude("test-key")
+	claude := agents.NewMiniMax("test-key")
 	s, err := NewServer(gormDB, claude)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -248,8 +248,8 @@ func TestOpcHumanizeScriptRoundTrip(t *testing.T) {
 	if err := db.Migrate(gormDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	claude := agents.NewClaudeWithOverride(func(_ context.Context, _ string) (string, error) {
-		return "改写后的脚本：带停顿", nil
+	claude := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		return &agents.MiniMaxTextResult{Text: "改写后的脚本：带停顿"}, nil
 	})
 	s, err := NewServer(gormDB, claude)
 	if err != nil {
@@ -371,7 +371,9 @@ func TestServeStdioWiresSDK(t *testing.T) {
 // ---- constructor validation ------------------------------------------
 
 func TestNewServerRejectsNilDB(t *testing.T) {
-	claude := agents.NewClaudeWithOverride(func(_ context.Context, _ string) (string, error) { return "", nil })
+	claude := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		return &agents.MiniMaxTextResult{}, nil
+	})
 	_, err := NewServer(nil, claude)
 	if err == nil {
 		t.Error("expected error when db is nil")

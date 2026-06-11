@@ -11,36 +11,16 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/config"
 )
 
 // maxTranscriptBytes caps the size of the transcript a caller can
 // post to /ai/deconstruct or /ai/viral-formula. Hard cap so a
-// pasted novel cannot drive a Claude request that burns the entire
+// pasted novel cannot drive a MiniMax request that burns the entire
 // monthly budget on a single call. ~256 KiB is enough for ~80k
 // English words / ~50k Chinese chars — comfortably more than any
 // single short-form video transcript.
 const maxTranscriptBytes = 256 * 1024
-
-// DeconstructClient is the contract the deconstruct handler needs
-// from the Claude agent. Defined here (consumer side) so tests can
-// inject fakes without pulling in the Anthropic SDK. The set is
-// intentionally narrow: the two prompt builders plus the existing
-// demo-mode helpers.
-//
-// Note: the DemoResponse(op, seed) call uses agents.DemoOperation
-// because the demo pool is shared across the AI surface (topics,
-// quality scoring, deconstruct, viral formula). The constants
-// passable here are agents.DemoOpDeconstruct and
-// agents.DemoOpViralFormula — using the named constants at the
-// call sites makes the intent self-documenting (see
-// h.claude.DemoResponse(agents.DemoOpDeconstruct, ...) below).
-type DeconstructClient interface {
-	DeconstructPrompt(transcript string, meta agents.DeconstructMetadata) string
-	ViralFormulaPrompt(transcript string) string
-	Complete(ctx context.Context, prompt string) (string, error)
-	IsDemoMode(forceDemo bool) bool
-	DemoResponse(op agents.DemoOperation, seed int) (string, error)
-}
 
 // DeconstructHandler exposes the two OpusClip-style endpoints:
 //   - POST /ai/deconstruct      — break a video transcript into hook /
@@ -48,20 +28,29 @@ type DeconstructClient interface {
 //     reusable patterns
 //   - POST /ai/viral-formula    — extract a named, reusable formula
 //
-// Both follow the same demo/Claude split as the rest of the AI
-// surface: an unconfigured agent or ?demo=true short-circuits to
-// canned data, otherwise the prompt is sent to Claude and the
+// Both follow the same demo/MiniMax split as the rest of the AI
+// surface: an unconfigured client or ?demo=true short-circuits to
+// canned data, otherwise the prompt is sent to MiniMax and the
 // response is parsed.
 type DeconstructHandler struct {
-	claude DeconstructClient
+	text   *agents.MiniMax
 	logger *slog.Logger
 }
 
 // NewDeconstructHandler wires a DeconstructHandler. No DB dependency
 // — both endpoints are stateless (the transcript is posted in the
 // request body, not stored).
-func NewDeconstructHandler(claude DeconstructClient) *DeconstructHandler {
-	return &DeconstructHandler{claude: claude, logger: slog.Default()}
+func NewDeconstructHandler(text *agents.MiniMax) *DeconstructHandler {
+	return &DeconstructHandler{
+		text:   text,
+		logger: slog.Default(),
+	}
+}
+
+// shouldUseDemo mirrors AIHandler.shouldUseDemo. Duplicated rather
+// than shared so handlers stay decoupled.
+func (h *DeconstructHandler) shouldUseDemo(c *gin.Context) bool {
+	return isDemoRequest(c) || !h.text.Available()
 }
 
 // RegisterRoutes attaches the two endpoints under /ai.
@@ -92,7 +81,7 @@ type deconstructRequest struct {
 
 // hookBlock is one piece of the deconstruct response. The Type
 // field is intentionally a free string (rather than a sealed enum)
-// so a future Claude response with a new hook category does not
+// so a future MiniMax response with a new hook category does not
 // break the parser; the frontend renders whatever comes back.
 type hookBlock struct {
 	Type     string `json:"type"`
@@ -162,7 +151,7 @@ type deconstructResponse struct {
 //
 // 400:  invalid body / empty transcript / transcript too large
 // 502:  Claude returned output that could not be parsed
-// 503:  Claude is not configured (no API key) and no demo flag
+// 503:  MiniMax is not configured (no API key) and no demo flag
 func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 	var req deconstructRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -185,8 +174,8 @@ func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 	// same input gets the same output during a demo, but the
 	// operator can re-run with different transcripts to rotate
 	// through the pool when we add more entries.
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
-		raw, _ := h.claude.DemoResponse(agents.DemoOpDeconstruct, len(req.Transcript))
+	if h.shouldUseDemo(c) {
+		raw, _ := agents.DemoResponse(agents.DemoOpDeconstruct, len(req.Transcript))
 		out, err := parseDeconstruct(raw)
 		if err != nil {
 			h.logger.Error("deconstruct demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -204,26 +193,20 @@ func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 		Views:       req.Metadata.Views,
 		Likes:       req.Metadata.Likes,
 	}
-	prompt := h.claude.DeconstructPrompt(req.Transcript, meta)
+	prompt := agents.DeconstructPrompt(req.Transcript, meta)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	raw, err := h.claude.Complete(ctx, prompt)
+	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		if errors.Is(err, agents.ErrNoAPIKey) {
-			h.logger.Warn("deconstruct: no API key configured", "request_id", c.GetString("request_id"))
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
-			})
-			return
-		}
-		h.logger.Error("deconstruct complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		h.logger.Error("deconstruct text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
+	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
 
-	out, err := parseDeconstruct(raw)
+	out, err := parseDeconstruct(res.Text)
 	if err != nil {
 		h.logger.Error("deconstruct parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})
@@ -232,7 +215,7 @@ func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// parseDeconstruct extracts a deconstructResponse from a raw Claude
+// parseDeconstruct extracts a deconstructResponse from a raw MiniMax
 // response. Same lenient fence-stripping approach as the other
 // parsers in the package: strip a single ```json ... ``` wrapper,
 // then locate the first JSON object, then unmarshal.
@@ -305,7 +288,7 @@ type viralFormulaResponse struct {
 // 200:  {formula_name, variables, steps, example_application, variations}
 // 400:  invalid body / empty transcript / transcript too large
 // 502:  Claude returned output that could not be parsed
-// 503:  Claude is not configured (no API key) and no demo flag
+// 503:  MiniMax is not configured (no API key) and no demo flag
 func (h *DeconstructHandler) ViralFormula(c *gin.Context) {
 	var req viralFormulaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -323,8 +306,8 @@ func (h *DeconstructHandler) ViralFormula(c *gin.Context) {
 		return
 	}
 
-	if h.claude.IsDemoMode(isDemoRequest(c)) {
-		raw, _ := h.claude.DemoResponse(agents.DemoOpViralFormula, len(req.Transcript))
+	if h.shouldUseDemo(c) {
+		raw, _ := agents.DemoResponse(agents.DemoOpViralFormula, len(req.Transcript))
 		out, err := parseViralFormula(raw)
 		if err != nil {
 			h.logger.Error("viral-formula demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
@@ -336,26 +319,20 @@ func (h *DeconstructHandler) ViralFormula(c *gin.Context) {
 		return
 	}
 
-	prompt := h.claude.ViralFormulaPrompt(req.Transcript)
+	prompt := agents.ViralFormulaPrompt(req.Transcript)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	raw, err := h.claude.Complete(ctx, prompt)
+	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
 	if err != nil {
-		if errors.Is(err, agents.ErrNoAPIKey) {
-			h.logger.Warn("viral-formula: no API key configured", "request_id", c.GetString("request_id"))
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error": "AI service unavailable: ANTHROPIC_API_KEY not configured on the server",
-			})
-			return
-		}
-		h.logger.Error("viral-formula complete failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		h.logger.Error("viral-formula text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
+	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
 
-	out, err := parseViralFormula(raw)
+	out, err := parseViralFormula(res.Text)
 	if err != nil {
 		h.logger.Error("viral-formula parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})

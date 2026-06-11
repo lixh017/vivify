@@ -238,13 +238,14 @@ func TestAuthLogoutClearsCookie(t *testing.T) {
 	}
 }
 
-// TestAuthRegisterDisabled confirms the default behavior: even with a
-// valid body, the endpoint returns 403 because REGISTRATION_ENABLED
-// is unset.
+// TestAuthRegisterDisabled confirms the opt-out behavior: even with a
+// valid body, the endpoint returns 403 when REGISTRATION_ENABLED is
+// explicitly set to a falsy value ("0" in this case). The default
+// (unset / empty) is now enabled — see TestAuthRegisterEnabled.
 func TestAuthRegisterDisabled(t *testing.T) {
 	r, _ := newAuthTestRouter(t)
-	// Make sure the env var is not set for this test.
-	t.Setenv("REGISTRATION_ENABLED", "")
+	// Explicitly disable registration for this test.
+	t.Setenv("REGISTRATION_ENABLED", "0")
 
 	w := doJSON(t, r, http.MethodPost, "/api/auth/register", map[string]any{
 		"email":    "dave@example.com",
