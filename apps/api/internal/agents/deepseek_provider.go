@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // DeepSeekProvider implements the Provider interface using the
@@ -191,7 +190,3 @@ func truncateForError(raw []byte, n int) string {
 // Compile-time assertion that we still satisfy the Provider
 // interface — catches accidental method-set drift at build time.
 var _ Provider = (*DeepSeekProvider)(nil)
-
-// Sanity sentinel: ensure HTTP timeout fallback uses package default
-// so changing one place doesn't silently desync the rest.
-var _ = time.Duration(DefaultProviderTimeout)

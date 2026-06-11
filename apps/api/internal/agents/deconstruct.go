@@ -42,7 +42,7 @@ type DeconstructMetadata struct {
 // reasoning scaffolding, edit prompts.go; reserve edits to this
 // function for the task spec itself (sampling, beat shape,
 // output fields).
-func (c *Claude) DeconstructPrompt(transcript string, meta DeconstructMetadata) string {
+func DeconstructPrompt(transcript string, meta DeconstructMetadata) string {
 	return fmt.Sprintf(
 		`%s
 
@@ -137,7 +137,7 @@ func (c *Claude) DeconstructPrompt(transcript string, meta DeconstructMetadata) 
 // extract a reusable, named formula from a single video transcript.
 // The new version asks for variables with weight + application
 // steps, and a worked example for the canonical "哲学三问开场法".
-func (c *Claude) ViralFormulaPrompt(transcript string) string {
+func ViralFormulaPrompt(transcript string) string {
 	return fmt.Sprintf(
 		`%s
 

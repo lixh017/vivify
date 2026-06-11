@@ -336,20 +336,11 @@ func TestProvidersDeterministicOrder(t *testing.T) {
 	}
 }
 
-// TestClaudeProviderUnavailableReturnsSentinel locks the dev-mode
-// contract: an empty API key must surface ErrProviderUnavailable
-// (not panic, not silently succeed).
-func TestClaudeProviderUnavailableReturnsSentinel(t *testing.T) {
-	t.Parallel()
-	p := NewClaudeProvider("")
-	if p.Available() {
-		t.Error("Available() must be false for empty key")
-	}
-	_, err := p.Complete(context.Background(), "x", CompleteOptions{})
-	if err == nil || !errors.Is(err, ErrProviderUnavailable) {
-		t.Errorf("err = %v, want wraps ErrProviderUnavailable", err)
-	}
-}
+// TestClaudeProviderUnavailableReturnsSentinel was removed in
+// Phase 4: the ClaudeProvider shim (and the *Claude struct it
+// adapted) is gone. The router now uses MiniMax / DeepSeek /
+// Gemini providers only. Equivalent coverage of the dev-mode
+// unavailable sentinel lives on the surviving providers.
 
 // TestDeepSeekProviderHappyPath uses a httptest.Server to verify
 // the request shape (model + messages) and parse the response. We

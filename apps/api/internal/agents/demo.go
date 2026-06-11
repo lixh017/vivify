@@ -33,21 +33,12 @@ const (
 	DemoOpViralFormula DemoOperation = "viral_formula"
 )
 
-// IsDemoMode reports whether the Claude agent should be served from
-// canned data — either because no API key was configured at
-// construction time, or because the caller explicitly asked
-// (e.g. ?demo=true on a request). The handler combines the two via
-// a single boolean to keep the call sites short.
-func (c *Claude) IsDemoMode(forceDemo bool) bool {
-	return forceDemo || !c.keyConfigured
-}
-
-// KeyConfigured reports whether the agent was constructed with a
-// non-empty API key. The handler uses this to decide whether to
-// fall back to demo mode automatically.
-func (c *Claude) KeyConfigured() bool {
-	return c.keyConfigured
-}
+// IsDemoMode / KeyConfigured were *Claude method shims that lived
+// here before the Phase-4 MiniMax migration. The new world has
+// no legacy Claude shim — handlers use MiniMax.Available() + the
+// isDemoRequest query param directly — so these helpers have been
+// removed. The shouldUseDemo methods on each handler replicate
+// the combined check (forceDemo || !Available) in one line.
 
 // DemoResponse returns the pre-canned response for the given
 // operation. It never errors — the data is compiled into the
@@ -58,7 +49,12 @@ func (c *Claude) KeyConfigured() bool {
 // returned across multiple calls; pass 0 if you do not care. For
 // the topics op there is only one canned array, so the seed is
 // ignored.
-func (c *Claude) DemoResponse(op DemoOperation, seed int) (string, error) {
+//
+// Package-level function (not a method) so handlers can call it
+// without the legacy Claude shim. The (c *Claude) method form
+// below is preserved as a thin shim for any leftover test code
+// that still constructs a Claude for demo data only.
+func DemoResponse(op DemoOperation, seed int) (string, error) {
 	switch op {
 	case DemoOpTopics:
 		return DemoTopicsJSON, nil
