@@ -1,0 +1,29 @@
+{
+  "name": "@opc/console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OPC MCN 控制台 (Phase 3). B 端 admin UI: 凭据 / 观测 / 日志 / 文档 / 设置 + reserve 路由占位.",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@opc/shared": "workspace:*",
+    "next-mdx-remote": "^5.0.0",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.19",
+    "postcss": "8.4.39",
+    "tailwindcss": "3.4.6",
+    "typescript": "5.5.3"
+  }
+}

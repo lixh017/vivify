@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  height: 100%;
+  background: #faf9f5;
+  color: #141413;
+}
+
+/*
+ * opc-prose — hand-rolled typographic styles for MDX content
+ * rendered on /docs/operations/[slug]. We don't ship
+ * @tailwindcss/typography, so this layer applies the same
+ * hierarchy and rhythm a "prose" plugin would, but aligned
+ * to the console's claude-* design tokens. Scoped under the
+ * `.opc-prose` class to keep it from leaking into the rest
+ * of the console.
+ */
+@layer components {
+  .opc-prose {
+    @apply text-sm leading-relaxed text-claude-body;
+  }
+  .opc-prose h1 {
+    @apply text-2xl font-medium text-claude-ink mt-8 mb-4 first:mt-0;
+  }
+  .opc-prose h2 {
+    @apply text-lg font-medium text-claude-ink mt-8 mb-3 pb-2 border-b border-claude-hairline;
+  }
+  .opc-prose h3 {
+    @apply text-base font-medium text-claude-ink mt-6 mb-2;
+  }
+  .opc-prose h4 {
+    @apply text-sm font-medium text-claude-ink mt-4 mb-1.5;
+  }
+  .opc-prose p {
+    @apply my-3;
+  }
+  .opc-prose a {
+    @apply text-claude-coral hover:underline;
+  }
+  .opc-prose strong {
+    @apply text-claude-ink font-medium;
+  }
+  .opc-prose em {
+    @apply text-claude-ink;
+  }
+  .opc-prose ul {
+    @apply list-disc pl-6 my-3 space-y-1.5;
+  }
+  .opc-prose ol {
+    @apply list-decimal pl-6 my-3 space-y-1.5;
+  }
+  .opc-prose li {
+    @apply my-0;
+  }
+  .opc-prose li > p {
+    @apply my-0;
+  }
+  .opc-prose code {
+    @apply font-mono text-[0.85em] px-1.5 py-0.5 bg-claude-surface-soft text-claude-ink rounded;
+  }
+  .opc-prose pre {
+    @apply bg-claude-surface-soft border border-claude-hairline rounded-md p-4 my-4 overflow-x-auto;
+  }
+  .opc-prose pre code {
+    @apply bg-transparent p-0 text-xs text-claude-ink;
+  }
+  .opc-prose blockquote {
+    @apply border-l-2 border-claude-hairline pl-4 my-4 text-claude-muted italic;
+  }
+  .opc-prose table {
+    @apply w-full text-sm my-4 border border-claude-hairline rounded-md overflow-hidden;
+  }
+  .opc-prose thead {
+    @apply bg-claude-surface-soft;
+  }
+  .opc-prose th {
+    @apply text-left text-xs font-medium text-claude-muted px-3 py-2 border-b border-claude-hairline;
+  }
+  .opc-prose td {
+    @apply px-3 py-2 border-b border-claude-hairline last:border-b-0 align-top;
+  }
+  .opc-prose hr {
+    @apply my-6 border-claude-hairline;
+  }
+}

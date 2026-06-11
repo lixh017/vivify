@@ -1,0 +1,18 @@
+{
+  "name": "opc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OPC monorepo root (Phase 3: MCN console + shared layer).",
+  "scripts": {
+    "demo:dev": "pnpm --filter @opc/web dev",
+    "demo:build": "pnpm --filter @opc/web build",
+    "console:dev": "pnpm --filter @opc/console dev",
+    "console:build": "pnpm --filter @opc/console build",
+    "shared:build": "pnpm --filter @opc/shared build",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
