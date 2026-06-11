@@ -1,0 +1,10 @@
+{
+  "version": "xianyun_v1",
+  "name": "纤云",
+  "type": "costume",
+  "era": "唐代",
+  "role": "侠女",
+  "costume_layer": ["襦裙", "披帛", "绣花鞋"],
+  "prop_kit": ["长剑", "酒壶", "书卷"],
+  "palette": ["朱红#C73E1D", "鹅黄#F5DEB3", "黛绿#2F4F4F"]
+}
