@@ -21,42 +21,39 @@ the same commit.
 
 ## 1. First-time user bootstrap
 
-`POST /api/auth/register` is **off by default**. The first admin
-must be created out-of-band. The supported out-of-band path is a
-small one-shot CLI that lives in `apps/api/cmd/seeduser` (added in
-the same slice as this runbook).
+`POST /api/auth/register` is **open by default** (post-G9 closure).
+The first user can be created with a single `curl` call against
+the running API — no separate CLI binary is required.
 
-```text
-# Build the API binary as usual, then:
-./bin/opc-api seeduser \
-    --email admin@example.com \
-    --name "Admin" \
-    --password '<initial password>'
-
-# Or via the docker compose stack:
-docker compose run --rm api seeduser \
-    --email admin@example.com \
-    --name "Admin" \
-    --password '<initial password>'
+```bash
+# Start the API (see README "Build options" for the build command), then:
+curl -X POST http://localhost:8080/api/auth/register \
+    -H "Content-Type: application/json" \
+    -d '{"email":"admin@example.com","password":"changeme","name":"Admin"}' \
+    -c cookies.txt
 ```
 
-The CLI is intentionally minimal: it opens the same SQLite DB the
-server uses, calls `auth.HashPassword` exactly like the handler
-would, and inserts a single `users` row. There is no flag to skip
-the password prompt — passwords are not echoed.
+The endpoint hashes the password via `auth.HashPassword` and
+inserts a single `users` row, exactly the same way a UI sign-up
+form would. No special privileges or admin token are needed for
+this first call.
 
 After the first user exists you have two options:
 
-- **Open registration** by setting `REGISTRATION_ENABLED=1` in the
-  API container's environment. `/api/auth/register` becomes
-  callable from the login page's "Sign up" link (a follow-up UI
-  slice).
-- **Keep registration closed** and create every additional user via
-  the same `seeduser` CLI.
+- **Leave registration open** (the default). The
+  `/api/auth/register` endpoint stays callable for additional
+  self-service sign-ups. The login page's "Sign up" link lands on
+  this endpoint.
+- **Close registration in production** by setting
+  `REGISTRATION_ENABLED=0` in the API container's environment
+  (`envBoolDefaultTrue`: only falsy env values opt out; unset /
+  `1` / `true` / `yes` / `on` all keep it open).
 
-We default to closed because the spec calls out that the system
-has no first-run user flow of its own; the CLI is the only safe
-way to land an admin before the first login UI is built.
+We default to open because the spec calls out that the system has
+no first-run user flow of its own; the open endpoint is the
+shortest path to a working login UI. Production deployments should
+flip `REGISTRATION_ENABLED=0` once the initial user set is in
+place.
 
 ---
 
@@ -79,7 +76,7 @@ options are:
 ### 2a. Claim every pre-Phase-2 row under the first admin
 
 ```sql
--- Run once, after the first admin has been created via `seeduser`.
+-- Run once, after the first admin has registered (see section 1).
 -- Replace <ADMIN_USER_ID> with the value of users.id for the admin.
 UPDATE topics          SET user_id = <ADMIN_USER_ID> WHERE user_id = 0;
 UPDATE scripts         SET user_id = <ADMIN_USER_ID> WHERE user_id = 0;
@@ -185,6 +182,7 @@ before Phase 2 ships to other environments:
   `apps/api/internal/auth/` (password + session helpers).
 - Web UI: `apps/web/app/login/page.tsx`, `apps/web/lib/api.ts`
   (auth namespace), `apps/web/app/NavBar.tsx` (logout button).
-- Env vars: `REGISTRATION_ENABLED`, `OPC_INSECURE_COOKIES`
-  (see `.env.example`).
+- Env vars: `REGISTRATION_ENABLED` (default open; set `0` to close),
+  `OPC_INSECURE_COOKIES` (default off; set `1` for plain-HTTP dev
+  / k6 loadtest). See `.env.example`.
 - Tests: `apps/api/internal/handlers/auth_test.go`.

@@ -23,12 +23,16 @@ Phase 1：跑"熊猫"AI IP + 5 页面 web UI MVP（内部用）+ MCP server。
 后端默认 build 不包含 FTS5（知识库全文搜索）。要启用：
 
 ```bash
-# 启用 FTS5（带搜索功能）
-cd apps/api && go build -tags fts5 -o opc-api ./cmd/server
+# 启用 FTS5（带搜索功能）—— 输出到 apps/bin/opc-api
+cd apps/api && go build -tags fts5 -o ../bin/opc-api ./cmd/server
 
 # 不启用 FTS5（更小的二进制，知识库只能按标题/类型过滤）
-cd apps/api && go build -o opc-api ./cmd/server
+cd apps/api && go build -o ../bin/opc-api ./cmd/server
 ```
+
+构建产物在 monorepo 布局下统一写到 `apps/bin/`：API 服务在
+`apps/bin/opc-api`，asset CLI 在 `apps/bin/opc-asset`（通过
+`make asset` 构建）。
 
 测试同理：`go test -tags fts5 ./...`
 

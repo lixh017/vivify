@@ -1,0 +1,35 @@
+
+=== gate-pretool.test.js ===
+  ✓ unprotected file → exit 0
+  ✓ SKILL.md path triggers gate
+  ✗ settings.json with hardcoded token → exit 1: exit code should be 1
+
+2 passed, 1 failed
+
+=== harness-audit.test.js ===
+  ✓ runs on ~/.claude (should be >= 80% post-cleanup)
+  ✓ reports all 7 categories
+  ✓ hooks scope returns smaller score
+
+3 passed, 0 failed
+
+=== skill-quality.test.js ===
+  ✓ runs without crashing on ~/.claude/skills
+  ✓ handles empty skills dir
+  ✓ handles nonexistent dir gracefully
+
+3 passed, 0 failed
+
+=== validate-settings.test.js ===
+  ✓ flags hardcoded real token
+  ✓ env-var reference passes
+  ✓ flags JSON parse error
+
+3 passed, 0 failed
+
+========================================
+Tests: 3 files passed, 1 files failed
+
+Failures:
+  gate-pretool.test.js: exit 1
+    stderr: 

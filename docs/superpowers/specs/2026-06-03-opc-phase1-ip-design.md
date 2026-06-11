@@ -551,9 +551,44 @@ mcp__opc__deconstruct_viral(url) → Analysis           // 拆爆款
 任何新功能提议，先过 4.10.1 三条标准。**避免"我们也能做"的诱惑**——尤其在以下场景：
 - 看到竞品有 X 功能 → 不等于我们要做
 - "反正团队有 Go 经验" → 不等于要自建
-- "Notion 用着也行" → 不代表它是终局
+- "Notion 用着还行" → 不代表它是终局
 
-#### 4.10.4 跟 Phase 2/3 的关系
+#### 4.10.4 工具栈版本快照（2026/06 v2 refresh）
+
+> 原始 §27 + §206 列的"可灵/即梦/剪映/Suno"是 2026/03 的判断。**真实能用的能力 6 月已更新**，否则按文档做事会用过时模型。
+
+| 能力层 | 主力 | Fallback | 状态 (2026/06) | API | 备注 |
+|--------|------|----------|---------------|-----|------|
+| **LLM（脚本/拆解/复盘）** | Claude Opus 4.7 (2026/04) | Sonnet 4.6, Haiku 4.5 | ✅ GA | Anthropic SDK | 编程 +13%, 定价不变 |
+| **视频 ≤10s 角色** | 火山引擎 **Seedance 2.0** (2026/04 公测) | 可灵 Kling 3.0 std (¥0.5/秒) | ✅ GA, 火山按需付费 | OpenAI 兼容 Ark | 国内按需付费, 比可灵订阅灵活 |
+| **视频 10-30s 长剧情** | Seedance 2.0 (≤15s) | 可灵 Kling 3.0 pro (¥2.0/秒) | ✅ GA | 同上 | Seedance 多镜头叙事 + 音画同步 |
+| **图像（封面/9图/关键帧）** | 火山 **Jimeng 4.5** (Seedream 3.0) | manual-pending | ✅ GA, 中文 SOTA | OpenAI 兼容 Ark | 追平 GPT-4o, 2K 直出 |
+| **BGM（治愈/国潮/哲学）** | **Suno v5.5** (chirp-v5-5) | manual-pending | ✅ GA, 2026/03 | Suno 自有协议 | 自定义人声克隆 |
+| **配音（中文情感）** | **火山 TTS** | manual-pending | ✅ GA, 国内便宜 | 火山 TTS | ElevenLabs 翻墙贵, 不接 |
+| **MCP 协议** | **MCP 2025-06-18** | — | ✅ Industry standard | Anthropic 主导开源 | 已被 Claude/Cursor/Cody 集成 |
+| **国内 fallback 链** | 即梦→火山 TTS→Udio | 视频 Kling 3.0 Omni | — | — | 单 key 多 model (Ark 一账号覆盖 3 个) |
+
+**剔除（v1 文档提到但 v2 不接）**:
+- Sora 2（Azure 翻墙 + 月度订阅）
+- MidJourney v7（无官方 API）
+- ElevenLabs（同 Sora, 翻墙）
+- DALL·E 3（中文弱 + Jimeng 替代）
+- Flux（国外访问慢）
+- Doubao LLM（Claude 4.7 已足够, Doubao 仅作备选）
+
+**v3 候选（等 opc 月收入到 ¥1 万）**:
+- Sora 2 via Azure（高质量 fallback）
+- MidJourney v7（写实人像）
+- Volcengine Doubao LLM（国内 LLM 备）
+
+**预算估算** (30 视频/月):
+- 火山 Ark: ¥120 (Seedance + Jimeng)
+- 可灵订阅: ¥30 + 视频补充 ¥50 = ¥80
+- Suno: ¥0 (免费额度)
+- 火山 TTS: ¥5
+- **总计 ~¥205/月** (在 ¥4-7 万预算的 0.3% 以内)
+
+#### 4.10.5 跟 Phase 2/3 的关系
 
 - **Phase 2**：自建范围扩大（多用户/认证/订阅/支付等）
 - **Phase 3**：可能引入更多合作（agent 交易平台、与 MCN/品牌方对接）

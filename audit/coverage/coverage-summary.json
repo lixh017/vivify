@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-06-06",
+  "summary": {
+    "test_files": 4,
+    "tests_run": 12,
+    "pass_rate": "see test-results.txt"
+  },
+  "files_under_test": [
+    "skill-quality.js",
+    "validate-settings.js",
+    "gate-pretool.js",
+    "harness-audit.js"
+  ],
+  "run_with": "node tests/runner.js"
+}
