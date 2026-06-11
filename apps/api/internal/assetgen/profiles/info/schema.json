@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "name", "type", "newsroom_style", "host_persona", "font_tone", "accent_color", "background_color"],
+  "properties": {
+    "version": { "type": "string" },
+    "name": { "type": "string" },
+    "type": { "const": "info" },
+    "newsroom_style": { "type": "string" },
+    "host_persona": { "type": "string" },
+    "font_tone": { "type": "string" },
+    "accent_color": { "type": "string" },
+    "background_color": { "type": "string" }
+  }
+}

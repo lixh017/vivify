@@ -1,0 +1,10 @@
+{
+  "version": "opc_daily_v1",
+  "name": "OPC 每日资讯",
+  "type": "info",
+  "newsroom_style": "演播室双主播",
+  "host_persona": "主播阿橙",
+  "font_tone": "黑体加粗, 暖色字幕",
+  "accent_color": "宝蓝#1F5FA8",
+  "background_color": "rgb(245,240,225)"
+}
