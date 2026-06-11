@@ -1,0 +1,13 @@
+{
+  "version": "lina_v1",
+  "name": "莉娜",
+  "type": "digital_human",
+  "age": 28,
+  "gender": "female",
+  "ethnicity": "东亚",
+  "face_shape": "鹅蛋脸",
+  "hair_style": "黑色长发披肩",
+  "voice_tone": "温柔知性, 普通话",
+  "skin_tone": "rgb(245,228,210)",
+  "accent_color": "宝蓝#1F5FA8"
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "name", "type", "age", "gender", "ethnicity", "face_shape", "hair_style", "voice_tone", "skin_tone", "accent_color"],
+  "properties": {
+    "version": { "type": "string" },
+    "name": { "type": "string" },
+    "type": { "const": "digital_human" },
+    "age": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "gender": { "enum": ["female", "male", "nonbinary"] },
+    "ethnicity": { "type": "string" },
+    "face_shape": { "type": "string" },
+    "hair_style": { "type": "string" },
+    "voice_tone": { "type": "string" },
+    "skin_tone": { "type": "string" },
+    "accent_color": { "type": "string" }
+  }
+}
