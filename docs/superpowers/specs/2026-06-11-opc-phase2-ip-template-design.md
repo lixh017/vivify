@@ -246,6 +246,13 @@ func GetProfile(version string) *Profile {
 
 `type` 字段是 discriminator，loader 启动期反序列化时按它路由到对应 sub-schema 验证。
 
+> **术语消歧**（避免命名冲突）：spec 中 "type" 出现 3 处，含义不同——
+> 1. JSON profile 的 `"type"` 字段：IP 类型 discriminator（4 选 1）
+> 2. `Profile.Type()` 方法：返回同上 string（reader-friendly）
+> 3. `AssetType` const（`TypeImage` / `TypeVideo`）：输出类型（image vs video）
+>
+> 实现期 code review 时如发现 "type" 单独出现而无上下文，应在 PR 描述里点明指哪个。
+
 ### 7.2 4 套子 schema 字段设计
 
 #### 7.2.1 `anthropomorphic`（panda 续）
@@ -382,6 +389,9 @@ func ConsistencyCheck(p Profile, prompt string) ConsistencyResult {
 }
 
 func safeCheck(fn ConsistencyFn, p Profile, prompt string) (result ConsistencyResult) {
+    if p == nil {
+        return ConsistencyResult{Score: 0, Fails: []string{"nil profile"}}
+    }
     defer func() {
         if r := recover(); r != nil {
             result = ConsistencyResult{Score: 0, Fails: []string{fmt.Sprintf("check panic: %v", r)}}
