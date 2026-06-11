@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState, FormEvent } from 'react'
-import { api } from '@/lib/api'
-import type { KnowledgeDoc, IpTemplate } from '@/lib/types'
+import { api } from '@opc/shared/api'
+import type { KnowledgeDoc, IpTemplate } from '@opc/shared/types'
 import type {
   ExportType,
   ImportType,
   ImportResult,
-} from '@/lib/api'
-import { useT } from '@/lib/i18n-client'
+} from '@opc/shared/api'
+import { useT } from '@opc/shared/i18n-client'
 import { KnowledgeDeconstructPanel } from './KnowledgeDeconstructPanel'
 
 // Canonical doc type vocabulary mirroring the backend's allowedDocTypes

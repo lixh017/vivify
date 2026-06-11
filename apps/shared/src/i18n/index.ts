@@ -14,7 +14,7 @@
 // recommended shape everywhere else.
 
 import { cookies } from 'next/headers'
-import { t as tWithLocale, getCatalog as getCatalogImpl } from './i18n-lookup'
+import { t as tWithLocale, getCatalog as getCatalogImpl } from './lookup'
 import {
   LOCALE_COOKIE,
   DEFAULT_LOCALE,
@@ -24,10 +24,10 @@ import {
   LOCALE_COOKIE_PATH,
   type Locale,
   type TranslationKey,
-} from './i18n-types'
+} from './types'
 
 // Re-export the public surface so existing server-side call sites
-// (`import { ... } from '@/lib/i18n'`) keep working.
+// (`import { ... } from '@opc/shared/i18n'`) keep working.
 export {
   LOCALE_COOKIE,
   DEFAULT_LOCALE,
@@ -37,8 +37,8 @@ export {
   LOCALE_COOKIE_PATH,
   type Locale,
   type TranslationKey,
-} from './i18n-types'
-export { getCatalog } from './i18n-lookup'
+} from './types'
+export { getCatalog } from './lookup'
 
 // isLocale narrows a string to a Locale. Used after reading the cookie
 // or parsing the Accept-Language header, both of which are untyped.

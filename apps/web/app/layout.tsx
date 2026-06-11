@@ -1,7 +1,7 @@
 import './globals.css'
 import type { Metadata } from 'next'
 import NavBar from './NavBar'
-import { getLocale } from '@/lib/i18n'
+import { getLocale } from '@opc/shared/i18n'
 
 export const metadata: Metadata = {
   title: 'OPC',

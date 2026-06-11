@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, FormEvent } from 'react'
-import { api, type PublishChecklist, type PublishCheckStatus } from '@/lib/api'
-import type { ContentItem, UpdateContentItemPatch } from '@/lib/types'
-import { useT } from '@/lib/i18n-client'
+import { api, type PublishChecklist, type PublishCheckStatus } from '@opc/shared/api'
+import type { ContentItem, UpdateContentItemPatch } from '@opc/shared/types'
+import { useT } from '@opc/shared/i18n-client'
 
 // Canonical platform vocabulary mirroring the backend's allowedPlatforms
 // set. Wire values; the surrounding chrome is rendered via i18n.

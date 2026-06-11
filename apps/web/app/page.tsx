@@ -2,10 +2,10 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import ScrollToFeaturesLink from './ScrollToFeaturesLink'
-import { useT } from '@/lib/i18n-client'
-import { api } from '@/lib/api'
-import type { PipelineResult, QualitySuggestion } from '@/lib/api'
-import { useModalA11y } from '@/lib/use-modal'
+import { useT } from '@opc/shared/i18n-client'
+import { api } from '@opc/shared/api'
+import type { PipelineResult, QualitySuggestion } from '@opc/shared/api'
+import { useModalA11y } from '@opc/shared/hooks/use-modal'
 
 interface FeatureCard {
   href: string

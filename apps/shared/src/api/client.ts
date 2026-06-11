@@ -16,7 +16,16 @@ import type {
   UpdateContentItemPatch,
   IpTemplate,
   AuthUser,
-} from './types'
+  Credential,
+  CreateCredentialInput,
+  RotateCredentialInput,
+  CredentialListResponse,
+  CallLog,
+  CallLogStatus,
+  LogsListParams,
+  LogsListResponse,
+  BillingSummary,
+} from '../types'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || ''
 
@@ -370,6 +379,152 @@ export const api = {
     // and redirect to /login.
     me: () => request<{ user: AuthUser }>('/auth/me'),
   },
+  credentials: {
+    // list returns every credential owned by the caller (newest
+    // first). The encrypted_key column is server-omitted; the
+    // returned Credential objects carry only metadata. The 200
+    // response is wrapped in {items, total} for forward-compat
+    // with future limit/offset params.
+    list: () => request<CredentialListResponse>('/credentials'),
+    // create stores a new API key. plaintext_key is encrypted
+    // server-side (AES-GCM) and never echoed back; the response
+    // is the metadata of the newly inserted row.
+    create: (data: CreateCredentialInput) =>
+      request<Credential>('/credentials', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    // rotate swaps the encrypted key on an existing row. The
+    // server keeps name/scope/created_at intact; only
+    // encrypted_key and updated_at change. 404 if the row is not
+    // owned by the caller.
+    rotate: (id: number, data: RotateCredentialInput) =>
+      request<Credential>(`/credentials/${id}/rotate`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    // delete hard-deletes the row and writes an audit row in
+    // call_logs with skill="credential_deleted". 204 on success.
+    delete: (id: number) =>
+      request<void>(`/credentials/${id}`, { method: 'DELETE' }),
+  },
+  observability: {
+    // summary returns the MCN call-observability dashboard payload
+    // (today / per-day / by-skill / by-provider). The endpoint is
+    // session-cookie protected and multi-tenant scoped — the
+    // response contains only the calling user's rows.
+    //
+    // ?range=today|7d|30d controls the time window. A missing or
+    // unrecognized range falls through to "7d" server-side; the
+    // typed return still surfaces the resolved value in
+    // `response.range` so the UI can render "近 7 天" without
+    // re-deriving from the request.
+    summary: (params?: ObservabilitySummaryParams) => {
+      const q = params?.range ? `?range=${params.range}` : ''
+      return request<ObservabilitySummary>(`/observability/summary${q}`)
+    },
+  },
+  logs: {
+    // list returns the paginated, filterable call-log surface.
+    // Every filter param is optional; the server defaults to
+    // the last 7 days and limit=50 when the fields are missing.
+    // The response is multi-tenant scoped — a request only ever
+    // returns the caller's rows. The CSV export surface is
+    // reached through exportURL() below; this method is JSON-
+    // only.
+    list: (params?: LogsListParams) => {
+      const q = params
+        ? new URLSearchParams(
+            Object.entries(params).reduce<Record<string, string>>(
+              (acc, [k, v]) => {
+                if (v === undefined || v === null) return acc
+                acc[k] = String(v)
+                return acc
+              },
+              {},
+            ),
+          ).toString()
+        : ''
+      return request<LogsListResponse>(`/logs${q ? `?${q}` : ''}`)
+    },
+    // get returns the full row for one call log (id, user_id,
+    // skill, provider, status, latency_ms, input_tokens,
+    // output_tokens, cost_cents, cost_currency, error_message,
+    // created_at). 404 if the row is not owned by the caller —
+    // the cross-tenant case is folded into the 404 path so the
+    // response shape does not leak row existence to other
+    // tenants.
+    get: (id: number) => request<CallLog>(`/logs/${id}`),
+    // exportURL returns the URL the browser should hit to
+    // download a CSV of every row that matches the filter.
+    // Exposed as a URL (not a Promise<Blob>) because the
+    // download UX wants a same-window navigation rather than a
+    // fetch — the server sends Content-Disposition: attachment
+    // and the browser saves the file directly. limit and
+    // offset in params are intentionally ignored by the server
+    // (an export is always the full matching set); we still
+    // accept them in the type so a caller can pass the same
+    // params object it used for list() without filtering.
+    exportURL: (params?: LogsListParams) => {
+      const q = params
+        ? new URLSearchParams(
+            Object.entries(params).reduce<Record<string, string>>(
+              (acc, [k, v]) => {
+                if (v === undefined || v === null) return acc
+                // drop pagination — export is always the full set
+                if (k === 'limit' || k === 'offset') return acc
+                acc[k] = String(v)
+                return acc
+              },
+              {},
+            ),
+          ).toString()
+        : ''
+      return `${BASE}/api/logs/export.csv${q ? `?${q}` : ''}`
+    },
+  },
+  billing: {
+    // summary hits GET /api/billing/summary?month=YYYY-MM.
+    // The month is optional (defaults to the current month)
+    // and is encoded as a plain "YYYY-MM" string so the
+    // operator can navigate to past months by typing into
+    // the date input. The response carries the headline
+    // KPIs plus by_skill / by_provider arrays for the
+    // breakdown tables; see the BillingSummary interface
+    // in the types module for the exact shape.
+    summary: (month?: string) => {
+      const q = month ? `?month=${encodeURIComponent(month)}` : ''
+      return request<BillingSummary>(`/billing/summary${q}`)
+    },
+  },
+  speech: {
+    // synthesize hits POST /api/speech. The MiniMax TTS
+    // service renders text to an mp3 file on the API box
+    // and returns the saved path. Once the static handler
+    // from #85 lands the returned `path` will be reachable
+    // over HTTP; until then operators can fetch the file
+    // off the API box directly.
+    synthesize: (data: SpeechRequest) =>
+      request<SpeechResponse>('/speech', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  },
+  video: {
+    // render hits POST /api/video. The MiniMax video
+    // service generates a 5s clip and saves the result to
+    // disk; the path is returned. Generation is async
+    // server-side (the handler wraps the upstream polling
+    // loop) and can take 1-2 minutes per clip — callers
+    // should bump the fetch timeout accordingly. Like
+    // speech, the path will become reachable over HTTP
+    // once the static handler from #85 lands.
+    render: (data: VideoRequest) =>
+      request<VideoResponse>('/video', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  },
 }
 
 export type GeneratedTopic = {
@@ -576,4 +731,132 @@ export type ImportType = 'topic' | 'script' | 'content_item' | 'knowledge'
 export interface ImportResult {
   imported: number
   errors: { index: number; message: string }[]
+}
+
+// ObservabilitySummaryRange enumerates the time windows the
+// /api/observability/summary endpoint understands. The values
+// match the server-side SummaryRange constants — keep them in
+// sync. A typo here would 400 from the server; the dashboard
+// is built against this union so the type system catches drift
+// at compile time.
+export type ObservabilitySummaryRange = 'today' | '7d' | '30d'
+
+// ObservabilityTodaySummary is the calendar-day rollup. Calls
+// is the integer count; success_rate is a 0-1 fraction
+// (e.g. 0.95 = 95%); cost_cents is the integer cent total.
+// cost_currency is the ISO 4217 code stored on the dominant
+// row — every row defaults to "CNY" today, but Phase 4 will
+// surface multi-currency breakdowns.
+export interface ObservabilityTodaySummary {
+  calls: number
+  success_rate: number
+  cost_cents: number
+  cost_currency: string
+}
+
+// ObservabilityDayPoint is one bucket in the per-day line chart
+// series. date is a YYYY-MM-DD string in the server's local
+// timezone (the dashboard renders it directly).
+export interface ObservabilityDayPoint {
+  date: string
+  calls: number
+  cost_cents: number
+}
+
+// ObservabilityBySkillRow is one row in the by-skill breakdown.
+// p50_ms / p95_ms are server-computed nearest-rank percentiles
+// over the latency_ms column. The dashboard renders them
+// directly without re-computing.
+export interface ObservabilityBySkillRow {
+  skill: string
+  calls: number
+  success_rate: number
+  p50_ms: number
+  p95_ms: number
+  cost_cents: number
+}
+
+// ObservabilityByProviderRow is one row in the by-provider
+// breakdown. Latency is intentionally NOT broken out per
+// provider — the dashboard renders cost + call volume only.
+export interface ObservabilityByProviderRow {
+  provider: string
+  calls: number
+  cost_cents: number
+}
+
+// ObservabilitySummary is the full wire shape of
+// GET /api/observability/summary. Every array field is
+// always a non-null array (the server initializes to []).
+// All numeric fields default to 0 when the user has no data
+// in the window — the dashboard's "0 calls today" path is
+// the same wire shape as the busy-day path.
+export interface ObservabilitySummary {
+  range: ObservabilitySummaryRange
+  today: ObservabilityTodaySummary
+  last_7_days: ObservabilityDayPoint[]
+  by_skill: ObservabilityBySkillRow[]
+  by_provider: ObservabilityByProviderRow[]
+}
+
+// ObservabilitySummaryParams is the parameter bag for
+// api.observability.summary. range is optional; the server
+// defaults to "7d" when the value is missing or unrecognized.
+export interface ObservabilitySummaryParams {
+  range?: ObservabilitySummaryRange
+}
+
+// SpeechRequest is the body for POST /api/speech. text is
+// the only required field; the rest are optional TTS tuning
+// knobs (voice selects the speaker; speed / volume / pitch
+// scale the corresponding acoustic dimensions; language
+// boosts pronunciation; out_dir lets the operator persist
+// the generated mp3 to a non-default directory).
+export interface SpeechRequest {
+  text: string
+  voice?: string
+  speed?: number
+  volume?: number
+  pitch?: number
+  language?: string
+  out_dir?: string
+}
+
+// SpeechResponse is the wire shape returned by /api/speech.
+// path is the on-disk path the saved mp3 lives at (served
+// over HTTP once the static handler from #85 lands). The
+// remaining fields are echoed straight from the MiniMax TTS
+// service so the UI can build a waveform preview without
+// re-fetching the file.
+export interface SpeechResponse {
+  path: string
+  duration_ms: number
+  size_bytes: number
+  sample_rate: number
+  provider: string
+}
+
+// VideoRequest is the body for POST /api/video. prompt is
+// the only required field. first_frame / last_frame unlock
+// image-to-video (I2V) and start-end-frame (SEF) modes;
+// subject_image is the subject-reference (S2V) image the
+// model should anchor the subject's identity against.
+export interface VideoRequest {
+  prompt: string
+  first_frame?: string
+  last_frame?: string
+  subject_image?: string
+  model?: string
+  out_dir?: string
+}
+
+// VideoResponse is the wire shape returned by /api/video.
+// path is the on-disk path the saved mp4 lives at (served
+// over HTTP once the static handler from #85 lands).
+// provider is always "minimax" today — kept on the shape so
+// the UI's provider-badge code does not have to branch on
+// a missing key.
+export interface VideoResponse {
+  path: string
+  provider: string
 }

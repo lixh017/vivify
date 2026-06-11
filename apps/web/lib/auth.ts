@@ -13,8 +13,8 @@
 // vs network failure) the call site should still use `api.auth.login`
 // directly and inspect the ApiError.
 
-import { api, ApiError } from './api'
-import type { AuthUser } from './types'
+import { api, ApiError } from '@opc/shared/api'
+import type { AuthUser } from '@opc/shared/types'
 
 // LoginInput and RegisterInput describe the public contract for the
 // helper functions. They are the same shape the Go backend expects on

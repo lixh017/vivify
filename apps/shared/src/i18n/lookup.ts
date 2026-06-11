@@ -14,7 +14,7 @@ import {
   type Catalog,
   type Locale,
   type TranslationKey,
-} from './i18n-types'
+} from './types'
 
 // The two .json files are imported as `any` by Next's JSON loader,
 // so we narrow them through a runtime parity check before pinning

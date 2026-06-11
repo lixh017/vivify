@@ -2,8 +2,8 @@
 
 import { Suspense, useState, FormEvent, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { api, ApiError } from '@/lib/api'
-import { useT } from '@/lib/i18n-client'
+import { api, ApiError } from '@opc/shared/api'
+import { useT } from '@opc/shared/i18n-client'
 
 // Login page for Phase 2's session-based auth. The form posts to
 // /api/auth/login; on success the browser's opc_session cookie is

@@ -2,18 +2,18 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { api, ApiError } from '@/lib/api'
-import type { AuthUser } from '@/lib/types'
+import { api, ApiError } from '@opc/shared/api'
+import type { AuthUser } from '@opc/shared/types'
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
   type Locale,
-} from '@/lib/i18n-types'
+} from '@opc/shared/i18n-types'
 import {
   useT,
   setLocaleCookie,
   readLocaleFromCookie,
-} from '@/lib/i18n-client'
+} from '@opc/shared/i18n-client'
 
 interface NavLink {
   href: string

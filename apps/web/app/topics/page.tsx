@@ -2,9 +2,9 @@
 
 import { useEffect, useState, FormEvent, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { api, type GeneratedTopic, type PlatformAdapt } from '@/lib/api'
-import type { Topic } from '@/lib/types'
-import { useT } from '@/lib/i18n-client'
+import { api, type GeneratedTopic, type PlatformAdapt } from '@opc/shared/api'
+import type { Topic } from '@opc/shared/types'
+import { useT } from '@opc/shared/i18n-client'
 
 // Canonical platform + status vocabulary, mirroring the backend's
 // allowedStatuses / allowedPlatforms sets (see apps/api/internal/models/topic.go).

@@ -5,7 +5,7 @@
 // both files; consolidating here makes a future change to the
 // Markdown shape a single edit).
 
-import type { DeconstructResult } from './api'
+import type { DeconstructResult } from '../api/client'
 
 // truncateForTitle caps a transcript snippet at a UI-friendly length
 // for the Knowledge doc title. We pull from the start of the string

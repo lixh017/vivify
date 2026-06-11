@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, FormEvent } from 'react'
-import { api, type QualityScore } from '@/lib/api'
-import type { Script } from '@/lib/types'
-import { useT } from '@/lib/i18n-client'
+import { api, type QualityScore } from '@opc/shared/api'
+import type { Script } from '@opc/shared/types'
+import { useT } from '@opc/shared/i18n-client'
 
 // Canonical platform vocabulary mirroring the backend's allowedPlatforms
 // set. These are the API wire values; the user-facing label is rendered

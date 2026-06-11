@@ -88,7 +88,7 @@ export function useModalA11y(isOpen: boolean): React.RefObject<HTMLDivElement> {
         // user tabs past the last focusable, wrap to the first;
         // if they shift-tab past the first, wrap to the last.
         if (!dialog) return
-        const focusables = Array.from(
+        const focusables: HTMLElement[] = Array.from(
           dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
         )
         if (focusables.length === 0) {

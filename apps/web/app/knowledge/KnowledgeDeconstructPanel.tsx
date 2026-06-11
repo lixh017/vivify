@@ -1,15 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { api } from '@/lib/api'
-import type { DeconstructResult } from '@/lib/api'
-import type { KnowledgeDoc } from '@/lib/types'
-import { useT } from '@/lib/i18n-client'
+import { api } from '@opc/shared/api'
+import type { DeconstructResult } from '@opc/shared/api'
+import type { KnowledgeDoc } from '@opc/shared/types'
+import { useT } from '@opc/shared/i18n-client'
 import {
   truncateForTitle,
   deconstructToMarkdown,
-} from '@/lib/deconstruct-format'
-import { useModalA11y } from '@/lib/use-modal'
+} from '@opc/shared/utils/deconstruct-format'
+import { useModalA11y } from '@opc/shared/hooks/use-modal'
 
 // KnowledgeDeconstructPanel is the "保存拆解" entry point on the
 // knowledge page. It is intentionally a focused variant of the

@@ -18,8 +18,8 @@ import {
   LOCALE_COOKIE_PATH,
   type Locale,
   type TranslationKey,
-} from './i18n-types'
-import { t as tImpl } from './i18n-lookup'
+} from './types'
+import { t as tImpl } from './lookup'
 
 // parseLocale is duplicated from i18n.ts rather than imported —
 // importing from i18n.ts would drag `next/headers` into the client

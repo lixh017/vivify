@@ -17,7 +17,7 @@ import {
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
   type Locale,
-} from '@/lib/i18n'
+} from '@opc/shared/i18n'
 
 interface SetLocaleRequest {
   locale: string

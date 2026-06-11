@@ -380,5 +380,18 @@
   "dashboard.deconstruct.formula.variations": "变体",
   "dashboard.deconstruct.formula.error_failed": "提取公式失败,请稍后再试。",
   "dashboard.deconstruct.empty_state": "粘贴视频文案,开始你的第一次拆解。",
-  "dashboard.deconstruct.close": "关闭"
+  "dashboard.deconstruct.close": "关闭",
+  "dashboard.generate_topics.button": "✨ AI 选题",
+  "dashboard.generate_topics.title": "AI 生成的选题",
+  "dashboard.generate_topics.subtitle": "由 MiniMax 基于平台风格生成,挑一个继续做",
+  "dashboard.generate_topics.close": "关闭",
+  "dashboard.generate_topics.empty": "没有生成出选题,稍后再试",
+  "dashboard.generate_topics.error_failed": "生成失败,请稍后再试",
+  "dashboard.generate_topics.demo_badge": "🎭 Demo Mode (no API key)",
+  "dashboard.generate_topics.angle": "角度",
+  "dashboard.generate_topics.hook": "钩子",
+  "dashboard.generate_topics.expected": "预期表现",
+  "dashboard.generate_topics.seed_label": "主题方向",
+  "dashboard.generate_topics.seed_placeholder": "例如: 个人成长博主, 美食探店, 旅行 vlog…",
+  "dashboard.generate_topics.regenerate": "重新生成"
 }
