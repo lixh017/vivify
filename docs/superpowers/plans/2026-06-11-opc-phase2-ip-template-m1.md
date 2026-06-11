@@ -4,19 +4,23 @@
 
 **Goal:** 把 `internal/assetgen/` 从「1 个 Go 写死的熊猫 profile」重构为「4 类 IP（anthropomorphic/digital_human/costume/info）可插拔框架」，M1 交付 4 套 JSON sub-schema + 4 套 consistency check + 4 个 instance profile + opc-asset CLI 加 `--type` flag，4-5 周内 verify-project-state agent 跑出 OVERALL PASS。
 
-**Architecture:** 4 个 sub-package（`internal/assetgen/profiles/{anthropomorphic,digital_human,costume,info}/`）作为硬边界，各自包含 `profile.go` + `consistency.go` + `prompts.go` + `profile.json` + `schema.json` + 测试。每个 sub-package 的 `init()` 调父包 `assetgen.Register(type, ProfileEntry)` 自动注册；父包持 `registry map[string]ProfileEntry` + dispatcher 公共 API。`//go:embed` 编译期打包 JSON 到 binary。保留 Phase 1 `GetProfile("fengge_v1")` 向后兼容。
+**Architecture:** 4 个 sub-package（`internal/assetgen/profiles/{anthropomorphic,digital_human,costume,info}/`）作为硬边界，各自包含 `profile.go` + `consistency.go` + `prompts.go` + `profile.json` + `schema.json` + 测试。每个 sub-package 的 `init()` 调父包 `assetgen.Register(type, ProfileEntry)` 自动注册；父包持 `registry map[string]ProfileEntry` + dispatcher 公共 API。`//go:embed` 编译期打包 JSON 到 binary。
 
 **Tech Stack:** Go 1.25, `//go:embed` (stdlib), JSON Schema Draft 2020-12 (best-effort validation, no dep — string-based check for v1), GORM/SQLite (untouched in this plan), opc-asset CLI 已有 `cobra-free` flag parsing.
 
 **Spec:** `docs/superpowers/specs/2026-06-11-opc-phase2-ip-template-design.md` v1.0 (commit `34fe6b7`).
 
+**Plan note (2026-06-11)**: 原 plan 是 9 task（Task 1 父包 refactor + Task 2 consistency dispatcher + Task 3 prompts dispatcher + Task 4 anthropomorphic + Task 5-7 三个 sub-package + Task 8 opc-asset --type + Task 9 integration）。 Implementer subagent 实施 Task 1 时发现一个 Go 类型系统冲突：`Profile` 在 4 个文件（profile.go struct + consistency.go 参数 + prompts.go 参数 + opc-asset/main.go 用法）都被使用。Task 1 原本说"改 Profile struct 为 interface 但不碰另 3 个文件"在 Go 里不可能（同一 package 不能同时有 `type Profile struct` 和 `type Profile interface`）。决定 **合并 Task 1+2+3+4 为新 Task 1**：父包整体 refactor + anthropomorphic sub-package 完整实现同步做。新 plan 是 **6 task**（不是 9）。
+
 ---
 
-## 文件结构
+## 文件结构（M1 终态）
 
 **新建**：
 - `apps/api/internal/assetgen/loader.go` — registry + Register + LoadProfile
-- `apps/api/internal/assetgen/loader_test.go`
+- `apps/api/internal/assetgen/round2.go` — Round2Public 包装
+- `apps/api/internal/assetgen/consistency_test.go` — dispatcher 测试
+- `apps/api/internal/assetgen/prompts_test.go` — dispatcher 测试
 - `apps/api/internal/assetgen/profiles/anthropomorphic/{profile,consistency,prompts}.go`
 - `apps/api/internal/assetgen/profiles/anthropomorphic/{profile,schema}.json`
 - `apps/api/internal/assetgen/profiles/anthropomorphic/*_test.go`
@@ -32,15 +36,19 @@
 - `docs/assetgen/profile-schema.md` — 4 套子 schema 字段参考
 
 **修改**：
-- `apps/api/internal/assetgen/profile.go` — `Profile` struct → interface，添加 `ProfileEntry`
-- `apps/api/internal/assetgen/consistency.go` — `ConsistencyCheck` 改为 dispatcher，加 `safeCheck` 包装
-- `apps/api/internal/assetgen/prompts.go` — `BuildPrompt` 改为 dispatcher
-- `apps/api/internal/assetgen/assetgen_test.go` — 保留 4 个 test + 加 1 个 backward-compat snapshot test
-- `apps/api/cmd/opc-asset/main.go` — 加 `--type` flag，默认 `anthropomorphic`
+- `apps/api/internal/assetgen/profile.go` — `Profile` struct → interface + 加 `ProfileEntry` + 加 `ConsistencyFn` + 加 `PromptFn` + 删 `FenggeV1` struct value + 删 `GetProfile` function
+- `apps/api/internal/assetgen/consistency.go` — `ConsistencyCheck` 改 dispatcher + 加 `safeCheck`
+- `apps/api/internal/assetgen/prompts.go` — `BuildPrompt` 改 dispatcher + 加 `joinPalette` helper
+- `apps/api/internal/assetgen/assetgen_test.go` — 4 个老 test 改用 `anthropomorphic.DefaultInstance()`（保留 4 个 test case，签名变化）
+- `apps/api/cmd/opc-asset/main.go` — 改用 `assetgen.MustLoadProfile("anthropomorphic")` + `prof.Version()` 方法（不是 field）+ 删 `*profileVersion` flag（Task 5 加 `--type`）
 
 **保留不变**（spec §15 列出）：
 - `apps/api/internal/agents/minimax.go` — LLM 客户端，跟 profile 框架解耦
-- `apps/api/internal/assetgen/{FenggeV1, GetProfile}` — 保留 `FenggeV1` 暴露为 `AnthropomorphicProfile` 实例 + `GetProfile("fengge_v1")` delegate 到 `LoadProfile("anthropomorphic", "fengge_v1")`
+- `audit/roundtrip-volcengine.mjs` — 历史 demo（M2 才删）
+
+**删除**：
+- `assetgen.FenggeV1`（struct value）— 替换为 `anthropomorphic.DefaultInstance()`
+- `assetgen.GetProfile(version)` — 替换为 `assetgen.LoadProfile("anthropomorphic")` 或 `assetgen.MustLoadProfile(...)`
 
 ---
 
@@ -48,15 +56,25 @@
 
 | 类型 | 名称 | 说明 |
 |------|------|------|
-| IP type discriminator | `Profile.Type()` 返回 string | `"anthropomorphic"` / `"digital_human"` / `"costume"` / `"info"` |
-| 资产类型（image/video） | `AssetType` const | `TypeImage` / `TypeVideo`（来自 Phase 1） |
-| Instance profile | `<type>Profile` struct | 例如 `AnthropomorphicProfile` |
-| 公共接口 | `Profile` interface | Type/Version/Name 三方法 |
-| Registry entry | `ProfileEntry` struct | Schema + Check + BuildPrompt |
-| Consistency check 函数 | `check<Type>(p Profile, prompt string) ConsistencyResult` | 私有，在 sub-package 内 |
-| Prompt builder 函数 | `build<Type>Prompt(p Profile, scene, outfit, assetType string) string` | 私有，在 sub-package 内 |
-| Instance 加载函数 | `Instance() *<type>Profile` | 公开，从 embed 加载默认 instance |
-| init 注册 | `init() { assetgen.Register("<type>", ProfileEntry{...}) }` | 每个 sub-package 一个 |
+| IP type discriminator | `Profile.Type()` 返回 string | `"anthropomorphic"` / `"digital_human"` / `"costume" / "info"` |
+| 资产类型（image/video） | `AssetType` const | `TypeImage` / `TypeVideo` |
+| Instance profile | `<type>Profile` struct | 例如 `AnthropomorphicProfile` 在 `anthropomorphic` sub-package |
+| 公共接口 | `Profile` interface（父包） | Type/Version/Name 三方法 |
+| Registry entry | `ProfileEntry` struct（父包） | Schema + Check + BuildPrompt |
+| Consistency check 函数 | `check<Type>(p *<type>Profile, prompt string) ConsistencyResult` | 私有，在 sub-package 内 |
+| Prompt builder 函数 | `build<Type>Prompt(p *<type>Profile, scene, outfit, assetType string) string` | 私有，在 sub-package 内 |
+| Instance 加载函数 | `DefaultInstance() *<type>Profile` | 公开，从 embed 加载默认 instance |
+| init 注册 | `func init() { assetgen.Register("<type>", ProfileEntry{...}) }` | 每个 sub-package 一个 |
+
+**类型冲突注意**：`Profile` 字段跟 `Profile.Type()` 方法在 Go 里不能同名，所以 sub-package 内的 struct 用 `Type_` 字段 + `Type()` 方法重命名模式：
+```go
+type Profile struct {
+    Type_  string  // JSON unmarshal target
+    Name   string
+    ...
+}
+func (p *Profile) Type() string  { return p.Type_ }
+```
 
 ---
 
@@ -64,47 +82,166 @@
 
 ---
 
-### Task 1: 重构父包 profile.go — Profile 改 interface + 加 ProfileEntry
+### Task 1: 父包 refactor combined + anthropomorphic sub-package 完整实现 (was Tasks 1+2+3+4)
+
+**范围**：4 个原 task 合并。父包 `assetgen/` 全 refactor（profile.go / consistency.go / prompts.go / loader.go / round2.go）+ `anthropomorphic` sub-package 完整实现 + opc-asset main.go 适配新 API + 4 个老 test 改用 `anthropomorphic.DefaultInstance()`。
 
 **Files:**
 - Modify: `apps/api/internal/assetgen/profile.go`
-- Modify: `apps/api/internal/assetgen/assetgen_test.go` (加新 test)
+- Modify: `apps/api/internal/assetgen/consistency.go`
+- Modify: `apps/api/internal/assetgen/prompts.go`
+- Modify: `apps/api/internal/assetgen/assetgen_test.go`
+- Modify: `apps/api/cmd/opc-asset/main.go`
+- Create: `apps/api/internal/assetgen/loader.go`
+- Create: `apps/api/internal/assetgen/round2.go`
+- Create: `apps/api/internal/assetgen/consistency_test.go`
+- Create: `apps/api/internal/assetgen/prompts_test.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/consistency.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/prompts.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/profile.json`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/schema.json`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/profile_test.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/consistency_test.go`
+- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/prompts_test.go`
 
-- [ ] **Step 1.1: 写新 test (在 `assetgen_test.go` 末尾添加)**
+- [ ] **Step 1.1: 写新 test 在 `apps/api/internal/assetgen/assetgen_test.go` 末尾添加 (TDD red)**
+
+替换 4 个老 test, 改用 `anthropomorphic.DefaultInstance()` (新加的, 还没建)。保留原 test case 名字 + 行为：
 
 ```go
-// TestProfileInterface confirms the new Profile interface contract:
-// Type/Version/Name accessors exist, and FenggeV1 implements them.
-func TestProfileInterface(t *testing.T) {
+// TestProfileFenggeV1 (updated) — verifies LoadProfile's
+// known/unknown/empty behavior. The default empty typeName
+// defaults to anthropomorphic / fengge_v1 is intentional —
+// the CLI uses "" as "the only profile we ship" so callers
+// don't need to hardcode the type string.
+func TestProfileFenggeV1(t *testing.T) {
     t.Parallel()
 
-    p, err := assetgen.LoadProfile("anthropomorphic", "fengge_v1")
-    if err != nil {
-        t.Fatalf("LoadProfile(anthropomorphic, fengge_v1) error: %v", err)
+    tests := []struct {
+        name        string
+        typeName    string
+        wantNil     bool
+        wantType    string
+        wantVersion string
+        wantName    string
+    }{
+        {
+            name:        "explicit anthropomorphic / fengge_v1",
+            typeName:    "anthropomorphic",
+            wantNil:     false,
+            wantType:    "anthropomorphic",
+            wantVersion: "fengge_v1",
+            wantName:    "峰哥",
+        },
+        {
+            name:        "empty string defaults to anthropomorphic / fengge_v1",
+            typeName:    "",
+            wantNil:     false,
+            wantType:    "anthropomorphic",
+            wantVersion: "fengge_v1",
+            wantName:    "峰哥",
+        },
+        {
+            name:     "unknown type returns error",
+            typeName: "nonexistent",
+            wantNil:  true,
+        },
     }
-    if p == nil {
-        t.Fatal("LoadProfile returned nil profile")
-    }
-    if got := p.Type(); got != "anthropomorphic" {
-        t.Errorf("Type() = %q, want %q", got, "anthropomorphic")
-    }
-    if got := p.Version(); got != "fengge_v1" {
-        t.Errorf("Version() = %q, want %q", got, "fengge_v1")
-    }
-    if got := p.Name(); got != "峰哥" {
-        t.Errorf("Name() = %q, want %q", got, "峰哥")
+
+    for _, tt := range tests {
+        tt := tt
+        t.Run(tt.name, func(t *testing.T) {
+            t.Parallel()
+
+            got, err := assetgen.LoadProfile(tt.typeName)
+            if tt.wantNil {
+                if err == nil {
+                    t.Fatalf("LoadProfile(%q) = %+v, want error", tt.typeName, got)
+                }
+                return
+            }
+            if err != nil {
+                t.Fatalf("LoadProfile(%q) error: %v", tt.typeName, err)
+            }
+            if got == nil {
+                t.Fatalf("LoadProfile(%q) = nil, want non-nil Profile", tt.typeName)
+            }
+            if got.Type() != tt.wantType {
+                t.Errorf("Type() = %q, want %q", got.Type(), tt.wantType)
+            }
+            if got.Version() != tt.wantVersion {
+                t.Errorf("Version() = %q, want %q", got.Version(), tt.wantVersion)
+            }
+            if got.Name() != tt.wantName {
+                t.Errorf("Name() = %q, want %q", got.Name(), tt.wantName)
+            }
+        })
     }
 }
 ```
 
-- [ ] **Step 1.2: 跑 test 确认 FAIL（`Profile` 还是 struct，没有 `Type()` 方法）**
+更新其他 3 个老 test 的 `p := assetgen.FenggeV1` → `p := anthropomorphic.DefaultInstance()`：
 
-Run: `cd apps/api && go test -tags fts5 -run TestProfileInterface ./internal/assetgen/...`
-Expected: FAIL with "LoadProfile undefined" or "p.Type undefined"
+```go
+// TestBuildPromptImage (updated) — uses anthropomorphic instance
+func TestBuildPromptImage(t *testing.T) {
+    t.Parallel()
 
-- [ ] **Step 1.3: 重写 `profile.go` — `Profile` 改 interface + 加 `ProfileEntry`**
+    p := anthropomorphic.DefaultInstance()
+    const scene = "竹林小院"
+    const outfit = "朱红"
+    got := assetgen.BuildPrompt(p, scene, outfit, assetgen.TypeImage)
 
-**完整替换** `apps/api/internal/assetgen/profile.go` 的内容：
+    wantContains := []string{
+        "峰哥", "成年熊猫", "rgb(245,240,225)", "rgb(26,26,26)",
+        "国潮", "不露爪", "--ratio 9:16", scene, outfit,
+    }
+    // ... rest same as before
+}
+
+// TestBuildPromptVideo (updated) — same pattern
+func TestBuildPromptVideo(t *testing.T) {
+    t.Parallel()
+    p := anthropomorphic.DefaultInstance()
+    const scene = "竹林小院"
+    const outfit = "翠绿"
+    got := assetgen.BuildPrompt(p, scene, outfit, assetgen.TypeVideo)
+    // ... rest same as before
+}
+
+// TestConsistencyCheck (updated) — same pattern
+func TestConsistencyCheck(t *testing.T) {
+    t.Parallel()
+    p := anthropomorphic.DefaultInstance()
+    tests := []struct {
+        name      string
+        prompt    string
+        wantScore float64
+        wantFails int
+    }{
+        {
+            name:      "full prompt from BuildPrompt scores 0.95",
+            prompt:    assetgen.BuildPrompt(p, "x", "y", assetgen.TypeImage),
+            wantScore: 0.95,
+            wantFails: 1,
+        },
+        // ... rest same as before
+    }
+    // ... rest same
+}
+```
+
+更新 `package` import 顶部，加 `"github.com/opc/api/internal/assetgen/profiles/anthropomorphic"`。
+
+- [ ] **Step 1.2: 跑 test 确认 FAIL（LoadProfile + anthropomorphic 还没建）**
+
+Run: `cd apps/api && go test -tags fts5 -run TestProfileFenggeV1 ./internal/assetgen/...`
+Expected: FAIL (LoadProfile undefined + anthropomorphic package not found)
+
+- [ ] **Step 1.3: 重写 `apps/api/internal/assetgen/profile.go` — Profile interface + ProfileEntry + 公共 type**
+
+**完整替换** `apps/api/internal/assetgen/profile.go`：
 
 ```go
 // Package assetgen provides the opc asset-generation primitives:
@@ -165,14 +302,7 @@ type ConsistencyFn func(Profile, string) ConsistencyResult
 type PromptFn func(Profile, string, string, string) string
 ```
 
-- [ ] **Step 1.4: 跑 test 确认还 FAIL（还需要 LoadProfile + AnthropomorphicProfile）**
-
-Run: `cd apps/api && go test -tags fts5 -run TestProfileInterface ./internal/assetgen/...`
-Expected: FAIL with "LoadProfile undefined"
-
-- [ ] **Step 1.5: 创建 `loader.go` (stub LoadProfile，anthropomorphic 路由到现有 FenggeV1)**
-
-**新建** `apps/api/internal/assetgen/loader.go`：
+- [ ] **Step 1.4: 新建 `apps/api/internal/assetgen/loader.go`**
 
 ```go
 package assetgen
@@ -205,17 +335,32 @@ func Register(typeName string, entry ProfileEntry) {
 }
 
 // LoadProfile returns the registered Profile schema for the
-// given IP type. In M1, version is ignored — only the default
-// instance per type exists. M2 will add per-version lookup.
+// given IP type. Empty typeName defaults to "anthropomorphic"
+// for back-compat with Phase 1 callers that used the empty
+// string as "the only profile we ship".
 //
 // Returns an error for unknown types so callers can fail loudly
 // rather than silently fall back.
 func LoadProfile(typeName string) (Profile, error) {
+    if typeName == "" {
+        typeName = "anthropomorphic"
+    }
     entry, ok := registry[typeName]
     if !ok {
         return nil, fmt.Errorf("assetgen: unknown IP type %q (registered: %v)", typeName, registeredTypes())
     }
     return entry.Schema, nil
+}
+
+// MustLoadProfile is LoadProfile that panics on error. Use only
+// in places where a missing profile is a programmer error (e.g.
+// CLI main wiring).
+func MustLoadProfile(typeName string) Profile {
+    p, err := LoadProfile(typeName)
+    if err != nil {
+        panic(err)
+    }
+    return p
 }
 
 // registeredTypes returns a sorted-ish list of registered type
@@ -230,70 +375,87 @@ func registeredTypes() []string {
 }
 ```
 
-- [ ] **Step 1.6: 创建临时 anthropomorphic sub-package (stub，init 注册 FenggeV1-兼容 schema)**
-
-**新建** `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go`：
+- [ ] **Step 1.5: 新建 `apps/api/internal/assetgen/round2.go`**
 
 ```go
-// Package anthropomorphic registers the anthropomorphic IP type
-// (currently: panda / 峰哥) into the assetgen registry. See
-// internal/assetgen/profile.go for the public Profile interface
-// and the parent package's dispatcher.
-package anthropomorphic
+package assetgen
 
-import "github.com/opc/api/internal/assetgen"
-
-// AnthropomorphicProfile is the concrete schema for an
-// anthropomorphic animal IP (panda, fox, dog, ...). M1 ships one
-// instance: fengge_v1 (峰哥 / adult panda).
-type AnthropomorphicProfile struct {
-    Version        string
-    Name           string
-    Species        string
-    BodyShape      string
-    BodyColor      string
-    EyeColor       string
-    EyeExpression  string
-    Palette        []string
+// Round2Public rounds a float to 2 decimal places. Exported for
+// use by sub-package check functions (e.g. anthropomorphic,
+// digital_human) to match the JSONL ledger format from the
+// original roundtrip-volcengine.mjs script.
+func Round2Public(f float64) float64 {
+    return round2(f)
 }
-
-// Type implements assetgen.Profile.
-func (p *AnthropomorphicProfile) Type() string { return "anthropomorphic" }
-
-// Version implements assetgen.Profile.
-func (p *AnthropomorphicProfile) Version() string { return p.Version_ }
-
-// Name implements assetgen.Profile.
-func (p *AnthropomorphicProfile) Name() string { return p.Name }
-
-// Version_ is the actual field name; the Version() method above
-// conflicts with it, so we keep them separated. The struct field
-// is "Version_" to avoid the name collision; the method returns
-// p.Version_. (Workaround for Go's "field and method can't share
-// a name" rule.)
 ```
 
-> **Stop here** — this stub is intentionally incomplete. Task 1's goal is just to make TestProfileInterface pass with a minimum viable registry. Full sub-package with consistency check + prompt builder + JSON embed comes in Task 4.
+- [ ] **Step 1.6: 新建 `apps/api/internal/assetgen/profiles/anthropomorphic/profile.json`**
 
-- [ ] **Step 1.7: 调整 stub 让 TestProfileInterface 通过 (临时把 fengge_v1 写死)**
+```json
+{
+  "version": "fengge_v1",
+  "name": "峰哥",
+  "type": "anthropomorphic",
+  "species": "成年熊猫",
+  "body_shape": "头身比 1:1.2 圆胖身材",
+  "body_color": "rgb(245,240,225)",
+  "eye_color": "rgb(26,26,26)",
+  "eye_expression": "半阖带笑意, 不直视镜头",
+  "palette": ["朱红#C73E1D", "暖橙#E89B45", "翠绿#3B8C5A", "宝蓝#1F5FA8", "米白#F5F0E1"]
+}
+```
 
-**重写** `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go` 为：
+- [ ] **Step 1.7: 新建 `apps/api/internal/assetgen/profiles/anthropomorphic/schema.json`**
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "name", "type", "species", "body_shape", "body_color", "eye_color", "eye_expression", "palette"],
+  "properties": {
+    "version": { "type": "string" },
+    "name": { "type": "string" },
+    "type": { "const": "anthropomorphic" },
+    "species": { "type": "string" },
+    "body_shape": { "type": "string" },
+    "body_color": { "type": "string" },
+    "eye_color": { "type": "string" },
+    "eye_expression": { "type": "string" },
+    "palette": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "string" }
+    }
+  }
+}
+```
+
+- [ ] **Step 1.8: 新建 `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go` (含 //go:embed + DefaultInstance + init 注册)**
 
 ```go
 // Package anthropomorphic registers the anthropomorphic IP type
-// (currently: panda / 峰哥) into the assetgen registry. Full
-// implementation (consistency check, prompt builder, JSON
-// profile, JSON schema, embed) lands in Task 4; this stub exists
-// only to make TestProfileInterface pass in Task 1.
+// (拟人动物 — panda, fox, dog, ...) into the assetgen registry.
+// M1 ships one instance: fengge_v1 (峰哥 / adult panda) loaded
+// from profile.json via //go:embed.
 package anthropomorphic
 
-import "github.com/opc/api/internal/assetgen"
+import (
+    _ "embed"
+    "encoding/json"
+    "fmt"
+
+    "github.com/opc/api/internal/assetgen"
+)
 
 // Profile is the concrete schema for an anthropomorphic animal IP
-// (panda, fox, dog, ...). M1 ships one instance: fengge_v1.
+// (panda, fox, dog, ...). Field names match profile.json keys
+// (snake_case → Go PascalCase). Type_ is the actual JSON field
+// name; Type() method returns the value (Go disallows a field
+// and method sharing a name).
 type Profile struct {
     Version       string
     Name          string
+    Type_         string
     Species       string
     BodyShape     string
     BodyColor     string
@@ -303,7 +465,7 @@ type Profile struct {
 }
 
 // Type implements assetgen.Profile.
-func (p *Profile) Type() string { return "anthropomorphic" }
+func (p *Profile) Type() string { return p.Type_ }
 
 // Version implements assetgen.Profile.
 func (p *Profile) Version() string { return p.Version }
@@ -311,145 +473,152 @@ func (p *Profile) Version() string { return p.Version }
 // Name implements assetgen.Profile.
 func (p *Profile) Name() string { return p.Name }
 
-// fenggeV1 is the canonical fengge (峰哥) panda instance. Mirrors
-// the Phase 1 FenggeV1 Go struct 1:1 so the parent's
-// backward-compat GetProfile("fengge_v1") returns equivalent
-// data. Full field refactor (in Task 4) will move this to JSON.
-var fenggeV1 = &Profile{
-    Version:       "fengge_v1",
-    Name:          "峰哥",
-    Species:       "成年熊猫",
-    BodyShape:     "头身比 1:1.2 圆胖身材",
-    BodyColor:     "rgb(245,240,225)",
-    EyeColor:      "rgb(26,26,26)",
-    EyeExpression: "半阖带笑意, 不直视镜头",
-    Palette:       []string{"朱红#C73E1D", "暖橙#E89B45", "翠绿#3B8C5A", "宝蓝#1F5FA8", "米白#F5F0E1"},
-}
+//go:embed profile.json
+var profileJSON []byte
 
-// init registers the anthropomorphic type with a stub entry.
-// Task 4 replaces the nil Check/BuildPrompt with real functions.
+//go:embed schema.json
+var schemaJSON []byte
+
+// defaultInstance is loaded from profile.json at init() time.
+// M1 has one instance per type; M2 may add per-version lookup.
+var defaultInstance *Profile
+
 func init() {
+    if err := json.Unmarshal(profileJSON, &defaultInstance); err != nil {
+        panic(fmt.Sprintf("anthropomorphic: failed to unmarshal profile.json: %v", err))
+    }
+    if defaultInstance.Type_ != "anthropomorphic" {
+        panic(fmt.Sprintf("anthropomorphic: profile.json has type %q, want anthropomorphic", defaultInstance.Type_))
+    }
     assetgen.Register("anthropomorphic", assetgen.ProfileEntry{
-        Schema: fenggeV1,
-        // Check + BuildPrompt nil → Register will panic. Use a
-        // no-op stub for now; Task 4 fills them in.
-        Check:       stubCheck,
-        BuildPrompt: stubBuildPrompt,
+        Schema:      defaultInstance,
+        Check:       Check,
+        BuildPrompt: BuildPrompt,
     })
 }
 
-func stubCheck(p assetgen.Profile, prompt string) assetgen.ConsistencyResult {
-    return assetgen.ConsistencyResult{Score: 0, Fails: []string{"anthropomorphic check not yet implemented (Task 4)"}}
-}
+// DefaultInstance returns the canonical fengge_v1 panda instance.
+// Exported so other sub-packages (and tests) can reference the
+// "official" anthropomorphic profile.
+func DefaultInstance() *Profile { return defaultInstance }
 
-func stubBuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
-    return ""
-}
+// SchemaJSON returns the JSON Schema for this type. Exported for
+// M2's profile upload endpoint to validate user-uploaded profiles.
+func SchemaJSON() []byte { return schemaJSON }
 ```
 
-- [ ] **Step 1.8: 跑 TestProfileInterface 确认 PASS**
-
-Run: `cd apps/api && go test -tags fts5 -run TestProfileInterface ./internal/assetgen/...`
-Expected: PASS
-
-- [ ] **Step 1.9: 跑所有 assetgen tests 确认旧 test 还 PASS（向后兼容）**
-
-Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/...`
-Expected: PASS for TestProfileFenggeV1, TestBuildPromptImage, TestBuildPromptVideo, TestConsistencyCheck (still passes because old code path is unchanged)
-
-> **注意**：如果旧 test FAIL（`Profile` 变 interface 而旧 code 把它当 struct 用），停下修——不要继续 Task 2。
-
-- [ ] **Step 1.10: Commit**
-
-```bash
-cd apps/api
-git add internal/assetgen/profile.go internal/assetgen/loader.go internal/assetgen/assetgen_test.go internal/assetgen/profiles/anthropomorphic/profile.go
-git commit -m "refactor(assetgen): Profile interface + ProfileEntry + registry (Task 1)
-
-Replace Profile struct with Profile interface; add ProfileEntry
-struct bundling (Schema, Check, BuildPrompt) for registry-driven
-dispatch. Anthropomorphic sub-package stub registered to keep
-TestProfileInterface green; full implementation lands in Task 4.
-
-Profile is now: type Profile interface { Type/Version/Name }
-Registry: map[type]ProfileEntry, populated by sub-package init()
-LoadProfile(type) returns the registered Schema Profile.
-
-Backward compat: GetProfile(\"fengge_v1\") and FenggeV1 still
-exposed at the same paths; old tests in assetgen_test.go all
-PASS unchanged."
-```
-
----
-
-### Task 2: 重构 consistency.go — ConsistencyCheck 改 dispatcher + safeCheck
-
-**Files:**
-- Modify: `apps/api/internal/assetgen/consistency.go`
-- Create: `apps/api/internal/assetgen/consistency_test.go`
-
-- [ ] **Step 2.1: 写 test 覆盖 dispatcher 行为（新建 `consistency_test.go`）**
+- [ ] **Step 1.9: 新建 `apps/api/internal/assetgen/profiles/anthropomorphic/consistency.go` (7 anchor, 1.0 total)**
 
 ```go
-package assetgen_test
+// Package anthropomorphic implements the consistency check for
+// anthropomorphic animal IPs (panda, fox, etc.). The 7 anchors
+// and their weights are defined in
+// docs/superpowers/specs/2026-06-11-opc-phase2-ip-template-design.md
+// §7.2.1.
+package anthropomorphic
 
 import (
-    "testing"
+    "strings"
 
     "github.com/opc/api/internal/assetgen"
 )
 
-// TestConsistencyCheckUnknownType confirms the dispatcher returns
-// Score=0 + explicit fail message when given a Profile whose Type
-// isn't registered.
-func TestConsistencyCheckUnknownType(t *testing.T) {
-    t.Parallel()
-
-    bogus := &bogusProfile{typeName: "unicorn"}
-    got := assetgen.ConsistencyCheck(bogus, "anything")
-
-    if got.Score != 0 {
-        t.Errorf("Score = %v, want 0", got.Score)
+// Check scores a prompt against the profile's 7 brand anchors.
+// Pure function; no IO. Public wrapper around checkAnthropomorphic.
+func Check(p assetgen.Profile, prompt string) assetgen.ConsistencyResult {
+    if p == nil {
+        return assetgen.ConsistencyResult{Score: 0, Fails: []string{"nil profile"}}
     }
-    if len(got.Fails) != 1 {
-        t.Fatalf("len(Fails) = %d, want 1 (Fails: %v)", len(got.Fails), got.Fails)
+    ap, ok := p.(*Profile)
+    if !ok {
+        return assetgen.ConsistencyResult{
+            Score: 0,
+            Fails: []string{"profile is not *anthropomorphic.Profile"},
+        }
     }
-    if got.Fails[0] != "unknown profile type: unicorn" {
-        t.Errorf("Fails[0] = %q, want %q", got.Fails[0], "unknown profile type: unicorn")
-    }
+    return checkAnthropomorphic(ap, prompt)
 }
 
-// TestConsistencyCheckNilProfile confirms safeCheck guards nil.
-func TestConsistencyCheckNilProfile(t *testing.T) {
-    t.Parallel()
+func checkAnthropomorphic(p *Profile, prompt string) assetgen.ConsistencyResult {
+    var score float64
+    var fails []string
 
-    got := assetgen.ConsistencyCheck(nil, "anything")
-    if got.Score != 0 {
-        t.Errorf("Score = %v, want 0", got.Score)
+    add := func(needle, failName string, weight float64) {
+        if strings.Contains(prompt, needle) {
+            score += weight
+        } else {
+            fails = append(fails, failName)
+        }
     }
-    if len(got.Fails) != 1 || got.Fails[0] != "nil profile" {
-        t.Errorf("Fails = %v, want [\"nil profile\"]", got.Fails)
+
+    add(p.Name, "no "+p.Name+" name", 0.20)
+    add(p.Species, "no panda species", 0.20)
+    add(p.BodyColor, "no body white color", 0.20)
+    add(p.EyeColor, "no eye black color", 0.20)
+    add("国潮", "no guofeng theme", 0.10)
+    add("不露爪", "no anti-claws", 0.05)
+    add("不要 AI 生成感", "no anti-AI tokens", 0.05)
+
+    return assetgen.ConsistencyResult{
+        Score: assetgen.Round2Public(score),
+        Fails: fails,
     }
 }
-
-// bogusProfile implements assetgen.Profile but Type() returns a
-// value never registered, so the dispatcher will hit the
-// unknown-type branch.
-type bogusProfile struct{ typeName string }
-
-func (b *bogusProfile) Type() string    { return b.typeName }
-func (b *bogusProfile) Version() string { return "x" }
-func (b *bogusProfile) Name() string    { return "x" }
 ```
 
-- [ ] **Step 2.2: 跑新 test 确认 FAIL（ConsistencyCheck 还是直接用 struct 字段）**
+- [ ] **Step 1.10: 新建 `apps/api/internal/assetgen/profiles/anthropomorphic/prompts.go`**
 
-Run: `cd apps/api && go test -tags fts5 -run "TestConsistencyCheckUnknownType|TestConsistencyCheckNilProfile" ./internal/assetgen/...`
-Expected: FAIL (ConsistencyCheck signature still takes *Profile, not Profile interface)
+```go
+// Package anthropomorphic implements the prompt builder for
+// anthropomorphic animal IPs. Mirrors Phase 1's BuildPrompt
+// output 1:1 for the fengge_v1 panda instance.
+package anthropomorphic
 
-- [ ] **Step 2.3: 重写 `consistency.go` — dispatcher + safeCheck**
+import (
+    "strings"
 
-**完整替换** `apps/api/internal/assetgen/consistency.go` 的内容：
+    "github.com/opc/api/internal/assetgen"
+)
+
+// BuildPrompt assembles a model prompt for the profile + scene +
+// outfit + asset type. Type-specific builder registered in the
+// parent assetgen registry. Pure function; no IO.
+func BuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
+    if p == nil {
+        return ""
+    }
+    ap, ok := p.(*Profile)
+    if !ok {
+        return ""
+    }
+    return buildAnthropomorphicPrompt(ap, scene, outfit, assetType)
+}
+
+func buildAnthropomorphicPrompt(p *Profile, scene, outfit, assetType string) string {
+    prefix := "一只" + p.Species + "(" + p.Name + "), " + p.BodyShape +
+        ", 面部白 " + p.BodyColor +
+        " 眼周黑 " + p.EyeColor +
+        ", 眼神" + p.EyeExpression +
+        ", 身穿" + outfit + "汉服" +
+        ", 站在" + scene +
+        ", 暖光氛围, 国潮 + 色彩靓丽(" + strings.Join(p.Palette, "/") +
+        "撞色, 非暗色调、非水墨), 不露爪, 不攻击性姿势, 无文字" +
+        ", 不要 AI 生成感"
+
+    switch assetType {
+    case assetgen.TypeVideo:
+        return prefix + "  --duration 5 --resolution 720p --ratio 9:16 --watermark true"
+    case assetgen.TypeImage:
+        return prefix + "  --ratio 9:16"
+    default:
+        return prefix
+    }
+}
+```
+
+- [ ] **Step 1.11: 重写 `apps/api/internal/assetgen/consistency.go` — dispatcher + safeCheck**
+
+**完整替换** `apps/api/internal/assetgen/consistency.go`：
 
 ```go
 package assetgen
@@ -503,83 +672,16 @@ func safeCheck(p Profile, prompt string) (result ConsistencyResult) {
 }
 
 // round2 rounds a float to 2 decimal places, matching the JSONL
-// ledger format. Public so sub-package check functions can reuse
-// it.
+// ledger format the original mjs used. Private; sub-packages
+// use Round2Public instead.
 func round2(f float64) float64 {
     return math.Round(f*100) / 100
 }
 ```
 
-- [ ] **Step 2.4: 跑新 test 确认 PASS**
+- [ ] **Step 1.12: 重写 `apps/api/internal/assetgen/prompts.go` — dispatcher + joinPalette helper**
 
-Run: `cd apps/api && go test -tags fts5 -run "TestConsistencyCheckUnknownType|TestConsistencyCheckNilProfile" ./internal/assetgen/...`
-Expected: PASS
-
-- [ ] **Step 2.5: 跑所有 assetgen tests 确认旧 test 还 PASS（特别是 TestConsistencyCheck）**
-
-Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/...`
-Expected: TestConsistencyCheck PASS (anthro stub's stubCheck returns Score=0, which is what the test's "no anchors" case expects... wait, no, TestConsistencyCheck uses assetgen.FenggeV1 directly. The FenggeV1 path still uses the OLD consistency check, which we haven't refactored yet.)
-
-> **If FAIL**: 旧 TestConsistencyCheck 用 `assetgen.FenggeV1` 直接走老 path。检查 `prompts.go` 和 `consistency.go` 是否还 import 老 `FenggeV1` 字段。
-
-- [ ] **Step 2.6: Commit**
-
-```bash
-cd apps/api
-git add internal/assetgen/consistency.go internal/assetgen/consistency_test.go
-git commit -m "refactor(assetgen): ConsistencyCheck dispatcher + safeCheck (Task 2)
-
-ConsistencyCheck now dispatches to the type-specific check fn
-registered in the registry for the profile's IP type. safeCheck
-guards nil profile, unknown type, and panicking check fns.
-
-New tests: TestConsistencyCheckUnknownType + TestConsistencyCheckNilProfile.
-Old TestConsistencyCheck still PASS (uses FenggeV1 directly via
-the old code path that's still in profile.go)."
-```
-
----
-
-### Task 3: 重构 prompts.go — BuildPrompt 改 dispatcher
-
-**Files:**
-- Modify: `apps/api/internal/assetgen/prompts.go`
-- Create: `apps/api/internal/assetgen/prompts_test.go`
-
-- [ ] **Step 3.1: 写 test 覆盖 dispatcher 行为**
-
-```go
-package assetgen_test
-
-import (
-    "testing"
-
-    "github.com/opc/api/internal/assetgen"
-)
-
-// TestBuildPromptUnknownType confirms the dispatcher returns ""
-// for unknown IP types so callers can detect and fallback.
-func TestBuildPromptUnknownType(t *testing.T) {
-    t.Parallel()
-
-    bogus := &bogusProfile{typeName: "unicorn"}
-    got := assetgen.BuildPrompt(bogus, "scene", "outfit", assetgen.TypeImage)
-    if got != "" {
-        t.Errorf("BuildPrompt(unicorn) = %q, want empty string", got)
-    }
-}
-```
-
-> **注**: `bogusProfile` 在 Task 2 的 `consistency_test.go` 已经定义。两个 test 文件在同一个 `assetgen_test` package 里，所以可以共享。
-
-- [ ] **Step 3.2: 跑新 test 确认 FAIL（BuildPrompt 还用 struct）**
-
-Run: `cd apps/api && go test -tags fts5 -run TestBuildPromptUnknownType ./internal/assetgen/...`
-Expected: FAIL (BuildPrompt still takes `Profile` struct, not `Profile` interface)
-
-- [ ] **Step 3.3: 重写 `prompts.go` — dispatcher + 公共 helpers**
-
-**完整替换** `apps/api/internal/assetgen/prompts.go` 的内容：
+**完整替换** `apps/api/internal/assetgen/prompts.go`：
 
 ```go
 package assetgen
@@ -612,48 +714,150 @@ func joinPalette(colors []string) string {
 }
 ```
 
-- [ ] **Step 3.4: 跑新 test 确认 PASS**
+- [ ] **Step 1.13: 写 `apps/api/internal/assetgen/consistency_test.go` (dispatcher 测试)**
 
-Run: `cd apps/api && go test -tags fts5 -run TestBuildPromptUnknownType ./internal/assetgen/...`
-Expected: PASS
+```go
+package assetgen_test
 
-- [ ] **Step 3.5: 跑所有 assetgen tests 确认旧 test 还 PASS**
+import (
+    "testing"
 
-Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/...`
-Expected: TestBuildPromptImage + TestBuildPromptVideo PASS (both use assetgen.FenggeV1 directly via the old path)
+    "github.com/opc/api/internal/assetgen"
+)
 
-- [ ] **Step 3.6: Commit**
+// TestConsistencyCheckUnknownType confirms the dispatcher returns
+// Score=0 + explicit fail message when given a Profile whose Type
+// isn't registered.
+func TestConsistencyCheckUnknownType(t *testing.T) {
+    t.Parallel()
 
-```bash
-cd apps/api
-git add internal/assetgen/prompts.go internal/assetgen/prompts_test.go
-git commit -m "refactor(assetgen): BuildPrompt dispatcher (Task 3)
+    bogus := &bogusProfile{typeName: "unicorn"}
+    got := assetgen.ConsistencyCheck(bogus, "anything")
 
-BuildPrompt now dispatches to the type-specific builder
-registered in the registry for the profile's IP type. Nil
-profile + unknown type both return empty string (caller-detectable).
+    if got.Score != 0 {
+        t.Errorf("Score = %v, want 0", got.Score)
+    }
+    if len(got.Fails) != 1 {
+        t.Fatalf("len(Fails) = %d, want 1 (Fails: %v)", len(got.Fails), got.Fails)
+    }
+    if got.Fails[0] != "unknown profile type: unicorn" {
+        t.Errorf("Fails[0] = %q, want %q", got.Fails[0], "unknown profile type: unicorn")
+    }
+}
 
-Public helper joinPalette exported for sub-package builders.
-Old TestBuildPromptImage/Video still PASS (use FenggeV1 directly
-via the old code path)."
+// TestConsistencyCheckNilProfile confirms safeCheck guards nil.
+func TestConsistencyCheckNilProfile(t *testing.T) {
+    t.Parallel()
+
+    got := assetgen.ConsistencyCheck(nil, "anything")
+    if got.Score != 0 {
+        t.Errorf("Score = %v, want 0", got.Score)
+    }
+    if len(got.Fails) != 1 || got.Fails[0] != "nil profile" {
+        t.Errorf("Fails = %v, want [\"nil profile\"]", got.Fails)
+    }
+}
+
+// bogusProfile implements assetgen.Profile but Type() returns a
+// value never registered, so the dispatcher will hit the
+// unknown-type branch.
+type bogusProfile struct{ typeName string }
+
+func (b *bogusProfile) Type() string    { return b.typeName }
+func (b *bogusProfile) Version() string { return "x" }
+func (b *bogusProfile) Name() string    { return "x" }
 ```
 
----
+- [ ] **Step 1.14: 写 `apps/api/internal/assetgen/prompts_test.go`**
 
-### Task 4: 完成 anthropomorphic sub-package (consistency + prompt + JSON embed + tests)
+```go
+package assetgen_test
 
-**Files:**
-- Modify: `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/consistency.go`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/prompts.go`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/profile.json`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/schema.json`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/consistency_test.go`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/prompts_test.go`
-- Create: `apps/api/internal/assetgen/profiles/anthropomorphic/profile_test.go`
-- Modify: `apps/api/internal/assetgen/assetgen_test.go` (替换 FenggeV1 测试为 AnthropomorphicProfile 测试)
+import (
+    "testing"
 
-- [ ] **Step 4.1: 写 consistency_test.go (TDD - 5 个 fixture)**
+    "github.com/opc/api/internal/assetgen"
+)
+
+// TestBuildPromptUnknownType confirms the dispatcher returns ""
+// for unknown IP types so callers can detect and fallback.
+func TestBuildPromptUnknownType(t *testing.T) {
+    t.Parallel()
+
+    bogus := &bogusProfile{typeName: "unicorn"}
+    got := assetgen.BuildPrompt(bogus, "scene", "outfit", assetgen.TypeImage)
+    if got != "" {
+        t.Errorf("BuildPrompt(unicorn) = %q, want empty string", got)
+    }
+}
+```
+
+- [ ] **Step 1.15: 写 `apps/api/internal/assetgen/profiles/anthropomorphic/profile_test.go`**
+
+```go
+package anthropomorphic_test
+
+import (
+    "encoding/json"
+    "testing"
+
+    "github.com/opc/api/internal/assetgen/profiles/anthropomorphic"
+)
+
+func TestProfileRoundTrip(t *testing.T) {
+    t.Parallel()
+
+    p := anthropomorphic.DefaultInstance()
+    if p == nil {
+        t.Fatal("DefaultInstance returned nil")
+    }
+    if p.Type_ != "anthropomorphic" {
+        t.Errorf("Type_ = %q, want anthropomorphic", p.Type_)
+    }
+    if p.Version != "fengge_v1" {
+        t.Errorf("Version = %q, want fengge_v1", p.Version)
+    }
+    if p.Name != "峰哥" {
+        t.Errorf("Name = %q, want 峰哥", p.Name)
+    }
+    if len(p.Palette) < 3 {
+        t.Errorf("len(Palette) = %d, want >= 3", len(p.Palette))
+    }
+
+    // Round-trip: marshal → unmarshal → equal.
+    blob, err := json.Marshal(p)
+    if err != nil {
+        t.Fatalf("Marshal error: %v", err)
+    }
+    var got anthropomorphic.Profile
+    if err := json.Unmarshal(blob, &got); err != nil {
+        t.Fatalf("Unmarshal error: %v", err)
+    }
+    if got.Name != p.Name {
+        t.Errorf("round-trip Name = %q, want %q", got.Name, p.Name)
+    }
+    if len(got.Palette) != len(p.Palette) {
+        t.Errorf("round-trip Palette length = %d, want %d", len(got.Palette), len(p.Palette))
+    }
+}
+
+func TestProfileImplementsAssetgenProfile(t *testing.T) {
+    t.Parallel()
+
+    // Compile-time check that *Profile satisfies assetgen.Profile
+    var _ assetgenAlias = (*anthropomorphic.Profile)(nil)
+}
+
+// assetgenAlias mirrors assetgen.Profile locally so we don't
+// need to import assetgen just for the assertion.
+type assetgenAlias interface {
+    Type() string
+    Version() string
+    Name() string
+}
+```
+
+- [ ] **Step 1.16: 写 `apps/api/internal/assetgen/profiles/anthropomorphic/consistency_test.go`**
 
 ```go
 package anthropomorphic_test
@@ -679,7 +883,7 @@ func TestCheckAnthropomorphicPartial(t *testing.T) {
     t.Parallel()
 
     p := anthropomorphic.DefaultInstance()
-    prompt := "峰哥 在竹林"  // 只有 name
+    prompt := "峰哥 在竹林"
     got := anthropomorphic.Check(p, prompt)
     if got.Score != 0.20 {
         t.Errorf("partial prompt scored %v, want 0.20", got.Score)
@@ -706,10 +910,8 @@ func TestCheckAnthropomorphicTheme(t *testing.T) {
     t.Parallel()
 
     p := anthropomorphic.DefaultInstance()
-    // name + species + body + eye + theme, no anti-AI tokens
     prompt := "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮"
     got := anthropomorphic.Check(p, prompt)
-    // 0.20+0.20+0.20+0.20+0.10 = 0.90
     if got.Score != 0.90 {
         t.Errorf("theme prompt scored %v, want 0.90", got.Score)
     }
@@ -728,139 +930,7 @@ func TestCheckAnthropomorphicNil(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4.2: 跑 test 确认 FAIL（anthropomorphic.Check 还不存在）**
-
-Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/anthropomorphic/...`
-Expected: FAIL (package doesn't exist yet or Check undefined)
-
-- [ ] **Step 4.3: 写 consistency.go**
-
-```go
-// Package anthropomorphic implements the consistency check for
-// anthropomorphic animal IPs (panda, fox, etc.). The 7 anchors
-// and their weights are defined in
-// docs/superpowers/specs/2026-06-11-opc-phase2-ip-template-design.md
-// §7.2.1.
-package anthropomorphic
-
-import (
-    "strings"
-
-    "github.com/opc/api/internal/assetgen"
-)
-
-// Check scores a prompt against the profile's 7 brand anchors.
-// Pure function; no IO. Adapter wrapper around checkAnthropomorphic
-// so callers don't need to import the private function.
-func Check(p assetgen.Profile, prompt string) assetgen.ConsistencyResult {
-    if p == nil {
-        return assetgen.ConsistencyResult{Score: 0, Fails: []string{"nil profile"}}
-    }
-    ap, ok := p.(*Profile)
-    if !ok {
-        return assetgen.ConsistencyResult{
-            Score: 0,
-            Fails: []string{"profile is not *anthropomorphic.Profile"},
-        }
-    }
-    return checkAnthropomorphic(ap, prompt)
-}
-
-func checkAnthropomorphic(p *Profile, prompt string) assetgen.ConsistencyResult {
-    var score float64
-    var fails []string
-
-    add := func(needle, failName string, weight float64) {
-        if strings.Contains(prompt, needle) {
-            score += weight
-        } else {
-            fails = append(fails, failName)
-        }
-    }
-
-    add(p.Name, "no "+p.Name+" name", 0.20)
-    add(p.Species, "no panda species", 0.20)
-    add(p.BodyColor, "no body white color", 0.20)
-    add(p.EyeColor, "no eye black color", 0.20)
-    add("国潮", "no guofeng theme", 0.10)
-    add("不露爪", "no anti-claws", 0.05)
-    add("不要 AI 生成感", "no anti-AI tokens", 0.05)
-
-    return assetgen.ConsistencyResult{
-        Score: assetgen.Round2Public(score),
-        Fails: fails,
-    }
-}
-```
-
-> **注**: Step 4.3 用 `assetgen.Round2Public(score)` —— 这是把父包的 `round2` 改为 public。新建一个 `apps/api/internal/assetgen/round2.go`：
-
-```go
-package assetgen
-
-// Round2Public rounds a float to 2 decimal places. Exported for
-// use by sub-package check functions.
-func Round2Public(f float64) float64 {
-    return round2(f)
-}
-```
-
-- [ ] **Step 4.4: 跑 consistency_test 确认 PASS**
-
-Run: `cd apps/api && go test -tags fts5 -run "TestCheckAnthropomorphic" ./internal/assetgen/profiles/anthropomorphic/...`
-Expected: PASS for all 5 tests
-
-- [ ] **Step 4.5: 写 prompts.go (TDD — prompts_test.go 跑出 FAIL)**
-
-```go
-// Package anthropomorphic implements the prompt builder for
-// anthropomorphic animal IPs. Mirrors Phase 1's BuildPrompt
-// output 1:1 for the fengge_v1 panda instance.
-package anthropomorphic
-
-import (
-    "strings"
-
-    "github.com/opc/api/internal/assetgen"
-)
-
-// BuildPrompt assembles a model prompt for the profile + scene +
-// outfit + asset type. Type-specific builder registered in the
-// parent assetgen registry. Pure function; no IO.
-func BuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
-    if p == nil {
-        return ""
-    }
-    ap, ok := p.(*Profile)
-    if !ok {
-        return ""
-    }
-    return buildAnthropomorphicPrompt(ap, scene, outfit, assetType)
-}
-
-func buildAnthropomorphicPrompt(p *Profile, scene, outfit, assetType string) string {
-    prefix := "一只" + p.Species + "(" + p.Name + "), " + p.BodyShape +
-        ", 面部白 " + p.BodyColor +
-        " 眼周黑 " + p.EyeColor +
-        ", 眼神" + p.EyeExpression +
-        ", 身穿" + outfit + "汉服" +
-        ", 站在" + scene +
-        ", 暖光氛围, 国潮 + 色彩靓丽(" + strings.Join(p.Palette, "/") +
-        "撞色, 非暗色调、非水墨), 不露爪, 不攻击性姿势, 无文字" +
-        ", 不要 AI 生成感"  // M1 adds this so consistency check can reach 1.0
-
-    switch assetType {
-    case assetgen.TypeVideo:
-        return prefix + "  --duration 5 --resolution 720p --ratio 9:16 --watermark true"
-    case assetgen.TypeImage:
-        return prefix + "  --ratio 9:16"
-    default:
-        return prefix
-    }
-}
-```
-
-- [ ] **Step 4.6: 写 prompts_test.go**
+- [ ] **Step 1.17: 写 `apps/api/internal/assetgen/profiles/anthropomorphic/prompts_test.go`**
 
 ```go
 package anthropomorphic_test
@@ -928,7 +998,7 @@ func TestBuildAnthropomorphicNil(t *testing.T) {
 func TestBuildAnthropomorphicWrongType(t *testing.T) {
     t.Parallel()
 
-    bogus := &bogusProfile{typeName: "anthropomorphic"}  // type matches but wrong concrete type
+    bogus := &bogusProfile{typeName: "anthropomorphic"}
     got := anthropomorphic.BuildPrompt(bogus, "scene", "outfit", assetgen.TypeImage)
     if got != "" {
         t.Errorf("wrong-type profile got %q, want empty", got)
@@ -942,246 +1012,80 @@ func (b *bogusProfile) Version() string { return "x" }
 func (b *bogusProfile) Name() string    { return "x" }
 ```
 
-- [ ] **Step 4.7: 跑 prompts_test 确认 PASS**
+- [ ] **Step 1.18: 改 `apps/api/cmd/opc-asset/main.go` — 适配新 API**
 
-Run: `cd apps/api && go test -tags fts5 -run "TestBuildAnthropomorphic" ./internal/assetgen/profiles/anthropomorphic/...`
-Expected: PASS for all 4 tests
+具体改法:
+1. 删 `*profileVersion` flag (Task 5 加 `--type`)
+2. 改 2 处 `prof := assetgen.GetProfile(*profileVersion)` → `prof := assetgen.MustLoadProfile("anthropomorphic")`
+3. 改 5 处 `prof.Version` → `prof.Version()`
 
-- [ ] **Step 4.8: 写 profile.json (默认 instance) + schema.json (验证 schema)**
+Run: `cd apps/api && go build -tags fts5 -o /tmp/v-opc-asset-new ./cmd/opc-asset`
+Expected: exit 0
 
-**`profile.json`**:
+- [ ] **Step 1.19: 跑全 assetgen + opc-asset tests 确认 0 回归**
 
-```json
-{
-  "version": "fengge_v1",
-  "name": "峰哥",
-  "type": "anthropomorphic",
-  "species": "成年熊猫",
-  "body_shape": "头身比 1:1.2 圆胖身材",
-  "body_color": "rgb(245,240,225)",
-  "eye_color": "rgb(26,26,26)",
-  "eye_expression": "半阖带笑意, 不直视镜头",
-  "palette": ["朱红#C73E1D", "暖橙#E89B45", "翠绿#3B8C5A", "宝蓝#1F5FA8", "米白#F5F0E1"]
-}
-```
+Run: `cd apps/api && go test -tags fts5 -count=1 ./internal/assetgen/... ./cmd/opc-asset/...`
+Expected: All PASS (TestProfileFenggeV1, TestBuildPromptImage, TestBuildPromptVideo, TestConsistencyCheck, TestConsistencyCheckUnknownType, TestConsistencyCheckNilProfile, TestBuildPromptUnknownType, plus all 4 anthropomorphic sub-package tests = 12 tests)
 
-**`schema.json`**:
+- [ ] **Step 1.20: 跑全 API tests 确认没破**
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "required": ["version", "name", "type", "species", "body_shape", "body_color", "eye_color", "eye_expression", "palette"],
-  "properties": {
-    "version": { "type": "string" },
-    "name": { "type": "string" },
-    "type": { "const": "anthropomorphic" },
-    "species": { "type": "string" },
-    "body_shape": { "type": "string" },
-    "body_color": { "type": "string" },
-    "eye_color": { "type": "string" },
-    "eye_expression": { "type": "string" },
-    "palette": {
-      "type": "array",
-      "minItems": 3,
-      "items": { "type": "string" }
-    }
-  }
-}
-```
+Run: `cd apps/api && go test -tags fts5 -count=1 ./...`
+Expected: All PASS
 
-- [ ] **Step 4.9: 写 profile.go 完整版 (load JSON, register, expose DefaultInstance)**
-
-**完整替换** `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go`：
-
-```go
-// Package anthropomorphic registers the anthropomorphic IP type
-// (拟人动物 — panda, fox, dog, ...) into the assetgen registry.
-// M1 ships one instance: fengge_v1 (峰哥 / adult panda) loaded
-// from profile.json via //go:embed.
-package anthropomorphic
-
-import (
-    _ "embed"
-    "encoding/json"
-    "fmt"
-
-    "github.com/opc/api/internal/assetgen"
-)
-
-// Profile is the concrete schema for an anthropomorphic animal IP.
-// Field names match profile.json keys (snake_case → Go PascalCase).
-type Profile struct {
-    Version       string
-    Name          string
-    Type          string
-    Species       string
-    BodyShape     string
-    BodyColor     string
-    EyeColor      string
-    EyeExpression string
-    Palette       []string
-}
-
-// Type implements assetgen.Profile.
-func (p *Profile) Type() string { return p.Type_ }
-
-// Type_ is the actual field name; Type() method above conflicts.
-// Same Go workaround as Round2Public pattern.
-func (p *Profile) Type_() string { return p.Type }
-
-// Version implements assetgen.Profile.
-func (p *Profile) Version() string { return p.Version }
-
-// Name implements assetgen.Profile.
-func (p *Profile) Name() string { return p.Name }
-
-//go:embed profile.json
-var profileJSON []byte
-
-//go:embed schema.json
-var schemaJSON []byte
-
-// defaultInstance is loaded from profile.json at init() time.
-// M1 has one instance per type; M2 may add per-version lookup.
-var defaultInstance *Profile
-
-func init() {
-    if err := json.Unmarshal(profileJSON, &defaultInstance); err != nil {
-        panic(fmt.Sprintf("anthropomorphic: failed to unmarshal profile.json: %v", err))
-    }
-    if defaultInstance.Type != "anthropomorphic" {
-        panic(fmt.Sprintf("anthropomorphic: profile.json has type %q, want anthropomorphic", defaultInstance.Type))
-    }
-    assetgen.Register("anthropomorphic", assetgen.ProfileEntry{
-        Schema:      defaultInstance,
-        Check:       Check,
-        BuildPrompt: BuildPrompt,
-    })
-}
-
-// DefaultInstance returns the canonical fengge_v1 panda instance.
-// Exported so other sub-packages (and tests) can reference the
-// "official" anthropomorphic profile.
-func DefaultInstance() *Profile { return defaultInstance }
-
-// SchemaJSON returns the JSON Schema for this type. Exported for
-// M2's profile upload endpoint to validate user-uploaded profiles.
-func SchemaJSON() []byte { return schemaJSON }
-```
-
-- [ ] **Step 4.10: 写 profile_test.go (round-trip + load)**
-
-```go
-package anthropomorphic_test
-
-import (
-    "encoding/json"
-    "testing"
-
-    "github.com/opc/api/internal/assetgen/profiles/anthropomorphic"
-)
-
-func TestProfileRoundTrip(t *testing.T) {
-    t.Parallel()
-
-    p := anthropomorphic.DefaultInstance()
-    if p == nil {
-        t.Fatal("DefaultInstance returned nil")
-    }
-    if p.Type != "anthropomorphic" {
-        t.Errorf("Type = %q, want anthropomorphic", p.Type)
-    }
-    if p.Version != "fengge_v1" {
-        t.Errorf("Version = %q, want fengge_v1", p.Version)
-    }
-    if p.Name != "峰哥" {
-        t.Errorf("Name = %q, want 峰哥", p.Name)
-    }
-    if len(p.Palette) < 3 {
-        t.Errorf("len(Palette) = %d, want >= 3", len(p.Palette))
-    }
-
-    // Round-trip: marshal → unmarshal → equal.
-    blob, err := json.Marshal(p)
-    if err != nil {
-        t.Fatalf("Marshal error: %v", err)
-    }
-    var got anthropomorphic.Profile
-    if err := json.Unmarshal(blob, &got); err != nil {
-        t.Fatalf("Unmarshal error: %v", err)
-    }
-    if got.Name != p.Name {
-        t.Errorf("round-trip Name = %q, want %q", got.Name, p.Name)
-    }
-    if len(got.Palette) != len(p.Palette) {
-        t.Errorf("round-trip Palette length = %d, want %d", len(got.Palette), len(p.Palette))
-    }
-}
-
-func TestProfileImplementsAssetgenProfile(t *testing.T) {
-    t.Parallel()
-
-    var _ assetgenAlias = (*anthropomorphic.Profile)(nil)
-}
-
-// assetgenAlias is a forward declaration to avoid importing
-// assetgen in this test file. Compiles only if *Profile satisfies
-// the assetgen.Profile interface.
-type assetgenAlias interface {
-    Type() string
-    Version() string
-    Name() string
-}
-```
-
-> **注**: `assetgenAlias` 是 local interface mirroring `assetgen.Profile`。如果 `*anthropomorphic.Profile` 满足这个，编译期就保证它也满足 `assetgen.Profile`。`var _ assetgenAlias = ...` 是 Go 标准的 interface-satisfaction compile-time check。
-
-- [ ] **Step 4.11: 跑 profile_test 确认 PASS**
-
-Run: `cd apps/api && go test -tags fts5 -run "TestProfile" ./internal/assetgen/profiles/anthropomorphic/...`
-Expected: PASS
-
-- [ ] **Step 4.12: 删除原 FenggeV1 stub 字段 + stubCheck/stubBuildPrompt (现在 init 用真的 Check/BuildPrompt)**
-
-打开 `apps/api/internal/assetgen/profiles/anthropomorphic/profile.go`——已经在 Step 4.9 重写为完整版，stub 已被替换。
-
-- [ ] **Step 4.13: 跑全 assetgen tests 确认全绿**
-
-Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/...`
-Expected: All tests PASS (TestProfileFenggeV1, TestBuildPromptImage, TestBuildPromptVideo, TestConsistencyCheck, TestProfileInterface, TestConsistencyCheckUnknownType, TestConsistencyCheckNilProfile, TestBuildPromptUnknownType, plus all anthropomorphic sub-package tests)
-
-- [ ] **Step 4.14: Commit**
+- [ ] **Step 1.21: Commit**
 
 ```bash
 cd apps/api
-git add internal/assetgen/profiles/anthropomorphic/
-git commit -m "feat(assetgen): anthropomorphic sub-package complete (Task 4)
+git add internal/assetgen/ internal/cmd/  # internal/cmd/ 修正:实际是 cmd/
+git commit -m "refactor(assetgen): Profile interface + dispatcher + anthropomorphic (Task 1, combined)
 
-Full implementation: consistency check (7 anchors, 0.95-1.0
-range), prompt builder (image + video), JSON profile +
-schema embedded via //go:embed, DefaultInstance() loader.
+Major parent-package refactor: Profile is now an interface
+(Type/Version/Name) with 4 sub-package implementations behind a
+registry + dispatcher. The hard-boundary sub-package design from
+spec §5.1 is now in code: profiles/{anthropomorphic,...}/ each
+own their concrete Profile struct, consistency check, and prompt
+builder, and register via init().
 
-Profile fields: version, name, type, species, body_shape,
-body_color, eye_color, eye_expression, palette. JSON instance
-transpiled 1:1 from Phase 1 FenggeV1.
+Profile interface unifies the 3 places that used to take the
+old *Profile struct (consistency.go, prompts.go, opc-asset
+main.go) — now they all take Profile interface and the
+dispatcher routes by Type().
 
-init() registers the type with the real Check + BuildPrompt
-(replaces Task 1's stub). 10 new tests (5 consistency + 4
-prompt + 1 round-trip) all PASS. assetgen package coverage
-now > 80%."
+anthropomorphic sub-package: complete M1 instance (fengge_v1 /
+峰哥 / adult panda). profile.json + schema.json embedded via
+//go:embed. 7-anchor consistency check (1.0 perfect / 0.95 from
+BuildPrompt output / 0.20 name-only). Image+video prompt
+builders.
+
+Old assetgen_test.go 4 tests updated to use
+anthropomorphic.DefaultInstance() instead of the removed
+assetgen.FenggeV1 struct. assetgen.GetProfile removed; callers
+use assetgen.LoadProfile(\"anthropomorphic\") or
+assetgen.MustLoadProfile(\"anthropomorphic\") (opc-asset uses
+the latter). prof.Version field access → prof.Version() method
+call (5 sites in opc-asset).
+
+12 new tests added (TestProfileFenggeV1 + 2 dispatcher
++ 9 anthropomorphic sub-package). assetgen package coverage
+> 80%. go vet / go build / go test all clean.
+
+Note: Tasks 1+2+3+4 of the original 9-task plan were merged
+into this single Task 1 after a Go type-system conflict
+discovered during the first subagent dispatch (can't have
+type Profile struct + type Profile interface in the same
+package). Plan is now 6 tasks total (was 9)."
 ```
 
 ---
 
-### Task 5: digital_human sub-package (TDD)
+### Task 2: digital_human sub-package (was Task 5)
 
 **Files:**
 - Create: `apps/api/internal/assetgen/profiles/digital_human/{profile,consistency,prompts}.go`
 - Create: `apps/api/internal/assetgen/profiles/digital_human/{profile,schema}.json`
 - Create: `apps/api/internal/assetgen/profiles/digital_human/*_test.go`
 
-- [ ] **Step 5.1: 写 consistency_test.go (5 个 fixture)**
+- [ ] **Step 2.1: 写 consistency_test.go (5 个 fixture)**
 
 ```go
 package digital_human_test
@@ -1207,7 +1111,7 @@ func TestCheckDigitalHumanPartial(t *testing.T) {
     t.Parallel()
 
     p := digital_human.DefaultInstance()
-    prompt := "莉娜 28 岁 female"  // name + age + gender = 0.35
+    prompt := "莉娜 28 岁 female"
     got := digital_human.Check(p, prompt)
     if got.Score != 0.35 {
         t.Errorf("partial scored %v, want 0.35", got.Score)
@@ -1240,7 +1144,6 @@ func TestCheckDigitalHumanSkinToneWeight(t *testing.T) {
     t.Parallel()
 
     p := digital_human.DefaultInstance()
-    // Only skin_tone anchor
     prompt := "rgb(245,228,210)"
     got := digital_human.Check(p, prompt)
     if got.Score != 0.15 {
@@ -1249,14 +1152,13 @@ func TestCheckDigitalHumanSkinToneWeight(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5.2: 跑 test 确认 FAIL**
+- [ ] **Step 2.2: 跑 test 确认 FAIL**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/digital_human/...`
 Expected: FAIL (package doesn't exist)
 
-- [ ] **Step 5.3: 写 consistency.go + profile.go + prompts.go + profile.json + schema.json**
+- [ ] **Step 2.3: 写 `profile.json`**
 
-**`profile.json`**:
 ```json
 {
   "version": "lina_v1",
@@ -1273,7 +1175,8 @@ Expected: FAIL (package doesn't exist)
 }
 ```
 
-**`schema.json`**:
+- [ ] **Step 2.4: 写 `schema.json`**
+
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1295,7 +1198,8 @@ Expected: FAIL (package doesn't exist)
 }
 ```
 
-**`profile.go`** (与 anthropomorphic 同构):
+- [ ] **Step 2.5: 写 `profile.go` (与 anthropomorphic 同构, 但用 `digital_human.Profile`)**
+
 ```go
 // Package digital_human registers the digital_human IP type
 // (数字人 — virtual YouTubers, virtual idols, news anchors).
@@ -1313,7 +1217,7 @@ import (
 type Profile struct {
     Version     string
     Name        string
-    Type        string
+    Type_       string
     Age         int
     Gender      string
     Ethnicity   string
@@ -1324,8 +1228,7 @@ type Profile struct {
     AccentColor string
 }
 
-func (p *Profile) Type_() string    { return p.Type }
-func (p *Profile) Type() string     { return p.Type_() }
+func (p *Profile) Type() string    { return p.Type_ }
 func (p *Profile) Version() string  { return p.Version }
 func (p *Profile) Name() string     { return p.Name }
 
@@ -1341,8 +1244,8 @@ func init() {
     if err := json.Unmarshal(profileJSON, &defaultInstance); err != nil {
         panic(fmt.Sprintf("digital_human: failed to unmarshal profile.json: %v", err))
     }
-    if defaultInstance.Type != "digital_human" {
-        panic(fmt.Sprintf("digital_human: profile.json has type %q", defaultInstance.Type))
+    if defaultInstance.Type_ != "digital_human" {
+        panic(fmt.Sprintf("digital_human: profile.json has type %q", defaultInstance.Type_))
     }
     assetgen.Register("digital_human", assetgen.ProfileEntry{
         Schema:      defaultInstance,
@@ -1355,7 +1258,8 @@ func DefaultInstance() *Profile { return defaultInstance }
 func SchemaJSON() []byte        { return schemaJSON }
 ```
 
-**`consistency.go`** (按 spec §7.2.2 的 8 个 anchor):
+- [ ] **Step 2.6: 写 `consistency.go` (8 anchor, 1.0 total)**
+
 ```go
 package digital_human
 
@@ -1405,7 +1309,8 @@ func checkDigitalHuman(p *Profile, prompt string) assetgen.ConsistencyResult {
 }
 ```
 
-**`prompts.go`** (按 spec §9.3 模板):
+- [ ] **Step 2.7: 写 `prompts.go`**
+
 ```go
 package digital_human
 
@@ -1439,10 +1344,9 @@ func BuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
 }
 ```
 
-- [ ] **Step 5.4: 写 prompts_test.go + profile_test.go (跟 anthropomorphic 同构)**
+- [ ] **Step 2.8: 写 `prompts_test.go`**
 
 ```go
-// prompts_test.go
 package digital_human_test
 
 import (
@@ -1473,8 +1377,9 @@ func TestBuildDigitalHumanImage(t *testing.T) {
 }
 ```
 
+- [ ] **Step 2.9: 写 `profile_test.go`**
+
 ```go
-// profile_test.go
 package digital_human_test
 
 import (
@@ -1490,8 +1395,8 @@ func TestDigitalHumanProfileRoundTrip(t *testing.T) {
     if p == nil {
         t.Fatal("DefaultInstance returned nil")
     }
-    if p.Type != "digital_human" {
-        t.Errorf("Type = %q, want digital_human", p.Type)
+    if p.Type_ != "digital_human" {
+        t.Errorf("Type_ = %q, want digital_human", p.Type_)
     }
     if p.Version != "lina_v1" {
         t.Errorf("Version = %q, want lina_v1", p.Version)
@@ -1502,17 +1407,17 @@ func TestDigitalHumanProfileRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5.5: 跑全 sub-package test 确认 PASS**
+- [ ] **Step 2.10: 跑全 sub-package test 确认 PASS**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/digital_human/...`
 Expected: All tests PASS
 
-- [ ] **Step 5.6: Commit**
+- [ ] **Step 2.11: Commit**
 
 ```bash
 cd apps/api
 git add internal/assetgen/profiles/digital_human/
-git commit -m "feat(assetgen): digital_human sub-package (Task 5)
+git commit -m "feat(assetgen): digital_human sub-package (Task 2)
 
 Lina (莉娜 / 28yo East-Asian female virtual anchor) instance +
 8-anchor consistency check (name/age/gender/ethnicity/skin_tone/
@@ -1525,14 +1430,14 @@ tests all PASS."
 
 ---
 
-### Task 6: costume sub-package (TDD)
+### Task 3: costume sub-package (was Task 6)
 
 **Files:**
 - Create: `apps/api/internal/assetgen/profiles/costume/{profile,consistency,prompts}.go`
 - Create: `apps/api/internal/assetgen/profiles/costume/{profile,schema}.json`
 - Create: `apps/api/internal/assetgen/profiles/costume/*_test.go`
 
-- [ ] **Step 6.1: 写 consistency_test.go (5 个 fixture)**
+- [ ] **Step 3.1: 写 consistency_test.go**
 
 ```go
 package costume_test
@@ -1558,7 +1463,7 @@ func TestCheckCostumePartial(t *testing.T) {
     t.Parallel()
 
     p := costume.DefaultInstance()
-    prompt := "纤云 唐代"  // name + era = 0.35
+    prompt := "纤云 唐代"
     got := costume.Check(p, prompt)
     if got.Score != 0.35 {
         t.Errorf("partial scored %v, want 0.35", got.Score)
@@ -1591,7 +1496,6 @@ func TestCheckCostumeNoAnachronism(t *testing.T) {
     t.Parallel()
 
     p := costume.DefaultInstance()
-    // name + era + role + no_anachronism = 0.15+0.20+0.10+0.15 = 0.60
     prompt := "纤云, 唐代, 侠女, 无穿越"
     got := costume.Check(p, prompt)
     if got.Score != 0.60 {
@@ -1600,14 +1504,13 @@ func TestCheckCostumeNoAnachronism(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6.2: 跑 test 确认 FAIL**
+- [ ] **Step 3.2: 跑 test 确认 FAIL**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/costume/...`
 Expected: FAIL
 
-- [ ] **Step 6.3: 写 consistency.go + profile.go + prompts.go + profile.json + schema.json**
+- [ ] **Step 3.3: 写 profile.json**
 
-**`profile.json`**:
 ```json
 {
   "version": "xianyun_v1",
@@ -1621,7 +1524,8 @@ Expected: FAIL
 }
 ```
 
-**`schema.json`**:
+- [ ] **Step 3.4: 写 schema.json**
+
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1640,7 +1544,8 @@ Expected: FAIL
 }
 ```
 
-**`profile.go`** (与 anthropomorphic 同构):
+- [ ] **Step 3.5: 写 profile.go**
+
 ```go
 // Package costume registers the costume IP type (古装 — historical
 // period drama characters). M1 ships one instance: xianyun_v1
@@ -1656,18 +1561,17 @@ import (
 )
 
 type Profile struct {
-    Version       string
-    Name          string
-    Type          string
-    Era           string
-    Role          string
-    CostumeLayer  []string
-    PropKit       []string
-    Palette       []string
+    Version      string
+    Name         string
+    Type_        string
+    Era          string
+    Role         string
+    CostumeLayer []string
+    PropKit      []string
+    Palette      []string
 }
 
-func (p *Profile) Type_() string    { return p.Type }
-func (p *Profile) Type() string     { return p.Type_() }
+func (p *Profile) Type() string    { return p.Type_ }
 func (p *Profile) Version() string  { return p.Version }
 func (p *Profile) Name() string     { return p.Name }
 
@@ -1683,8 +1587,8 @@ func init() {
     if err := json.Unmarshal(profileJSON, &defaultInstance); err != nil {
         panic(fmt.Sprintf("costume: failed to unmarshal profile.json: %v", err))
     }
-    if defaultInstance.Type != "costume" {
-        panic(fmt.Sprintf("costume: profile.json has type %q", defaultInstance.Type))
+    if defaultInstance.Type_ != "costume" {
+        panic(fmt.Sprintf("costume: profile.json has type %q", defaultInstance.Type_))
     }
     assetgen.Register("costume", assetgen.ProfileEntry{
         Schema:      defaultInstance,
@@ -1697,7 +1601,8 @@ func DefaultInstance() *Profile { return defaultInstance }
 func SchemaJSON() []byte        { return schemaJSON }
 ```
 
-**`consistency.go`** (按 spec §7.2.3 的 7 个 anchor):
+- [ ] **Step 3.6: 写 consistency.go (7 anchor, 1.0 total)**
+
 ```go
 package costume
 
@@ -1734,7 +1639,6 @@ func checkCostume(p *Profile, prompt string) assetgen.ConsistencyResult {
     add(p.Era, "no era", 0.20)
     add(p.Role, "no role", 0.10)
 
-    // Costume layers and props — at least one of each must appear.
     layerFound := false
     for _, layer := range p.CostumeLayer {
         if strings.Contains(prompt, layer) {
@@ -1763,7 +1667,6 @@ func checkCostume(p *Profile, prompt string) assetgen.ConsistencyResult {
 
     add("无穿越", "no anti-anachronism", 0.15)
 
-    // Color consistency — at least one palette color appears.
     colorFound := false
     for _, c := range p.Palette {
         if strings.Contains(prompt, c) {
@@ -1784,7 +1687,8 @@ func checkCostume(p *Profile, prompt string) assetgen.ConsistencyResult {
 }
 ```
 
-**`prompts.go`**:
+- [ ] **Step 3.7: 写 prompts.go**
+
 ```go
 package costume
 
@@ -1822,7 +1726,7 @@ func BuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
 }
 ```
 
-- [ ] **Step 6.4: 写 prompts_test.go + profile_test.go (同构)**
+- [ ] **Step 3.8: 写 prompts_test.go + profile_test.go**
 
 ```go
 // prompts_test.go
@@ -1873,8 +1777,8 @@ func TestCostumeProfileRoundTrip(t *testing.T) {
     if p == nil {
         t.Fatal("DefaultInstance returned nil")
     }
-    if p.Type != "costume" {
-        t.Errorf("Type = %q, want costume", p.Type)
+    if p.Type_ != "costume" {
+        t.Errorf("Type_ = %q, want costume", p.Type_)
     }
     if p.Version != "xianyun_v1" {
         t.Errorf("Version = %q, want xianyun_v1", p.Version)
@@ -1888,17 +1792,17 @@ func TestCostumeProfileRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6.5: 跑全 sub-package test 确认 PASS**
+- [ ] **Step 3.9: 跑全 sub-package test 确认 PASS**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/costume/...`
 Expected: All tests PASS
 
-- [ ] **Step 6.6: Commit**
+- [ ] **Step 3.10: Commit**
 
 ```bash
 cd apps/api
 git add internal/assetgen/profiles/costume/
-git commit -m "feat(assetgen): costume sub-package (Task 6)
+git commit -m "feat(assetgen): costume sub-package (Task 3)
 
 Xianyun (纤云 / Tang dynasty 侠女) instance + 7-anchor
 consistency check (name/era/role/costume_layer/prop_kit/
@@ -1911,14 +1815,14 @@ tests all PASS."
 
 ---
 
-### Task 7: info sub-package (TDD)
+### Task 4: info sub-package (was Task 7)
 
 **Files:**
 - Create: `apps/api/internal/assetgen/profiles/info/{profile,consistency,prompts}.go`
 - Create: `apps/api/internal/assetgen/profiles/info/{profile,schema}.json`
 - Create: `apps/api/internal/assetgen/profiles/info/*_test.go`
 
-- [ ] **Step 7.1: 写 consistency_test.go (5 个 fixture)**
+- [ ] **Step 4.1: 写 consistency_test.go**
 
 ```go
 package info_test
@@ -1944,7 +1848,7 @@ func TestCheckInfoPartial(t *testing.T) {
     t.Parallel()
 
     p := info.DefaultInstance()
-    prompt := "OPC 每日资讯, 演播室双主播, 主播阿橙"  // name + style + persona = 0.60
+    prompt := "OPC 每日资讯, 演播室双主播, 主播阿橙"
     got := info.Check(p, prompt)
     if got.Score != 0.60 {
         t.Errorf("partial scored %v, want 0.60", got.Score)
@@ -1977,24 +1881,21 @@ func TestCheckInfoNoAIBroadcast(t *testing.T) {
     t.Parallel()
 
     p := info.DefaultInstance()
-    // 5 of 6 anchors except no_ai_broadcast
     prompt := "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225)"
     got := info.Check(p, prompt)
-    // 0.20+0.20+0.15+0.15+0.10 = 0.80
     if got.Score != 0.80 {
         t.Errorf("no-ai-broadcast prompt scored %v, want 0.80", got.Score)
     }
 }
 ```
 
-- [ ] **Step 7.2: 跑 test 确认 FAIL**
+- [ ] **Step 4.2: 跑 test 确认 FAIL**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/info/...`
 Expected: FAIL
 
-- [ ] **Step 7.3: 写 consistency.go + profile.go + prompts.go + profile.json + schema.json**
+- [ ] **Step 4.3: 写 profile.json**
 
-**`profile.json`**:
 ```json
 {
   "version": "opc_daily_v1",
@@ -2008,7 +1909,8 @@ Expected: FAIL
 }
 ```
 
-**`schema.json`**:
+- [ ] **Step 4.4: 写 schema.json**
+
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2027,7 +1929,8 @@ Expected: FAIL
 }
 ```
 
-**`profile.go`** (与 anthropomorphic 同构):
+- [ ] **Step 4.5: 写 profile.go**
+
 ```go
 // Package info registers the info IP type (资讯 — news/information
 // host shows). M1 ships one instance: opc_daily_v1 (OPC 每日资讯
@@ -2045,7 +1948,7 @@ import (
 type Profile struct {
     Version         string
     Name            string
-    Type            string
+    Type_           string
     NewsroomStyle   string
     HostPersona     string
     FontTone        string
@@ -2053,8 +1956,7 @@ type Profile struct {
     BackgroundColor string
 }
 
-func (p *Profile) Type_() string    { return p.Type }
-func (p *Profile) Type() string     { return p.Type_() }
+func (p *Profile) Type() string    { return p.Type_ }
 func (p *Profile) Version() string  { return p.Version }
 func (p *Profile) Name() string     { return p.Name }
 
@@ -2070,8 +1972,8 @@ func init() {
     if err := json.Unmarshal(profileJSON, &defaultInstance); err != nil {
         panic(fmt.Sprintf("info: failed to unmarshal profile.json: %v", err))
     }
-    if defaultInstance.Type != "info" {
-        panic(fmt.Sprintf("info: profile.json has type %q", defaultInstance.Type))
+    if defaultInstance.Type_ != "info" {
+        panic(fmt.Sprintf("info: profile.json has type %q", defaultInstance.Type_))
     }
     assetgen.Register("info", assetgen.ProfileEntry{
         Schema:      defaultInstance,
@@ -2084,7 +1986,8 @@ func DefaultInstance() *Profile { return defaultInstance }
 func SchemaJSON() []byte        { return schemaJSON }
 ```
 
-**`consistency.go`** (按 spec §7.2.4 的 6 个 anchor):
+- [ ] **Step 4.6: 写 consistency.go (6 anchor, 1.0 total)**
+
 ```go
 package info
 
@@ -2131,7 +2034,8 @@ func checkInfo(p *Profile, prompt string) assetgen.ConsistencyResult {
 }
 ```
 
-**`prompts.go`**:
+- [ ] **Step 4.7: 写 prompts.go**
+
 ```go
 package info
 
@@ -2165,7 +2069,7 @@ func BuildPrompt(p assetgen.Profile, scene, outfit, assetType string) string {
 }
 ```
 
-- [ ] **Step 7.4: 写 prompts_test.go + profile_test.go (同构)**
+- [ ] **Step 4.8: 写 prompts_test.go + profile_test.go**
 
 ```go
 // prompts_test.go
@@ -2216,8 +2120,8 @@ func TestInfoProfileRoundTrip(t *testing.T) {
     if p == nil {
         t.Fatal("DefaultInstance returned nil")
     }
-    if p.Type != "info" {
-        t.Errorf("Type = %q, want info", p.Type)
+    if p.Type_ != "info" {
+        t.Errorf("Type_ = %q, want info", p.Type_)
     }
     if p.Version != "opc_daily_v1" {
         t.Errorf("Version = %q, want opc_daily_v1", p.Version)
@@ -2228,17 +2132,17 @@ func TestInfoProfileRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 7.5: 跑全 sub-package test 确认 PASS**
+- [ ] **Step 4.9: 跑全 sub-package test 确认 PASS**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/profiles/info/...`
 Expected: All tests PASS
 
-- [ ] **Step 7.6: Commit**
+- [ ] **Step 4.10: Commit**
 
 ```bash
 cd apps/api
 git add internal/assetgen/profiles/info/
-git commit -m "feat(assetgen): info sub-package (Task 7)
+git commit -m "feat(assetgen): info sub-package (Task 4)
 
 OPC Daily News (OPC 每日资讯 / 演播室双主播 / 主播阿橙) instance
 + 6-anchor consistency check (host_persona/newsroom_style/
@@ -2251,54 +2155,50 @@ tests all PASS. assetgen package now has 4 IP types registered."
 
 ---
 
-### Task 8: opc-asset CLI 加 `--type` flag
+### Task 5: opc-asset CLI 加 `--type` flag (was Task 8)
 
 **Files:**
 - Modify: `apps/api/cmd/opc-asset/main.go`
-- Create or Modify: `apps/api/cmd/opc-asset/main_test.go` (or add tests in a new file)
+- Create: `apps/api/cmd/opc-asset/main_test.go` (如不存在)
 
-- [ ] **Step 8.1: 写 CLI test 覆盖 `--type` flag 4 个值**
-
-**新建** `apps/api/cmd/opc-asset/main_test.go`（如不存在）：
+- [ ] **Step 5.1: 写 CLI test 覆盖 `--type` flag 4 个值**
 
 ```go
 package main
 
 import (
+    "bytes"
+    "io"
+    "os"
     "strings"
     "testing"
 )
 
 // TestRunCheckAllTypes confirms the --type flag is wired and each
-// of the 4 IP types produces a non-empty ConsistencyResult for
-// a hand-crafted prompt that hits all anchors.
+// of the 4 IP types produces a high ConsistencyResult for a
+// hand-crafted prompt that hits all anchors.
 func TestRunCheckAllTypes(t *testing.T) {
     t.Parallel()
 
     cases := []struct {
         typeName string
         prompt   string
-        wantMin  float64
     }{
         {
             typeName: "anthropomorphic",
             prompt:   "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感",
-            wantMin:  0.99,
         },
         {
             typeName: "digital_human",
             prompt:   "莉娜, 28, female, 东亚, rgb(245,228,210), 温柔知性, 普通话, 表情自然, 无恐怖谷",
-            wantMin:  0.99,
         },
         {
             typeName: "costume",
             prompt:   "纤云, 唐代, 侠女, 襦裙, 长剑, 无穿越, 朱红#C73E1D",
-            wantMin:  0.99,
         },
         {
             typeName: "info",
             prompt:   "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225), 无 AI 播报感",
-            wantMin:  0.99,
         },
     }
 
@@ -2308,80 +2208,94 @@ func TestRunCheckAllTypes(t *testing.T) {
             t.Parallel()
 
             args := []string{"check", "--type", tc.typeName, "--prompt", tc.prompt}
-            // Capture stdout.
-            var buf strings.Builder
-            old := stdout
-            stdout = &buf
-            defer func() { stdout = old }()
-
-            err := runCheck(args)
-            if err != nil {
-                t.Fatalf("runCheck(%v) error: %v", args, err)
-            }
-            output := buf.String()
-            if !strings.Contains(output, "0.99") && !strings.Contains(output, "1.0") {
+            output := captureStdout(t, func() {
+                if err := runCheck(args); err != nil {
+                    t.Fatalf("runCheck(%v) error: %v", args, err)
+                }
+            })
+            if !strings.Contains(output, "0.99") && !strings.Contains(output, "1.00") {
                 t.Errorf("output missing score >= 0.99: %s", output)
             }
         })
     }
 }
+
+// captureStdout redirects os.Stdout during fn, returns what was
+// printed. Used for CLI tests that print to stdout instead of
+// returning strings.
+func captureStdout(t *testing.T, fn func()) string {
+    t.Helper()
+
+    old := os.Stdout
+    r, w, err := os.Pipe()
+    if err != nil {
+        t.Fatalf("os.Pipe: %v", err)
+    }
+    os.Stdout = w
+
+    fn()
+
+    w.Close()
+    os.Stdout = old
+
+    var buf bytes.Buffer
+    if _, err := io.Copy(&buf, r); err != nil {
+        t.Fatalf("io.Copy: %v", err)
+    }
+    return buf.String()
+}
 ```
 
-> **注**: 上面用 `stdout` 变量。Task 8.3 会重构 main.go 引入 `var stdout io.Writer = os.Stdout` 便于测试。
-
-- [ ] **Step 8.2: 跑 test 确认 FAIL（`runCheck` 不存在或不接受 `--type`）**
+- [ ] **Step 5.2: 跑 test 确认 FAIL（`runCheck` 不接受 `--type`）**
 
 Run: `cd apps/api && go test -tags fts5 -run TestRunCheckAllTypes ./cmd/opc-asset/...`
-Expected: FAIL (function or flag undefined)
+Expected: FAIL (unknown flag --type)
 
-- [ ] **Step 8.3: 重构 main.go — 加 `var stdout io.Writer = os.Stdout` + `--type` flag + 4 type 路由**
+- [ ] **Step 5.3: 改 `main.go` — 加 `--type` flag, 默认 anthropomorphic, 改用 MustLoadProfile**
 
-**完整替换** `apps/api/cmd/opc-asset/main.go`（保留 `usage()` + `runCheck/Generate/Ledger` 框架，加 type flag）：
+**关键改动** (具体 diff 视 main.go 现状, 思路):
 
-> **注意**: 这是大改。建议用 3 步：(a) 加 `var stdout io.Writer = os.Stdout` + 把所有 `fmt.Println` 换成 `fmt.Fprintln(stdout, ...)`; (b) 加 `--type` flag (default "anthropomorphic") + `ipType` 变量; (c) `runCheck` 用 `ipType` 调 `assetgen.LoadProfile(ipType)` 而非 `assetgen.GetProfile(*profileVersion)`。`runGenerate` 同理。
+1. 加 `var ipType = flag.String("type", "anthropomorphic", "IP type: anthropomorphic/digital_human/costume/info")` 在 `runCheck` / `runGenerate` 的 flag.StringVar 段
+2. 删 `profileVersion` flag (Task 1 改时已删)
+3. `runCheck` 和 `runGenerate` 里 `prof := assetgen.MustLoadProfile("anthropomorphic")` 改为 `prof := assetgen.MustLoadProfile(*ipType)`
+4. 任何 `fmt.Println` 加 `\n` (test 用 captureStdout 期望 newline)
 
-- [ ] **Step 8.4: 跑 TestRunCheckAllTypes 确认 PASS**
+- [ ] **Step 5.4: 跑 TestRunCheckAllTypes 确认 PASS**
 
 Run: `cd apps/api && go test -tags fts5 -run TestRunCheckAllTypes ./cmd/opc-asset/...`
 Expected: PASS for all 4 sub-tests
 
-- [ ] **Step 8.5: 跑 build 确认 binary 仍可编译**
+- [ ] **Step 5.5: 跑 build 确认 binary 仍可编译**
 
-Run: `cd apps/api && go build -tags fts5 -o /tmp/v-opc-asset ./cmd/opc-asset`
-Expected: exit 0, binary at /tmp/v-opc-asset
+Run: `cd apps/api && go build -tags fts5 -o /tmp/v-opc-asset-task5 ./cmd/opc-asset`
+Expected: exit 0
 
-- [ ] **Step 8.6: 跑 `/tmp/v-opc-asset --help` 确认新 flag 暴露**
-
-Run: `/tmp/v-opc-asset --help` and `/tmp/v-opc-asset check --help`
-Expected: `--type` flag visible in check subcommand help
-
-- [ ] **Step 8.7: 跑 4 个 type 的 smoke (实际 binary 跑一次)**
+- [ ] **Step 5.6: 跑 4 个 type 的 smoke**
 
 ```bash
-/tmp/v-opc-asset check --type anthropomorphic --prompt "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感"
-/tmp/v-opc-asset check --type digital_human --prompt "莉娜, 28, female, 东亚, rgb(245,228,210), 温柔知性, 普通话, 表情自然, 无恐怖谷"
-/tmp/v-opc-asset check --type costume --prompt "纤云, 唐代, 侠女, 襦裙, 长剑, 无穿越, 朱红#C73E1D"
-/tmp/v-opc-asset check --type info --prompt "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225), 无 AI 播报感"
+/tmp/v-opc-asset-task5 check --type anthropomorphic --prompt "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感"
+/tmp/v-opc-asset-task5 check --type digital_human --prompt "莉娜, 28, female, 东亚, rgb(245,228,210), 温柔知性, 普通话, 表情自然, 无恐怖谷"
+/tmp/v-opc-asset-task5 check --type costume --prompt "纤云, 唐代, 侠女, 襦裙, 长剑, 无穿越, 朱红#C73E1D"
+/tmp/v-opc-asset-task5 check --type info --prompt "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225), 无 AI 播报感"
 ```
 
-Expected: each prints score >= 0.99 + empty Fails list
+Expected: each prints score >= 0.99
 
-- [ ] **Step 8.8: 跑全 assetgen + opc-asset tests 确认 0 回归**
+- [ ] **Step 5.7: 跑全 assetgen + opc-asset tests 确认 0 回归**
 
 Run: `cd apps/api && go test -tags fts5 ./internal/assetgen/... ./cmd/opc-asset/...`
 Expected: All PASS
 
-- [ ] **Step 8.9: Commit**
+- [ ] **Step 5.8: Commit**
 
 ```bash
 cd apps/api
 git add cmd/opc-asset/
-git commit -m "feat(opc-asset): --type flag for IP type selection (Task 8)
+git commit -m "feat(opc-asset): --type flag for IP type selection (Task 5)
 
 CLI now routes consistency check + prompt build through the
 assetgen dispatcher based on --type (default: anthropomorphic
-for backward compat with Phase 1). Added var stdout io.Writer =
-os.Stdout for testability.
+for back-compat with Phase 1).
 
 New test TestRunCheckAllTypes covers all 4 IP types (anthro /
 digital_human / costume / info) hitting 0.99+ score on
@@ -2394,25 +2308,26 @@ scores, no panics, exit 0."
 
 ---
 
-### Task 9: 集成测试 + 文档 + 最终 verify
+### Task 6: 集成测试 + 文档 + 最终 verify + 状态文件更新 (was Task 9)
 
 **Files:**
-- Modify: `scripts/api-smoke.sh` (加 4 type case)
+- Modify: `scripts/api-smoke.sh`
 - Create: `docs/assetgen/profile-schema.md`
+- Modify: `~/.claude/PROJECT-STATE.md`
+- Modify: `~/.claude/GAP-LOG.md`
 
-- [ ] **Step 9.1: 读现有 api-smoke.sh 了解结构**
+- [ ] **Step 6.1: 读现有 api-smoke.sh 了解结构**
 
-Run: `wc -l scripts/api-smoke.sh; head -40 scripts/api-smoke.sh`
-Expected: 14.7 KB / ~360 行（已知）
+Run: `wc -l scripts/api-smoke.sh; head -50 scripts/api-smoke.sh`
 
-- [ ] **Step 9.2: 在 api-smoke.sh 末尾加 4 个 type 的 consistency check case**
+- [ ] **Step 6.2: 在 api-smoke.sh 末尾加 4 个 type 的 consistency check case**
 
-加在文件末尾（保留所有现有 case）：
+加在文件末尾（保留所有现有 case）:
 
 ```bash
 # === assetgen: 4 IP type consistency check (Phase 2 sub-spec A) ===
 section "assetgen profile types"
-# Default anthropomorphic
+
 opc_asset_check() {
     local type="$1" prompt="$2"
     /root/workspace/opc/apps/bin/opc-asset check --type "$type" --prompt "$prompt" 2>&1 | tail -3
@@ -2433,6 +2348,8 @@ assert_score_ge() {
     fi
 }
 
+make -C apps/api asset 2>&1 | tail -2
+
 out=$(opc_asset_check "anthropomorphic" "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感")
 assert_score_ge "$out" "0.99" "anthropomorphic check"
 
@@ -2445,7 +2362,7 @@ assert_score_ge "$out" "0.99" "costume check"
 out=$(opc_asset_check "info" "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225), 无 AI 播报感")
 assert_score_ge "$out" "0.99" "info check"
 
-# 0-score prompt still works (advisory, not gate)
+# Advisory: zero-score prompt still works (not blocked)
 out=$(opc_asset_check "anthropomorphic" "完全无关的文本")
 got_score=$(echo "$out" | grep -oE 'score[: =]+[0-9.]+' | grep -oE '[0-9.]+' | head -1)
 if [ "$got_score" = "0" ] || [ "$got_score" = "0.0" ] || [ "$got_score" = "0.00" ]; then
@@ -2455,42 +2372,36 @@ else
 fi
 ```
 
-- [ ] **Step 9.3: build opc-asset binary + 跑 smoke**
+- [ ] **Step 6.3: build opc-asset + 跑 smoke**
 
 ```bash
 cd /root/workspace/opc
-make asset
-# Build the API server too, for completeness
-cd apps/api && go build -tags fts5 -o ../bin/opc-api ./cmd/server
-cd /root/workspace/opc
-./scripts/api-smoke.sh 2>&1 | tail -40
+make -C apps/api asset
+./scripts/api-smoke.sh 2>&1 | tail -20
 ```
 
-Expected: All assetgen type checks PASS, including the advisory 0-score case
+Expected: All assetgen type checks PASS
 
-- [ ] **Step 9.4: 写 `docs/assetgen/profile-schema.md`**
+- [ ] **Step 6.4: 写 `docs/assetgen/profile-schema.md`**
 
 ```markdown
 # OPC Assetgen Profile Schema Reference
 
-> 4 套 JSON sub-schema 定义 4 类 IP profile（anthropomorphic /
-> digital_human / costume / info）。每个 sub-package 都有自己的
-> `schema.json`（验证）+ `profile.json`（默认 instance）。
-> Spec：`docs/superpowers/specs/2026-06-11-opc-phase2-ip-template-design.md`。
+> 4 套 JSON sub-schema 定义 4 类 IP profile (anthropomorphic /
+> digital_human / costume / info). Spec:
+> docs/superpowers/specs/2026-06-11-opc-phase2-ip-template-design.md
 
 ## 公共字段
-
-所有 4 类 profile 都有的字段：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `version` | string | ✓ | 实例级唯一 version 字符串 |
 | `name` | string | ✓ | 展示名 |
-| `type` | enum | ✓ | `anthropomorphic` / `digital_human` / `costume` / `info`，discriminator |
+| `type` | enum | ✓ | discriminator: anthropomorphic / digital_human / costume / info |
 
 ## 1. anthropomorphic
 
-**适用**：拟人动物 IP（panda、fox、dog、...）。Phase 1 panda 续。
+适用: 拟人动物 IP (panda, fox, dog, ...).
 
 ```json
 {
@@ -2506,20 +2417,11 @@ Expected: All assetgen type checks PASS, including the advisory 0-score case
 }
 ```
 
-**Consistency check anchors** (7 个，权重和 = 1.0):
-| Anchor | Weight |
-|--------|--------|
-| name | 0.20 |
-| species | 0.20 |
-| body_color | 0.20 |
-| eye_color | 0.20 |
-| theme ("国潮") | 0.10 |
-| no_claws ("不露爪") | 0.05 |
-| no_ai_look ("不要 AI 生成感") | 0.05 |
+Consistency anchors (7 个, 1.0 total): name(0.20) + species(0.20) + body_color(0.20) + eye_color(0.20) + theme("国潮")(0.10) + no_claws("不露爪")(0.05) + no_ai_look("不要 AI 生成感")(0.05).
 
 ## 2. digital_human
 
-**适用**：数字人 IP（虚拟主播 / 虚拟偶像 / 新闻主播）。
+适用: 数字人 IP (虚拟主播 / 虚拟偶像 / 新闻主播).
 
 ```json
 {
@@ -2537,11 +2439,11 @@ Expected: All assetgen type checks PASS, including the advisory 0-score case
 }
 ```
 
-**Anchors** (8 个): name(0.15) + age(0.10) + gender(0.10) + ethnicity(0.10) + skin_tone(0.15) + voice_tone(0.10) + "表情自然"(0.15) + "无恐怖谷"(0.15)。
+Anchors (8 个, 1.0 total): name(0.15) + age(0.10) + gender(0.10) + ethnicity(0.10) + skin_tone(0.15) + voice_tone(0.10) + "表情自然"(0.15) + "无恐怖谷"(0.15).
 
 ## 3. costume
 
-**适用**：古装 IP（朝代角色）。
+适用: 古装 IP (朝代角色).
 
 ```json
 {
@@ -2556,13 +2458,13 @@ Expected: All assetgen type checks PASS, including the advisory 0-score case
 }
 ```
 
-**Anchors** (7 个): name(0.15) + era(0.20) + role(0.10) + costume_layer(0.15) + prop_kit(0.10) + "无穿越"(0.15) + palette_color(0.15)。
+Anchors (7 个, 1.0 total): name(0.15) + era(0.20) + role(0.10) + costume_layer(0.15) + prop_kit(0.10) + "无穿越"(0.15) + palette_color(0.15).
 
-**Era enum**：`汉代` / `唐代` / `宋代` / `明代` / `清代`。
+Era enum: 汉代 / 唐代 / 宋代 / 明代 / 清代.
 
 ## 4. info
 
-**适用**：资讯 IP（演播室新闻节目）。
+适用: 资讯 IP (演播室新闻节目).
 
 ```json
 {
@@ -2577,92 +2479,86 @@ Expected: All assetgen type checks PASS, including the advisory 0-score case
 }
 ```
 
-**Anchors** (6 个): host_persona(0.20) + newsroom_style(0.20) + font_tone(0.15) + accent_color(0.15) + "无 AI 播报感"(0.20) + background_color(0.10)。
+Anchors (6 个, 1.0 total): host_persona(0.20) + newsroom_style(0.20) + font_tone(0.15) + accent_color(0.15) + "无 AI 播报感"(0.20) + background_color(0.10).
 
-## CLI 用法
+## CLI
 
 ```bash
-# Build prompt
 opc-asset generate --type digital_human --scene 演播室 --outfit 蓝色西装 --out /tmp/x.jpg
-
-# Consistency check
 opc-asset check --type costume --prompt "纤云, 唐代, ..."
-
-# Ledger
 opc-asset ledger --last 10
 ```
 
-不加 `--type` 默认 `anthropomorphic`（向后兼容 Phase 1）。
+不加 `--type` 默认 `anthropomorphic` (向后兼容).
 
 ## 加载机制
 
-4 个 sub-package (`internal/assetgen/profiles/<type>/`) 各自 `init()` 调 `assetgen.Register(type, ProfileEntry)`。JSON profile + JSON schema 通过 `//go:embed` 编译进 binary，运行时无 IO。
+4 个 sub-package (internal/assetgen/profiles/<type>/) 各自 `init()` 调 `assetgen.Register(type, ProfileEntry)`. JSON profile + schema 通过 `//go:embed` 编译进 binary, 运行时无 IO.
 
-## 扩展（M2+）
+## 扩展 (M2+)
 
-- 加新 IP type = 新 sub-package + 新 `profile.json` + 新 `schema.json` + 新 `consistency.go` + 新 `prompts.go`，无需改父包
-- M2: profile 上传 endpoint（用 `sub-package.SchemaJSON()` 验证）
-- M3: per-version lookup（当前 M1 一个 type 一个 instance）
+- 加新 IP type = 新 sub-package + profile.json + schema.json + consistency.go + prompts.go
+- M2: profile 上传 endpoint (用 sub-package.SchemaJSON() 验证)
+- M3: per-version lookup (M1 一个 type 一个 instance)
 ```
 
-- [ ] **Step 9.5: 跑最终全 test (assetgen + opc-asset + smoke)**
+- [ ] **Step 6.5: 跑全 tests + 集成 + verify-project-state**
 
 ```bash
 cd /root/workspace/opc/apps/api
-go test -tags fts5 -count=1 ./internal/assetgen/... ./cmd/opc-asset/...
-go test -tags fts5 -cover ./internal/assetgen/... | grep "coverage"
+go test -tags fts5 -count=1 ./...
+go test -tags fts5 -cover ./internal/assetgen/... | grep -E "coverage|ok"
 cd /root/workspace/opc
 ./scripts/api-smoke.sh 2>&1 | tail -30
 ```
 
 Expected: All tests PASS; coverage ≥ 80%; smoke 4 type cases PASS
 
-- [ ] **Step 9.6: 跑 verify-project-state agent (W5 验收)**
+- [ ] **Step 6.6: Dispatch verify-project-state subagent**
 
-按 `~/.claude/agents/verify-project-state.md` 规范，写一份新的 verify report。dispatch 一个独立 subagent 重跑所有验收命令，OVERALL: PASS 才算 M1 完成。
+按 `~/.claude/agents/verify-project-state.md` 规范 dispatch 一个 subagent 重跑所有验收命令, OVERALL: PASS 才算 M1 完。
 
 ```bash
-# 让 verify agent 跑以下命令（参考 ~/.claude/audit/verify-reports/verify-20260611-064257-post-7-commits.md 格式）：
-go vet -tags fts5 ./...                       # exit 0
-go test -tags fts5 -count=1 ./...             # all PASS
-go test -tags fts5 -cover ./internal/assetgen/...  # ≥ 80%
-go build -tags fts5 -o /tmp/v-opc-api ./cmd/server  # exit 0
-go build -tags fts5 -o /tmp/v-opc-asset ./cmd/opc-asset  # exit 0
-opc-asset check --type anthropomorphic --prompt "..."  # exit 0, score 0.99+
-opc-asset check --type digital_human --prompt "..."    # exit 0, score 0.99+
-opc-asset check --type costume --prompt "..."          # exit 0, score 0.99+
-opc-asset check --type info --prompt "..."             # exit 0, score 0.99+
-opc-asset check --type anthropomorphic --prompt "完全无关的文本"  # exit 0, score 0 (advisory)
+# 关键命令:
+go vet -tags fts5 ./...
+go test -tags fts5 -count=1 ./...
+go test -tags fts5 -cover ./internal/assetgen/...    # ≥ 80%
+go build -tags fts5 -o /tmp/v-opc-api ./cmd/server
+go build -tags fts5 -o /tmp/v-opc-asset ./cmd/opc-asset
+opc-asset check --type anthropomorphic --prompt "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感"
+opc-asset check --type digital_human --prompt "..."
+opc-asset check --type costume --prompt "..."
+opc-asset check --type info --prompt "..."
+opc-asset check --type anthropomorphic --prompt "完全无关的文本"  # advisory: 0 score, 不拦
 ls docs/assetgen/profile-schema.md  # exists
 ```
 
 报告写到 `~/.claude/audit/verify-reports/verify-YYYYMMDD-HHMMSS-phase2-sub-spec-a.md`
 
-- [ ] **Step 9.7: 改 PROJECT-STATE.md (G-series 关 sub-spec A + 新增 M1 完成记录)**
+- [ ] **Step 6.7: 改 `~/.claude/PROJECT-STATE.md`**
 
-按 `~/.claude/PROJECT-STATE.md` §H 协议：
+按 §H 协议:
+- Section E 加 bullet: 6 task commits + W5 verify PASS
+- Section D: 标 G13 (sub-spec A M1) **CLOSED 2026-06-XX (verify run N)**
 
-- Section E 加 bullet: 7-9 task commits + W5 verify PASS
-- Section D: 标 `G13 (Phase 2 sub-spec A M1) **CLOSED 2026-MM-DD (verify run N)`**
+- [ ] **Step 6.8: 改 `~/.claude/GAP-LOG.md` (新增 G13 + 标 closed)**
 
-- [ ] **Step 9.8: 改 GAP-LOG.md (新增 G13 + 标 closed)**
-
-Append：
+Append:
 ```markdown
 ## YYYY-MM-DD HH:MM (objective, observed) — G13: Phase 2 sub-spec A M1 not delivered
 
-- **缺口**: spec 写了但没实现。4 套 sub-schema + 4 套 check + 4 个 instance + opc-asset --type 都没落地。
-- **影响**: Phase 2 B/C/D/E sub-spec 全部依赖 A, 不实现 A 后续 sub-spec 无法启。
-- **修复计划**: 见 docs/superpowers/plans/2026-06-11-opc-phase2-ip-template-m1.md (9 task)
-- **status**: **closed YYYY-MM-DD** — Task 1-9 全部 done, verify-project-state OVERALL PASS
+- **缺口**: spec 写了但没实现. 4 套 sub-schema + 4 套 check + 4 个 instance + opc-asset --type 都没落地.
+- **影响**: Phase 2 B/C/D/E sub-spec 全部依赖 A.
+- **修复计划**: 见 docs/superpowers/plans/2026-06-11-opc-phase2-ip-template-m1.md (6 task, was 9)
+- **status**: **closed YYYY-MM-DD** — Task 1-6 全部 done, verify-project-state OVERALL PASS
 ```
 
-- [ ] **Step 9.9: Commit + 收尾**
+- [ ] **Step 6.9: Commit 收尾**
 
 ```bash
 cd /root/workspace/opc
 git add scripts/api-smoke.sh docs/assetgen/profile-schema.md
-git commit -m "test(smoke): add 4 IP type consistency check cases (Task 9)
+git commit -m "test(smoke): add 4 IP type consistency check cases (Task 6)
 
 scripts/api-smoke.sh: 4 new test cases covering all 4 IP types
 in the assetgen registry. Each case uses a hand-crafted prompt
@@ -2670,25 +2566,23 @@ that hits all anchors (score >= 0.99). Plus an advisory case:
 zero-score prompt still returns 0 score (not blocked by gate).
 
 docs/assetgen/profile-schema.md: 100+ line reference doc covering
-4 sub-schemas, anchors + weights, CLI usage, M2+ extension path.
-
-Project state + gap log updated to reflect M1 closure."
+4 sub-schemas, anchors + weights, CLI usage, M2+ extension path."
 ```
 
 ---
 
-## 验收清单（M1 done 的标志）
+## 验收清单（M1 done 的标志, 6 task 全部 DONE）
 
 | # | 验收 | 验证 | 状态 |
 |---|------|------|------|
-| 1 | 4 个 sub-package (profiles/{anthropomorphic,digital_human,costume,info}) init() 自动注册 | `go test -tags fts5 -run TestProfile ./internal/assetgen/...` PASS | ☐ |
+| 1 | 4 个 sub-package init() 自动注册到 assetgen.registry | `go test -tags fts5 -run TestProfile ./internal/assetgen/...` PASS | ☐ |
 | 2 | 4 个 instance profile JSON 通过 //go:embed 编译进 binary | `go build` 0 + `opc-asset check --type digital_human` 返 score | ☐ |
 | 3 | 4 套 consistency check 各 5 个 fixture 测试 PASS | `go test -tags fts5 ./internal/assetgen/profiles/...` 全绿 | ☐ |
-| 4 | GetProfile("fengge_v1") 向后兼容 | `go test -tags fts5 -run TestProfileFenggeV1` PASS | ☐ |
+| 4 | `LoadProfile("anthropomorphic")` + interface 方法可用 (替代原 `GetProfile("fengge_v1")`) | `go test -tags fts5 -run TestProfileFenggeV1` PASS | ☐ |
 | 5 | opc-asset CLI 加 --type flag, 4 种 type 都能 check | `opc-asset check --type <X>` 4 个 type 都 exit 0 | ☐ |
 | 6 | Consistency check advisory (不拦生成) | zero-score prompt 仍能 generate | ☐ |
 | 7 | assetgen package line coverage ≥ 80% | `go test -tags fts5 -cover` ≥ 80% | ☐ |
-| 8 | 文档：docs/assetgen/profile-schema.md 列 4 套子 schema 字段 | 文件存在 + ≥ 100 行 | ☐ |
+| 8 | 文档: docs/assetgen/profile-schema.md 列 4 套子 schema 字段 | 文件存在 + ≥ 100 行 | ☐ |
 | 9 | verify-project-state agent OVERALL: PASS | `~/.claude/audit/verify-reports/verify-*.md` PASS | ☐ |
 | 10 | PROJECT-STATE.md + GAP-LOG.md 更新 | M1 closure 记录在案 | ☐ |
 
@@ -2696,15 +2590,15 @@ Project state + gap log updated to reflect M1 closure."
 
 ## 不做的事（M1 范围硬约束）
 
-- ❌ **Web UI profile editor** (M2 范围)
-- ❌ **多创作者 + 权限** (Phase 2 中段)
-- ❌ **profile 版本演进机制** (M2)
-- ❌ **JSON Schema 强校验 at runtime** (M1 仅 init 期 best-effort)
-- ❌ **任何 new IP type beyond 4** (anthropomorphic / digital_human / costume / info)
-- ❌ **profile 热重载** (M1 重启生效即可)
-- ❌ **strict mode / threshold gate** (M1 advisory, M2 再定阈值)
-- ❌ **改 internal/agents/minimax.go** (LLM 客户端解耦)
-- ❌ **删 audit/roundtrip-volcengine.mjs** (M2 才删)
+- ❌ Web UI profile editor
+- ❌ 多创作者 + 权限
+- ❌ profile 版本演进机制
+- ❌ JSON Schema 强校验 at runtime
+- ❌ 任何 new IP type beyond 4
+- ❌ profile 热重载
+- ❌ strict mode / threshold gate
+- ❌ 改 internal/agents/minimax.go
+- ❌ 删 audit/roundtrip-volcengine.mjs
 
 ---
 
@@ -2712,27 +2606,28 @@ Project state + gap log updated to reflect M1 closure."
 
 | 风险 | 缓解 |
 |------|------|
-| `Profile.Type()` 方法跟 `Type` 字段重名, Go 编译错 | 已用 `Type_` 字段 + `Type()` 方法重命名模式 (Task 4-7 都用) |
-| 4 个 sub-package 顺序依赖 (谁先 init) | 互不依赖, 父包 `registry` 是 map, 顺序无关 |
-| `embed` 在某些 OS 失败 | 编译期就拦, 不会到运行时 |
-| 旧 TestConsistencyCheck 用 `assetgen.FenggeV1` 直接路径, Task 1-3 改 dispatcher 不会破 | 旧 test 只在 profile.go 老 path 上跑, dispatcher 是新 path, 互不干扰 |
-| `init()` panic 信息不够详细 | panic message 含 type name + 失败原因, 排查容易 |
-| M1 没强制 JSON Schema 验证, 坏 JSON 会 init panic | 接受 (fail-fast 比 silent failure 好), M2 接 profile 上传时扩 |
+| `Profile.Type()` 方法跟 struct 字段重名, Go 编译错 | 已用 `Type_` 字段 + `Type()` 方法重命名模式 (所有 sub-package 都用) |
+| 4 个 sub-package 顺序依赖 | 互不依赖, 父包 `registry` 是 map, 顺序无关 |
+| `embed` 在某些 OS 失败 | 编译期就拦 |
+| 旧 test 用 `assetgen.FenggeV1` struct, Task 1 已改用 `anthropomorphic.DefaultInstance()` | 4 个老 test 签名变化但 case 保留 |
+| `init()` panic 信息不够详细 | panic message 含 type name + 失败原因 |
+| M1 没强制 JSON Schema 验证, 坏 JSON 会 init panic | 接受 (fail-fast 比 silent failure 好) |
+| opc-asset 删 `*profileVersion` flag 后, 旧用法 break | 1-line 迁移到 `--type anthropomorphic`, Task 5 加 --type |
 
 ---
 
-## Self-Review
+## Self-Review (after merging Tasks 1-4)
 
-写 plan 时同步做了 3 轮 self-review：
+写 plan 时做了 4 轮 self-review:
 
-1. **Spec coverage**: 7.1 / 7.2 / 7.3 / 8 / 9 / 11 / 12 / 13 / 14 / 15 / 16 sections 在 9 task 里全覆盖。
-2. **Placeholder scan**: 0 个 TBD/TODO/类似措辞（已 grep 自查）。
+1. **Spec coverage**: spec §5 (架构) / §6 (组件) / §7 (schema) / §8 (consistency) / §9 (prompt) / §11 (error handling) / §12 (testing) / §13 (timeline) / §15 (跟 Phase 1 关系) 全部对应到 6 task.
+2. **Placeholder scan**: 0 个 TBD/TODO/类似措辞.
 3. **Type consistency**:
-   - `Profile` interface 在 Task 1 定义, 4/5/6/7 sub-package 全部 `*Profile` 实现
-   - `Register(type, ProfileEntry{Schema, Check, BuildPrompt})` 签名 Task 1 定义, 4 个 sub-package 全部一致
-   - `Check(p Profile, prompt string) ConsistencyResult` 签名 Task 4 定义, Task 5/6/7 同构
-   - `BuildPrompt(p Profile, scene, outfit, assetType string) string` 签名 Task 4 定义, Task 5/6/7 同构
-   - `DefaultInstance() *Profile` + `SchemaJSON() []byte` 4 个 sub-package 全部暴露
-   - `round2` 在 Task 2 是私有, Task 4 加 `Round2Public` 包装供 sub-package 用
+   - `Profile` interface 在 Task 1 定义, 4 sub-package 全部 `*Profile` 实现
+   - `Register(type, ProfileEntry{Schema, Check, BuildPrompt})` 签名 Task 1 定义, 4 sub-package 一致
+   - `Check(p Profile, prompt string) ConsistencyResult` 签名 Task 1 定义, Task 2/3/4 sub-package 同构
+   - `BuildPrompt(p Profile, scene, outfit, assetType string) string` 签名 Task 1 定义, Task 2/3/4 同构
+   - `DefaultInstance() *Profile` + `SchemaJSON() []byte` 4 sub-package 全部暴露
+4. **Type-system conflict resolved**: Plan 1.0 (9 task) 漏了 `Profile` 在 4 个文件同时被用 struct+interface 的 Go 限制. Plan 1.1 (6 task) 把 Tasks 1-4 合并 + 删 `assetgen.FenggeV1` struct + 改用 `anthropomorphic.DefaultInstance()` + opc-asset 适配. 已验证 via 第一次 subagent dispatch.
 
-无矛盾。Plan ready for execution。
+无矛盾. Plan ready for execution (Task 1 first, 6 subagent dispatches total).
