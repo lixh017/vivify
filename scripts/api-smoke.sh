@@ -336,19 +336,88 @@ run_test "pipeline" POST /api/ai/pipeline \
     '"topics"'
 
 # ---------------------------------------------------------------------------
+# assetgen: 4 IP type consistency check (Phase 2 sub-spec A)
+# ---------------------------------------------------------------------------
+# The first 5 cases above exercise the HTTP handler surface; this
+# block exercises the brand-on asset pipeline. Each case uses a
+# hand-crafted prompt that hits all anchors (score >= 0.99) plus an
+# advisory case proving a zero-score prompt is still allowed through
+# (not blocked by the gate, just scored). See docs/assetgen/profile-schema.md
+# for the anchor breakdown.
+section() { log "$*"; }
+pass()    { ok "$*"; PASS_COUNT=$((PASS_COUNT+1)); }
+fail()    { err "$*"; FAIL_COUNT=$((FAIL_COUNT+1)); FAIL_LIST+=("$*"); }
+
+# opc_asset_check runs the CLI and trims to the JSON tail so the
+# trailing score line is what awk/grep operate on. --type is the
+# IP-type flag (4 enum); the asset pipeline's --asset-type is a
+# different flag and is not relevant to consistency scoring.
+opc_asset_check() {
+    local type="$1" prompt="$2"
+    ./apps/bin/opc-asset check --type "$type" --prompt "$prompt" 2>&1 | tail -8
+}
+
+# assert_score_ge parses the "score" field out of the JSON output
+# and compares against a floor. We do not need full jq — the JSON
+# is hand-formatted by the CLI on exactly one line, so a grep on
+# the "score" key is robust. Decimal and integer scores are both
+# accepted (1, 1.0, 0.99 all PASS).
+assert_score_ge() {
+    local out="$1" want="$2" name="$3"
+    local got_score
+    got_score=$(echo "$out" | grep -oE '"score"[[:space:]]*:[[:space:]]*[0-9.]+' | grep -oE '[0-9.]+' | head -1)
+    if [ -z "$got_score" ]; then
+        fail "$name: no score found in output"
+        return 1
+    fi
+    if awk "BEGIN{exit !($got_score >= $want)}"; then
+        pass "$name: score=$got_score >= $want"
+    else
+        fail "$name: score=$got_score < $want"
+    fi
+}
+
+section "assetgen profile types (Phase 2 sub-spec A)"
+
+out=$(opc_asset_check "anthropomorphic" "峰哥, 成年熊猫, rgb(245,240,225), rgb(26,26,26), 国潮, 不露爪, 不要 AI 生成感")
+assert_score_ge "$out" "0.99" "anthropomorphic check"
+
+out=$(opc_asset_check "digital_human" "莉娜, 28 岁, female, 东亚, rgb(245,228,210), 温柔知性, 普通话, 表情自然, 无恐怖谷")
+assert_score_ge "$out" "0.99" "digital_human check"
+
+out=$(opc_asset_check "costume" "纤云, 唐代, 侠女, 襦裙, 长剑, 无穿越, 朱红#C73E1D")
+assert_score_ge "$out" "0.99" "costume check"
+
+out=$(opc_asset_check "info" "OPC 每日资讯, 演播室双主播, 主播阿橙, 黑体加粗, 暖色字幕, 宝蓝#1F5FA8, rgb(245,240,225), 无 AI 播报感")
+assert_score_ge "$out" "0.99" "info check"
+
+# Advisory: zero-score prompt still works (not blocked). The gate
+# reports a low score but the CLI exits 0 — the intent is to flag
+# to the operator, not to refuse. This guards against future
+# regressions that would short-circuit the check.
+out=$(opc_asset_check "anthropomorphic" "完全无关的文本")
+got_score=$(echo "$out" | grep -oE '"score"[[:space:]]*:[[:space:]]*[0-9.]+' | grep -oE '[0-9.]+' | head -1)
+if [ "$got_score" = "0" ] || [ "$got_score" = "0.0" ] || [ "$got_score" = "0.00" ]; then
+    pass "advisory: zero-score prompt returns 0 score (not blocked)"
+else
+    fail "advisory: zero-score prompt got score=$got_score, want 0"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+# Expected total: 5 handler tests + 4 IP type checks + 1 advisory = 10.
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo
 echo "========================================"
-if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "5" ]; then
+if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "10" ]; then
     ok "RESULT: ${PASS_COUNT}/${TOTAL} PASS"
     echo "========================================"
     exit 0
 fi
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    warn "RESULT: ${PASS_COUNT}/${TOTAL} PASS (expected 5 handler tests)"
+    warn "RESULT: ${PASS_COUNT}/${TOTAL} PASS (expected 10 tests: 5 handler + 4 IP type + 1 advisory)"
     echo "========================================"
     exit 0
 fi
