@@ -5,6 +5,89 @@ import (
 	"testing"
 )
 
+// TestUserDefaultRole verifies the new Role field defaults to
+// "operator" per the gorm tag in models.User. The default is a
+// DB-side concept (applied by GORM on Save), so we reload the
+// row from the database after Create to inspect the actual
+// persisted value rather than the Go zero-value (which is "").
+func TestUserDefaultRole(t *testing.T) {
+	t.Parallel()
+
+	u := User{Email: "x@x.com", PasswordHash: "h"}
+	if u.Role != "" {
+		t.Errorf("zero-value Role = %q, want empty (GORM applies default on Save)", u.Role)
+	}
+
+	gormDB := openSessionTestDB(t)
+	if err := gormDB.AutoMigrate(&User{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+
+	if err := gormDB.Create(&u).Error; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var got User
+	if err := gormDB.First(&got, u.ID).Error; err != nil {
+		t.Fatalf("First: %v", err)
+	}
+	if got.Role != "operator" {
+		t.Errorf("Role after Save+Reload = %q, want \"operator\"", got.Role)
+	}
+}
+
+// TestUserDefaultDisabled verifies the new Disabled field defaults
+// to false. Same DB-side default pattern as Role: we reload from
+// the database to inspect the persisted value, because the Go
+// zero-value (false) is also the default — the test guards against
+// the field being accidentally defaulted to true in the schema.
+func TestUserDefaultDisabled(t *testing.T) {
+	t.Parallel()
+
+	gormDB := openSessionTestDB(t)
+	if err := gormDB.AutoMigrate(&User{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+
+	u := User{Email: "x@x.com", PasswordHash: "h"}
+	if err := gormDB.Create(&u).Error; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var got User
+	if err := gormDB.First(&got, u.ID).Error; err != nil {
+		t.Fatalf("First: %v", err)
+	}
+	if got.Disabled {
+		t.Errorf("Disabled = true, want false")
+	}
+}
+
+// TestUserDefaultCreatedBy verifies the new CreatedBy field defaults
+// to 0 (GORM zero value). The "0 = self-created" sentinel is
+// significant: Phase 1 operator users have CreatedBy=0, while
+// Phase 2 creator users have CreatedBy=<operator's user ID>. The
+// test guards against the default being accidentally overridden
+// to a non-zero value (e.g. 1) in the gorm tag.
+func TestUserDefaultCreatedBy(t *testing.T) {
+	t.Parallel()
+
+	gormDB := openSessionTestDB(t)
+	if err := gormDB.AutoMigrate(&User{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+
+	u := User{Email: "x@x.com", PasswordHash: "h"}
+	if err := gormDB.Create(&u).Error; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var got User
+	if err := gormDB.First(&got, u.ID).Error; err != nil {
+		t.Fatalf("First: %v", err)
+	}
+	if got.CreatedBy != 0 {
+		t.Errorf("CreatedBy = %d, want 0", got.CreatedBy)
+	}
+}
+
 // TestUserTableName pins the underlying table name. Migrate()'s
 // table-list assertion in db/migrate_test.go relies on this being
 // "users" — change the constant and update that test too.
