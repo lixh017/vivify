@@ -107,6 +107,7 @@ func Migrate(db *gorm.DB) error {
 		&models.Series{},
 		&models.Credential{},
 		&models.CallLog{},
+		&models.Agent{}, // Sub-Spec D M1
 	); err != nil {
 		return fmt.Errorf("auto migrate: %w", err)
 	}
