@@ -31,6 +31,7 @@ const ITEMS: Item[] = [
   { href: '/org',             label: '组织',     reserve: true },
   { href: '/members',         label: '成员',     reserve: true },
   { href: '/billing',         label: '计费' },
+  { href: '/creators',        label: '创作者管理' },
 ]
 
 export function Sidebar() {
