@@ -21,6 +21,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -223,6 +225,115 @@ func StubUser(userID uint) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(CtxUserID, userID)
 		c.Next()
+	}
+}
+
+// RequireEitherAuth returns a Gin middleware that accepts EITHER
+// a session cookie (validated via RequireAuth) OR an X-API-Key
+// (validated via MaybeAgentKey). The route must mount this in
+// place of RequireAuth + MaybeAgentKey when the spec calls for
+// "session OR agent key" — composes the two checks but defers
+// the 401 until both have run, so a missing cookie does not
+// pre-empt a valid X-API-Key.
+//
+// On success the Gin context is populated symmetrically with
+// RequireAuth (user_id, user_role, user) when a session
+// authenticated, and with MaybeAgentKey (agent_id, agent_scope,
+// agent_name) when an agent key authenticated. The downstream
+// handler's existing "user_id > 0 || agent_id != nil" check
+// then authorizes the request — the same gate handlers use
+// today, no per-handler branching needed.
+//
+// On any failure (no cookie + no key, or invalid cookie + no
+// key, or no cookie + invalid key) the response is 401 with the
+// same canonical reason/hint envelope RequireAuth uses, so
+// existing front-end 401 handling keeps working.
+//
+// Caught by api-smoke.sh on 2026-06-15 (Task 5): the original
+// chain "RequireAuth → MaybeAgentKey" let RequireAuth abort
+// the request before MaybeAgentKey could stamp agent_id, so
+// agent calls (no cookie) returned 401 from RequireAuth. The
+// single-middleware form below fixes that without requiring
+// any handler-side change. Used only on /api/ai/topics for
+// M1; the rest of the API surface keeps RequireAuth unchanged.
+func RequireEitherAuth(db *gorm.DB, logger *slog.Logger) gin.HandlerFunc {
+	if db == nil {
+		panic("middleware.RequireEitherAuth: db is nil")
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(c *gin.Context) {
+		// 1) Cookie path — symmetric with RequireAuth. A valid
+		//    cookie authorizes the request; an invalid cookie
+		//    falls through to the key path so a caller who has
+		//    a stale cookie + a valid key still gets in.
+		token := sessionTokenFromCookie(c)
+		if token != "" {
+			u, err := auth.ValidateSession(db, token)
+			if err == nil {
+				c.Set(CtxUserID, u.ID)
+				c.Set(CtxUserRole, u.Role)
+				c.Set(CtxUser, u)
+				c.Next()
+				return
+			}
+			reason := AuthReasonInvalidSignature
+			switch {
+			case errors.Is(err, auth.ErrSessionExpired):
+				reason = AuthReasonExpired
+			case errors.Is(err, auth.ErrSessionNotFound):
+				reason = AuthReasonInvalidSignature
+			}
+			logger.Info("require either auth: cookie invalid, trying agent key",
+				"reason", reason, "request_id", c.GetString("request_id"))
+		}
+
+		// 2) Agent-key path — inlined from MaybeAgentKey (same
+		//    package) so the success branch is just "stamp +
+		//    c.Next() + return" rather than the sub-handler
+		//    c.Next()-on-success pitfall. The DB-prefixed lookup
+		//    + bcrypt + last_used_at stamp is byte-for-byte the
+		//    same logic as MaybeAgentKey; keeping a single
+		//    source of truth would mean refactoring
+		//    MaybeAgentKey to expose a pure function, which is
+		//    out of scope for M1.
+		key := c.GetHeader("X-API-Key")
+		if key != "" &&
+			strings.HasPrefix(key, keyPrefixLiteral) &&
+			len(key) == len(keyPrefixLiteral)+keyHexLen {
+			prefix := models.KeyPrefix(key)
+			var candidates []models.Agent
+			if err := db.Where("key_prefix = ?", prefix).Find(&candidates).Error; err == nil {
+				for _, a := range candidates {
+					if a.Disabled {
+						continue
+					}
+					if !models.VerifyPassword(a.HashedKey, key) {
+						continue
+					}
+					now := time.Now()
+					db.Model(&a).Update("last_used_at", &now)
+					c.Set(CtxAgentID, a.ID)
+					c.Set(CtxAgentScope, a.Scope)
+					c.Set(CtxAgentName, a.Name)
+					c.Next()
+					return
+				}
+			}
+		}
+
+		// 3) Neither path authenticated. We pick the reason
+		//    based on whether a cookie was sent at all —
+		//    "no_cookie" for a vanilla agent caller, otherwise
+		//    "invalid_signature" so a frontend dev can tell
+		//    "you forgot the cookie" from "your cookie is stale
+		//    and you need to re-login".
+		if token == "" {
+			unauthorized(c, AuthReasonNoCookie)
+		} else {
+			unauthorized(c, AuthReasonInvalidSignature)
+		}
 	}
 }
 

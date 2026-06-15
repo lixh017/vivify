@@ -1,8 +1,10 @@
 package models_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opc/api/internal/models"
 )
@@ -67,5 +69,48 @@ func TestAgentKeyPrefixShortKey(t *testing.T) {
 
 	if got := models.KeyPrefix("short"); got != "short" {
 		t.Errorf("short key prefix = %q, want short (no truncation)", got)
+	}
+}
+
+// TestAgentJSONShape pins the JSON serialization of models.Agent.
+// The console /api-keys page reads a.id (lowercase) — without
+// this contract a regression to embedding gorm.Model (which has
+// no JSON tags) would silently break the UI even though every
+// unit test on the handler passes. Caught by api-smoke.sh on
+// 2026-06-15 (Task 5); kept here as a fast feedback loop.
+func TestAgentJSONShape(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	a := models.Agent{
+		ID:         42,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Name:       "claude-code-laptop-1",
+		KeyPrefix:  "opc_agent_ab",
+		HashedKey:  "$2a$12$shouldneverappear",
+		CreatedBy:  7,
+		Scope:      "all",
+		Disabled:   false,
+		LastUsedAt: nil,
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	for _, k := range []string{"id", "name", "key_prefix", "created_by", "scope", "disabled", "created_at", "updated_at"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("JSON missing key %q (full=%s)", k, string(b))
+		}
+	}
+	if _, leaked := got["ID"]; leaked {
+		t.Errorf("JSON leaked uppercase %q — Agent must use explicit json tags, not gorm.Model (full=%s)", "ID", string(b))
+	}
+	if _, leaked := got["hashed_key"]; leaked {
+		t.Errorf("JSON leaked %q — bcrypt hash must stay private (full=%s)", "hashed_key", string(b))
 	}
 }

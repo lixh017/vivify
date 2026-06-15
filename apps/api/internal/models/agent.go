@@ -9,13 +9,21 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 // Agent represents an API key holder. The full key is shown
 // ONCE at creation; only the bcrypt hash is stored long-term.
+//
+// JSON tag discipline matches models.User (explicit `json:"id"`
+// etc.) rather than embedding gorm.Model, which has no JSON
+// tags and would serialize the primary key as the uppercase
+// "ID" — breaking the front-end `a.id` reads the console uses
+// on the /api-keys page (caught by api-smoke.sh on 2026-06-15).
 type Agent struct {
-	gorm.Model
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty" gorm:"index"`
 
 	Name       string `gorm:"not null" json:"name"`
 	KeyPrefix  string `gorm:"not null" json:"key_prefix"`

@@ -572,24 +572,126 @@ fi
 rm -f "$CREATOR_COOKIE_JAR"
 
 # ---------------------------------------------------------------------------
+# Sub-Spec D M1: agent API key auth (Task 5)
+# ---------------------------------------------------------------------------
+# Four cases covering the X-API-Key auth path: operator mints an
+# agent key, that agent authenticates against /api/ai/topics, the
+# same agent is correctly rejected from /api/admin/* (the admin
+# group still requires RequireAuth + RequireOperatorRole), and a
+# syntactically-valid but unknown key returns 401. The smoke
+# operator session was established above; the cookie jar
+# ($COOKIE_JAR) carries that opc_session cookie and is reused for
+# the admin POST.
+section "agent API key (Phase 2 sub-spec D M1)"
+
+# 1. Operator creates an agent. The handler returns 201 + the full
+# key exactly once (GitHub PAT-style). We capture both the full key
+# (used by cases 2 + 3) and the new agent's id (used by case 4
+# only as log fodder; case 4 is auth-only and doesn't need it).
+agent_create_resp=$(call POST /api/admin/agents \
+    '{"name":"claude-code-laptop-1"}')
+agent_create_code=$(printf '%s' "$agent_create_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+agent_create_body=$(printf '%s' "$agent_create_resp" | sed 's/__HTTP__[0-9]*$//')
+AGENT_API_KEY=$(echo "$agent_create_body" | jq -r '.key' 2>/dev/null)
+agent_id=$(echo "$agent_create_body" | jq -r '.agent.id' 2>/dev/null)
+
+if [ "$agent_create_code" = "201" ] \
+    && [ -n "$AGENT_API_KEY" ] \
+    && [ "$AGENT_API_KEY" != "null" ] \
+    && [ -n "$agent_id" ] \
+    && [ "$agent_id" != "null" ]; then
+    pass "admin: agent created (id=$agent_id, key returned 1x)"
+else
+    fail "admin: agent creation failed (HTTP $agent_create_code body=$(truncate "$agent_create_body" 200))"
+fi
+
+# 2. Agent calls /api/ai/topics with X-API-Key (no cookie). The
+# endpoint is wired with RequireAuth → MaybeAgentKey → handler, so
+# RequireAuth 401s the missing cookie BUT MaybeAgentKey has
+# already stamped agent_id before then — verified in Task 3 unit
+# tests; this case proves the same on the wire. Demo mode
+# (MINIMAX_API_KEY="" empty above) still returns the canned 5-topic
+# pool, so this case is independent of API key state just like the
+# human-call topic case above.
+if [ -n "$AGENT_API_KEY" ] && [ "$AGENT_API_KEY" != "null" ]; then
+    agent_topic_resp=$(curl -sS --max-time 30 -X POST \
+        -H 'Content-Type: application/json' \
+        -H "X-API-Key: $AGENT_API_KEY" \
+        -d '{"seed":"个人成长","platform":"抖音","count":5}' \
+        -w '\n__HTTP__%{http_code}' \
+        "$BASE_URL/api/ai/topics")
+    agent_topic_code=$(printf '%s' "$agent_topic_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+    agent_topic_body=$(printf '%s' "$agent_topic_resp" | sed 's/__HTTP__[0-9]*$//')
+    agent_topic_count=$(echo "$agent_topic_body" | jq '.topics | length' 2>/dev/null)
+
+    if [ "$agent_topic_code" = "200" ] && [ "$agent_topic_count" = "5" ]; then
+        pass "agent: topic HTTP returns 5 topics (X-API-Key auth)"
+    else
+        fail "agent: topic HTTP got code=$agent_topic_code count=$agent_topic_count (want 200/5, body=$(truncate "$agent_topic_body" 200))"
+    fi
+else
+    skip "agent: topic HTTP (skipped because admin create failed above)"
+fi
+
+# 3. Agent tries to call /api/admin/agents (admin group requires
+# RequireAuth + RequireOperatorRole). The X-API-Key path does NOT
+# satisfy RequireAuth (it only sets CtxAgentID); RequireAuth sees
+# no cookie → 401. This is the documented M1 behavior: agent
+# callers are scoped to /api/ai/*, never to /api/admin/*. We
+# deliberately send NO cookie jar (the curl does not -b anything)
+# so the auth chain is "X-API-Key only" — exactly the path an
+# external agent would take.
+if [ -n "$AGENT_API_KEY" ] && [ "$AGENT_API_KEY" != "null" ]; then
+    agent_admin_code=$(curl -sS --max-time 30 -o /dev/null -w "%{http_code}" -X POST \
+        -H 'Content-Type: application/json' \
+        -H "X-API-Key: $AGENT_API_KEY" \
+        -d '{"name":"x"}' \
+        "$BASE_URL/api/admin/agents")
+    if [ "$agent_admin_code" = "401" ]; then
+        pass "agent: admin endpoint correctly 401 (no session)"
+    else
+        fail "agent: admin endpoint returned $agent_admin_code, want 401"
+    fi
+else
+    skip "agent: admin endpoint 401 (skipped because admin create failed above)"
+fi
+
+# 4. Bad API key — same shape as a real one (opc_agent_ + 32
+# hex chars) but no row in the agents table with that prefix.
+# MaybeAgentKey passes through (no match); RequireAuth 401s the
+# missing cookie. Same 401 surface as case 3, different root
+# cause (case 3 has a valid key + no cookie; this case has a
+# fake key + no cookie).
+bogus_code=$(curl -sS --max-time 30 -o /dev/null -w "%{http_code}" -X POST \
+    -H 'Content-Type: application/json' \
+    -H "X-API-Key: opc_agent_bogus0000000000000000000000" \
+    -d '{"seed":"x","platform":"抖音","count":5}' \
+    "$BASE_URL/api/ai/topics")
+if [ "$bogus_code" = "401" ]; then
+    pass "agent: bad API key correctly 401"
+else
+    fail "agent: bad API key returned $bogus_code, want 401"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 # Expected total depends on whether MINIMAX_API_KEY was set in the
 # caller's env:
-#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI + 4 creator = 16 (PASS_COUNT=16)
-#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP + 4 creator = 16 (PASS_COUNT=15, SKIP_COUNT=1)
-# Either way TOTAL = PASS + FAIL + SKIP must be 16.
+#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI + 4 creator + 4 agent = 20 (PASS_COUNT=20)
+#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP + 4 creator + 4 agent = 20 (PASS_COUNT=19, SKIP_COUNT=1)
+# Either way TOTAL = PASS + FAIL + SKIP must be 20.
 TOTAL=$((PASS_COUNT + FAIL_COUNT + SKIP_COUNT))
 echo
 echo "========================================"
-if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "16" ]; then
-    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 16)"
+if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "20" ]; then
+    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 20)"
     echo "========================================"
     exit 0
 fi
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 16: 5 handler + 4 IP type + 1 advisory + 2 topic + 4 creator)"
+    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 20: 5 handler + 4 IP type + 1 advisory + 2 topic + 4 creator + 4 agent)"
     echo "========================================"
     exit 0
 fi

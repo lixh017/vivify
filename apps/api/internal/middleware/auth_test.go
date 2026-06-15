@@ -378,3 +378,198 @@ func TestRequireCreatorRoleUnauthFail(t *testing.T) {
 		t.Errorf("unauth fail, got %d want 401; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// =============================================================================
+// RequireEitherAuth (Sub-Spec D M1 — Task 5)
+// =============================================================================
+//
+// Pinning the four expected behaviors:
+//   (1) cookie only (human): 200 + user_id stamped
+//   (2) X-API-Key only (agent): 200 + agent_id stamped
+//   (3) both: cookie wins (200 + user_id; agent_id NOT stamped to
+//       keep the model simple — neither handler check requires
+//       stamping both)
+//   (4) neither: 401 with the canonical reason envelope
+//
+// The (2) case is the one the original "RequireAuth → MaybeAgentKey"
+// chain got wrong: RequireAuth aborted the request before
+// MaybeAgentKey could stamp agent_id, so agents got 401 from the
+// cookie check. RequireEitherAuth composes the two checks in a
+// single middleware so this no longer happens.
+
+// newEitherAuthDB returns an in-memory SQLite migrated with User,
+// Session, AND Agent — needed by RequireEitherAuth's agent-key
+// path. The shared cache lets multiple sub-tests in the same run
+// use the same DB without trampling each other.
+func newEitherAuthDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	gormDB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		TranslateError: true,
+	})
+	if err != nil {
+		t.Fatalf("gorm open: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&models.User{}, &models.Session{}, &models.Agent{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		t.Fatalf("get sql.DB: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return gormDB
+}
+
+func seedAgent(t *testing.T, db *gorm.DB, name string) (models.Agent, string) {
+	t.Helper()
+	key, prefix, err := models.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	hash, err := models.HashPassword(key)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	a := models.Agent{
+		Name: name, KeyPrefix: prefix, HashedKey: hash,
+		CreatedBy: 1, Scope: "all",
+	}
+	if err := db.Create(&a).Error; err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	return a, key
+}
+
+func TestRequireEitherAuthCookieOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newEitherAuthDB(t)
+	u := seedMiddlewareUser(t, db, "u@e.com", "pw-12345678")
+	sess, err := auth.CreateSession(db, u.ID)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	tok := sess.Token
+
+	var seenUserID uint
+	r := gin.New()
+	r.Use(middleware.RequireEitherAuth(db, nil))
+	r.GET("/x", func(c *gin.Context) {
+		seenUserID = middleware.UserIDFromContext(c)
+		c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.AddCookie(&http.Cookie{Name: "opc_session", Value: tok, Path: "/"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if seenUserID != u.ID {
+		t.Errorf("user_id = %d, want %d", seenUserID, u.ID)
+	}
+}
+
+func TestRequireEitherAuthKeyOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newEitherAuthDB(t)
+	_, key := seedAgent(t, db, "claude-code-laptop-1")
+
+	var seenAgentID uint
+	r := gin.New()
+	r.Use(middleware.RequireEitherAuth(db, nil))
+	r.GET("/x", func(c *gin.Context) {
+		v, _ := c.Get(middleware.CtxAgentID)
+		if id, ok := v.(uint); ok {
+			seenAgentID = id
+		}
+		c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-API-Key", key)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if seenAgentID == 0 {
+		t.Errorf("agent_id was not stamped on context")
+	}
+}
+
+func TestRequireEitherAuthBothCookieWins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newEitherAuthDB(t)
+	u := seedMiddlewareUser(t, db, "u@e.com", "pw-12345678")
+	sess, err := auth.CreateSession(db, u.ID)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	tok := sess.Token
+	_, key := seedAgent(t, db, "claude-code-laptop-1")
+
+	var seenUserID uint
+	r := gin.New()
+	r.Use(middleware.RequireEitherAuth(db, nil))
+	r.GET("/x", func(c *gin.Context) {
+		seenUserID = middleware.UserIDFromContext(c)
+		c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.AddCookie(&http.Cookie{Name: "opc_session", Value: tok, Path: "/"})
+	req.Header.Set("X-API-Key", key)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if seenUserID != u.ID {
+		t.Errorf("user_id = %d, want %d (cookie should win)", seenUserID, u.ID)
+	}
+}
+
+func TestRequireEitherAuthNeither401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newEitherAuthDB(t)
+	r := gin.New()
+	r.Use(middleware.RequireEitherAuth(db, nil))
+	r.GET("/x", func(c *gin.Context) {
+		t.Errorf("handler should NOT have run on a no-cookie/no-key request")
+		c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["reason"] != "no_cookie" {
+		t.Errorf("reason = %v, want no_cookie", body["reason"])
+	}
+}
+
+func TestRequireEitherAuthBogusKey401(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newEitherAuthDB(t)
+	r := gin.New()
+	r.Use(middleware.RequireEitherAuth(db, nil))
+	r.GET("/x", func(c *gin.Context) {
+		t.Errorf("handler should NOT have run on a bogus-key request")
+		c.String(http.StatusOK, "ok")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-API-Key", "opc_agent_bogus0000000000000000000000")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", w.Code, w.Body.String())
+	}
+}

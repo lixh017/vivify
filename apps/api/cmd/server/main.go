@@ -191,24 +191,20 @@ func main() {
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	aiH := handlers.NewAIHandler(mmxClient, gormDB)
 
-	// Sub-Spec D M1 — Task 3: per-route MaybeAgentKey on the AI
-	// surface. We register /api/ai/topics OUTSIDE the standard
-	// apiGroup so the MaybeAgentKey middleware is only applied to
-	// this one endpoint (today's spec; the broader /api/* CRUD
-	// surface stays session-cookie-only). The chain is
-	// RequireAuth → MaybeAgentKey → handler: RequireAuth handles
-	// the human session-cookie case (and 401s with a reason code
-	// if the cookie is missing/invalid/expired); MaybeAgentKey
-	// then inspects X-API-Key and, if present and valid, stamps
-	// agent_id/agent_scope/agent_name on the Gin context. The
-	// handler's own c.GetUint("user_id") > 0 ||
-	// c.Get("agent_id") != nil check decides whether the request
-	// is authorized.
-	aiAuthChain := []gin.HandlerFunc{
-		handlers.NewRequireAuth(gormDB, slog.Default()),
-		middleware.MaybeAgentKey(gormDB),
-	}
-	r.POST("/api/ai/topics", append(aiAuthChain, aiH.GenerateTopics)...)
+	// Sub-Spec D M1 — Task 3 + Task 5 fix: /api/ai/topics accepts
+	// EITHER a session cookie OR an X-API-Key. The original chain
+	// (RequireAuth → MaybeAgentKey) had RequireAuth 401-ing the
+	// agent caller before MaybeAgentKey could stamp agent_id —
+	// caught by api-smoke.sh on 2026-06-15. RequireEitherAuth
+	// composes the two checks in a single middleware: a valid
+	// cookie or a valid key authorizes, neither → 401. The
+	// handler's existing c.GetUint("user_id") ||
+	// c.Get("agent_id") != nil gate still applies as a
+	// belt-and-braces last check.
+	r.POST("/api/ai/topics",
+		middleware.RequireEitherAuth(gormDB, slog.Default()),
+		aiH.GenerateTopics,
+	)
 	qualityH := handlers.NewQualityHandler(mmxClient, gormDB)
 	deconstructH := handlers.NewDeconstructHandler(mmxClient)
 	pipelineH := handlers.NewPipelineHandler(mmxClient, gormDB)
