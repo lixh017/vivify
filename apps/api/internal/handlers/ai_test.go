@@ -532,7 +532,7 @@ func TestDemoTopicsWithKeyNoFlag(t *testing.T) {
 	r := setupDemoRouterWithKeyAndOverride(t, func(_ context.Context, _ string) (string, error) {
 		called = true
 		// Return a valid (empty) topics array so the handler
-		// completes without hitting parseTopics' error branch.
+		// completes without hitting parseTopicsLegacy's error branch.
 		return `[]`, nil
 	})
 	w := doJSON(t, r, http.MethodPost, "/ai/topics", map[string]any{

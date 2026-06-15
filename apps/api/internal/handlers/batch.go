@@ -471,7 +471,7 @@ func (h *BatchHandler) buildDemoBatch(req batchRequest, steps, platforms []strin
 func (h *BatchHandler) buildDemoOneTopic(steps, platforms []string) batchGeneratedItem {
 	res := batchGeneratedItem{}
 	topicRaw, _ := agents.DemoResponse(agents.DemoOpTopics, len(steps))
-	topics, terr := parseTopics(topicRaw)
+	topics, terr := parseTopicsLegacy(topicRaw)
 	if terr != nil || len(topics) == 0 {
 		res.Error = "demo topics parse failed"
 		return res
@@ -539,7 +539,7 @@ func runBatchTopicsStep(ctx context.Context, m *agents.MiniMax, seed, platform, 
 	if err != nil {
 		return nil, err
 	}
-	return parseTopics(res.Text)
+	return parseTopicsLegacy(res.Text)
 }
 
 // runBatchScriptStep asks MiniMax to expand the topic into a

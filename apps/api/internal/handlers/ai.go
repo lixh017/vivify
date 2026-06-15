@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/capabilities/topic"
 	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/models"
 )
@@ -173,8 +174,10 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 	}
 
 	if h.shouldUseDemo(c) {
+		// Demo path stays in the handler — it's an HTTP UX
+		// concern (banner + canned pool), not a library concern.
 		raw, _ := agents.DemoResponse(agents.DemoOpTopics, len(req.Seed))
-		topics, err := parseTopics(raw)
+		topics, err := parseTopicsLegacy(raw)
 		if err != nil {
 			h.logger.Error("ai demo parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 			c.JSON(http.StatusBadGateway, gin.H{
@@ -194,35 +197,45 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 		return
 	}
 
-	prompt := agents.GenerateTopicsPrompt(req.Seed, req.Platform, req.Count)
-
+	// Real path: delegate to the capability library.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	res, err := topic.Generate(ctx, h.text, topic.Input{
+		Seed:     req.Seed,
+		Platform: req.Platform,
+		Count:    req.Count,
+	})
 	if err != nil {
-		h.logger.Error("ai text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
+		h.logger.Error("topic generate failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": "AI service failed: " + err.Error(),
 		})
 		return
 	}
+	// Convert library Topic → handler generatedTopic (preserves wire shape).
+	// The library returns []topic.Topic; the wire contract is still the
+	// pre-Phase-2 []generatedTopic (G1-closed 2026-06-09), so we copy
+	// the 6 fields 1:1. nil/empty VoiceTags passes through unchanged
+	// because the omitempty tag is on the handler struct, not on the
+	// library one.
+	out := make([]generatedTopic, len(res.Topics))
+	for i, t := range res.Topics {
+		out[i] = generatedTopic{
+			Title:               t.Title,
+			Angle:               t.Angle,
+			ExpectedPerformance: t.ExpectedPerformance,
+			Hook:                t.Hook,
+			Pattern:             t.Pattern,
+			VoiceTags:           t.VoiceTags,
+		}
+	}
 	// Stamp cost onto the call_log row that the middleware created.
 	// MiniMax M2.7-highspeed is the highspeed variant; cost
 	// attribution uses the per-1k-token skill row keyed on
 	// SkillMiniMaxM27.
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
-
-	topics, err := parseTopics(res.Text)
-	if err != nil {
-		h.logger.Error("ai parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error": "AI returned output that could not be parsed: " + err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, generateTopicsResponse{Topics: topics})
+	StampClaudeCost(c, config.SkillMiniMaxM27, res.Cost.InputTokens, res.Cost.OutputTokens)
+	c.JSON(http.StatusOK, generateTopicsResponse{Topics: out})
 }
 
 // jsonArrayRE matches a top-level JSON array, allowing optional
@@ -231,11 +244,22 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 // that it parses.
 var jsonArrayRE = regexp.MustCompile(`(?s)\[.*?\]`)
 
-// parseTopics extracts a []generatedTopic from a raw MiniMax
+// parseTopicsLegacy extracts a []generatedTopic from a raw MiniMax
 // response. It is lenient about markdown fences and surrounding
 // prose because MiniMax often wraps JSON in ```json ... ``` blocks
 // despite explicit instructions.
-func parseTopics(raw string) ([]generatedTopic, error) {
+//
+// The "Legacy" suffix reflects the fact that the real /ai/topics
+// path now delegates to the topic capability library
+// (internal/capabilities/topic), which owns its own parseTopics for
+// the library []Topic shape. This handler-local copy survives only
+// to parse canned demo data into the wire-shaped []generatedTopic
+// the handler still emits. The signature stays the same so the few
+// other handlers (pipeline, batch) that share the same JSON-lenient
+// behaviour can keep calling it without re-implementing the regex
+// dance. Phase 3 will retire this function along with the demo
+// pool.
+func parseTopicsLegacy(raw string) ([]generatedTopic, error) {
 	if len(raw) > maxAIResultBytes {
 		return nil, errors.New("response too large")
 	}

@@ -213,7 +213,7 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 }
 
 // parseQualityScore extracts a qualityScoreResponse from a raw
-// Claude response. Same lenient approach as parseTopics /
+// Claude response. Same lenient approach as parseTopicsLegacy /
 // parsePostmortemStructured: strip a single ```json ... ```
 // wrapper, then locate the first JSON object, then unmarshal.
 func parseQualityScore(raw string) (qualityScoreResponse, error) {

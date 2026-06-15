@@ -321,7 +321,7 @@ func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag
 	if err != nil {
 		return nil, textUsage{}, err
 	}
-	topics, perr := parseTopics(res.Text)
+	topics, perr := parseTopicsLegacy(res.Text)
 	if perr != nil {
 		return nil, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, perr
 	}
@@ -461,7 +461,7 @@ func (h *PipelineHandler) buildDemoPipeline(c *gin.Context, req pipelineRequest,
 	}
 
 	topicRaw, _ := agents.DemoResponse(agents.DemoOpTopics, len(req.Seed))
-	topics, terr := parseTopics(topicRaw)
+	topics, terr := parseTopicsLegacy(topicRaw)
 	if terr != nil {
 		h.logger.Warn("pipeline demo: topics parse failed", "err", terr.Error(), "request_id", c.GetString("request_id"))
 	}
