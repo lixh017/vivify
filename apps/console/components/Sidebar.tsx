@@ -32,6 +32,7 @@ const ITEMS: Item[] = [
   { href: '/members',         label: '成员',     reserve: true },
   { href: '/billing',         label: '计费' },
   { href: '/creators',        label: '创作者管理' },
+  { href: '/api-keys',        label: 'API key 管理' },
 ]
 
 export function Sidebar() {
