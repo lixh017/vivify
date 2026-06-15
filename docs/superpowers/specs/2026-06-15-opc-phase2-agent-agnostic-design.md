@@ -543,8 +543,8 @@ func (h *AgentHandler) Regenerate(c *gin.Context) {
 package middleware
 
 import (
-    "crypto/subtle"
     "net/http"
+    "strings"
     "time"
 
     "github.com/gin-gonic/gin"
@@ -571,28 +571,28 @@ func MaybeAgentKey(db *gorm.DB) gin.HandlerFunc {
             c.Next()
             return
         }
-        if !models.IsValidKeyFormat(key) {
+        // Quick format check to avoid an unnecessary DB query.
+        if !strings.HasPrefix(key, "opc_agent_") || len(key) != 12+32 {
             c.Next()
             return
         }
-        prefix := models.KeyPrefix(key)
-        var agents []models.Agent
-        if err := db.Where("key_prefix = ?", prefix).Find(&agents).Error; err != nil {
+        prefix := key[:12]  // match stored key_prefix (12 chars)
+        var candidates []models.Agent
+        if err := db.Where("key_prefix = ?", prefix).Find(&candidates).Error; err != nil {
             c.Next()  // graceful — let RequireAuth 401
             return
         }
-        // Constant-time compare to avoid timing attacks
-        for _, a := range agents {
+        for _, a := range candidates {
             if a.Disabled {
                 continue
             }
-            if subtle.ConstantTimeCompare([]byte(a.HashedKey), []byte(hashKey(key))) != 1 {
-                continue
-            }
+            // Single bcrypt compare per candidate. bcrypt is
+            // already constant-time; no need for explicit
+            // subtle.ConstantTimeCompare.
             if !models.VerifyPassword(a.HashedKey, key) {
                 continue
             }
-            // Stamp last_used_at (fire-and-forget; if fails, log only)
+            // Stamp last_used_at (fire-and-forget; if fails, log only).
             now := time.Now()
             db.Model(&a).Update("last_used_at", &now)
 
@@ -604,14 +604,6 @@ func MaybeAgentKey(db *gorm.DB) gin.HandlerFunc {
         }
         c.Next()  // invalid key — let handler's auth check 401
     }
-}
-
-func hashKey(key string) string {
-    // ... (placeholder; the actual implementation should use
-    // bcrypt directly via models.VerifyPassword, no need for
-    // hashKey. The two-line code shown above is a copy-paste
-    // error; real implementation collapses to a single bcrypt
-    // compare call.)
 }
 ```
 
