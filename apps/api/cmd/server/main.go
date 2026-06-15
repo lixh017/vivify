@@ -190,6 +190,25 @@ func main() {
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	seriesH := handlers.NewSeriesHandler(gormDB)
 	aiH := handlers.NewAIHandler(mmxClient, gormDB)
+
+	// Sub-Spec D M1 — Task 3: per-route MaybeAgentKey on the AI
+	// surface. We register /api/ai/topics OUTSIDE the standard
+	// apiGroup so the MaybeAgentKey middleware is only applied to
+	// this one endpoint (today's spec; the broader /api/* CRUD
+	// surface stays session-cookie-only). The chain is
+	// RequireAuth → MaybeAgentKey → handler: RequireAuth handles
+	// the human session-cookie case (and 401s with a reason code
+	// if the cookie is missing/invalid/expired); MaybeAgentKey
+	// then inspects X-API-Key and, if present and valid, stamps
+	// agent_id/agent_scope/agent_name on the Gin context. The
+	// handler's own c.GetUint("user_id") > 0 ||
+	// c.Get("agent_id") != nil check decides whether the request
+	// is authorized.
+	aiAuthChain := []gin.HandlerFunc{
+		handlers.NewRequireAuth(gormDB, slog.Default()),
+		middleware.MaybeAgentKey(gormDB),
+	}
+	r.POST("/api/ai/topics", append(aiAuthChain, aiH.GenerateTopics)...)
 	qualityH := handlers.NewQualityHandler(mmxClient, gormDB)
 	deconstructH := handlers.NewDeconstructHandler(mmxClient)
 	pipelineH := handlers.NewPipelineHandler(mmxClient, gormDB)
@@ -309,7 +328,16 @@ func main() {
 	knowledgeSearchH.RegisterRoutes(apiGroup)
 	knowledgeDocH.RegisterRoutes(apiGroup)
 	seriesH.RegisterRoutes(apiGroup)
-	aiH.RegisterRoutes(apiGroup)
+	// aiH is registered partly above (/api/ai/topics with the
+	// RequireAuth + MaybeAgentKey chain) and partly here
+	// (/api/ai/humanize + /api/ai/postmortem on the standard
+	// apiGroup). We do NOT call aiH.RegisterRoutes(apiGroup)
+	// because that would double-register /api/ai/topics and gin
+	// would panic at startup. The two /ai/* endpoints below stay
+	// session-cookie-only for now; Task 4+ can opt them into the
+	// same chain if/when agent callers need them.
+	apiGroup.POST("/ai/humanize", aiH.HumanizeScript)
+	apiGroup.POST("/ai/postmortem", aiH.Postmortem)
 	qualityH.RegisterRoutes(apiGroup)
 	deconstructH.RegisterRoutes(apiGroup)
 	pipelineH.RegisterRoutes(apiGroup)

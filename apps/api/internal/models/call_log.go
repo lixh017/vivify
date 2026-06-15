@@ -27,7 +27,29 @@ type CallLog struct {
 	// aggregated query (by_skill, by_provider, today) filters on
 	// this column. Indexed because the dashboard query is the hot
 	// read path.
+	//
+	// Sub-Spec D M1: a row is owned by either a user (UserID != 0,
+	// AgentID == 0, ActorType == "human") or an agent (UserID == 0,
+	// AgentID != 0, ActorType == "agent"). The two columns are
+	// intentionally disjoint — the middleware enforces this so a
+	// misconfigured chain cannot write both, and a misconfigured
+	// handler cannot leak across the boundary.
 	UserID uint `gorm:"index" json:"user_id"`
+
+	// AgentID is the owner of the call when the caller is a
+	// non-human agent authenticated via X-API-Key. Sub-Spec D M1
+	// adds this column. Indexed so the future "show me all calls
+	// from this agent" dashboard query is a cheap lookup. Zero
+	// for human-originated calls.
+	AgentID uint `gorm:"index" json:"agent_id"`
+
+	// ActorType is "human" or "agent" — the discriminator that
+	// tells the operator which side of the Sub-Spec D boundary
+	// produced this row. Default "human" matches every
+	// pre-Sub-Spec-D row, so AutoMigrate on an existing DB leaves
+	// the existing aggregate queries unchanged. A future
+	// "by_actor" rollup view can GROUP BY this column directly.
+	ActorType string `gorm:"size:16;default:human;index" json:"actor_type"`
 
 	// Skill is a short, stable identifier for the capability the
 	// caller invoked. Conventions:

@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
 
@@ -28,6 +29,14 @@ func setupAITestRouter(t *testing.T, override textOverrideFn) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(override))
 	r := gin.New()
+	// Sub-Spec D M1 — Task 3: GenerateTopics now requires either a
+	// session cookie (user_id) or an X-API-Key (agent_id). The
+	// production chain wires RequireAuth + MaybeAgentKey; the
+	// test chain uses middleware.StubUser so a human caller is
+	// synthesized. Tests that want to exercise the agent path
+	// override X-API-Key on the request and seed an Agent row
+	// separately (none today; a future test would do so).
+	r.Use(middleware.StubUser(1))
 	h := NewAIHandler(m)
 	h.RegisterRoutes(r)
 	return r
@@ -437,24 +446,30 @@ func TestPostmortemInvalidBody(t *testing.T) {
 
 // setupDemoRouter wires the AI handler with an agent constructed
 // WITHOUT an API key, so it defaults to demo mode. The override is
-// not set — demo mode must never call Text.
+// not set — demo mode must never call Text. Sub-Spec D M1: also
+// stub a user_id so the GenerateTopics auth check passes; the
+// demo path is otherwise unaffected.
 func setupDemoRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxForDemo() // forces Available()==false
 	r := gin.New()
+	r.Use(middleware.StubUser(1))
 	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }
 
 // setupDemoRouterWithKey wires the AI handler with an agent that
 // has a (fake) API key configured. Demo mode only kicks in when the
-// caller passes ?demo=true.
+// caller passes ?demo=true. Sub-Spec D M1: also stub a user_id so
+// the GenerateTopics auth check passes; the demo path is otherwise
+// unaffected.
 func setupDemoRouterWithKey(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMax("fake-key-for-tests")
 	r := gin.New()
+	r.Use(middleware.StubUser(1))
 	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }
@@ -463,12 +478,14 @@ func setupDemoRouterWithKey(t *testing.T) *gin.Engine {
 // MiniMax client that has a text-override (so Available() returns
 // true) AND a no-op override. This is used by the "with key, no
 // demo flag" test to verify the demo short-circuit is NOT taken
-// without burning time on a real MiniMax call.
+// without burning time on a real MiniMax call. Sub-Spec D M1:
+// also stub a user_id so the GenerateTopics auth check passes.
 func setupDemoRouterWithKeyAndOverride(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
+	r.Use(middleware.StubUser(1))
 	NewAIHandler(m).RegisterRoutes(r)
 	return r
 }

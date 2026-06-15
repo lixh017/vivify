@@ -173,6 +173,21 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 		req.Count = 20
 	}
 
+	// Sub-Spec D M1: accept either a session cookie (human, set by
+	// RequireAuth as user_id) or an X-API-Key (agent, set by
+	// MaybeAgentKey as agent_id). Both flow through the same
+	// handler. A request with neither must 401 here — letting it
+	// through would burn cost on the AI provider for a request
+	// the caller has no right to make.
+	hasAgent := false
+	if v, ok := c.Get("agent_id"); ok && v != nil {
+		hasAgent = true
+	}
+	if c.GetUint("user_id") == 0 && !hasAgent {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized (need session cookie or X-API-Key)"})
+		return
+	}
+
 	if h.shouldUseDemo(c) {
 		// Demo path stays in the handler — it's an HTTP UX
 		// concern (banner + canned pool), not a library concern.

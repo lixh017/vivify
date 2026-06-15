@@ -22,7 +22,15 @@ import (
 // handler can mutate the same instance the middleware holds;
 // copying by value would silently drop handler-side overrides.
 type CallLogRef struct {
-	UserID       uint
+	UserID uint
+	// AgentID + ActorType are Sub-Spec D M1 additions: they let a
+	// single CallLog row carry either "user X made this call" or
+	// "agent Y made this call" without splitting the table. The
+	// middleware below enforces the disjoint invariant
+	// (UserID > 0 iff ActorType == "human"; AgentID > 0 iff
+	// ActorType == "agent") and the handler can rely on it.
+	AgentID      uint
+	ActorType    string
 	Skill        string
 	Provider     string
 	CredentialID *uint
@@ -189,8 +197,40 @@ func CallLog(cfg CallLogConfig) gin.HandlerFunc {
 		// finalizer reads the response status (post-c.Next) and
 		// writes the row.
 		defer func() {
+			// Sub-Spec D M1: derive the (UserID, AgentID, ActorType)
+			// triple from the Gin context. The two halves are
+			// intentionally disjoint:
+			//   human path → UserID=uid, AgentID=0, ActorType="human"
+			//   agent path → UserID=0, AgentID=aid, ActorType="agent"
+			// A handler that pre-stamped ref.UserID still wins
+			// (e.g. admin API-key minting logged as a human admin
+			// call) because the check is `if ref.UserID == 0` — we
+			// only fill in the field when the handler left it at
+			// zero. The same goes for ref.AgentID.
 			if ref.UserID == 0 {
 				ref.UserID = UserIDFromContext(c)
+			}
+			if ref.AgentID == 0 {
+				if v, ok := c.Get(CtxAgentID); ok {
+					if aid, ok := v.(uint); ok {
+						ref.AgentID = aid
+					}
+				}
+			}
+			if ref.ActorType == "" {
+				switch {
+				case ref.AgentID != 0:
+					ref.ActorType = "agent"
+				case ref.UserID != 0:
+					ref.ActorType = "human"
+				default:
+					// Neither auth path stamped an actor — leave
+					// ActorType empty so the GORM default ("human")
+					// applies on the row. The handler's own 401
+					// will have aborted by now in practice; this
+					// branch only fires for unauthenticated probes
+					// (skip-list miss).
+				}
 			}
 			ref.LatencyMS = int(time.Since(start).Milliseconds())
 			if ref.Status == 0 {
@@ -204,6 +244,8 @@ func CallLog(cfg CallLogConfig) gin.HandlerFunc {
 			}
 			row := models.CallLog{
 				UserID:       ref.UserID,
+				AgentID:      ref.AgentID,
+				ActorType:    ref.ActorType,
 				Skill:        ref.Skill,
 				Provider:     ref.Provider,
 				CredentialID: ref.CredentialID,
