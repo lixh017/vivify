@@ -44,6 +44,12 @@ const (
 	// RequireAuth-protected handler should assert it is non-zero
 	// before doing per-user work.
 	CtxUserID = "user_id"
+	// CtxUserRole is the user's role string ("operator" or
+	// "creator"). Populated by RequireAuth from the loaded User
+	// row so downstream role-check middleware
+	// (RequireOperatorRole / RequireCreatorRole) can read it
+	// without re-querying the DB.
+	CtxUserRole = "user_role"
 	// CtxUser is the full models.User value. Useful for handlers
 	// that need the email or name (e.g. /api/auth/me-like endpoints
 	// that look up the caller's profile).
@@ -152,6 +158,7 @@ func RequireAuth(db *gorm.DB, logger *slog.Logger) gin.HandlerFunc {
 			return
 		}
 		c.Set(CtxUserID, u.ID)
+		c.Set(CtxUserRole, u.Role)
 		c.Set(CtxUser, u)
 		c.Next()
 	}
@@ -215,6 +222,53 @@ func UserFromContext(c *gin.Context) (models.User, bool) {
 func StubUser(userID uint) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(CtxUserID, userID)
+		c.Next()
+	}
+}
+
+// RequireOperatorRole returns a Gin middleware that verifies the
+// authenticated user has role="operator" (the default role for OPC
+// internal accounts). MUST be used AFTER RequireAuth, which is
+// responsible for loading the user and stamping CtxUserRole on
+// the Gin context. Without a prior RequireAuth the middleware
+// short-circuits with 401 (no role in context).
+//
+// Returns 401 when CtxUserRole is missing (RequireAuth did not
+// run) and 403 when the role is set but not "operator".
+func RequireOperatorRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, ok := c.Get(CtxUserRole)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no user role in context"})
+			return
+		}
+		if role.(string) != "operator" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "operator role required"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireCreatorRole returns a Gin middleware that verifies the
+// authenticated user has role="creator" (Phase 2 external beta
+// test accounts). MUST be used AFTER RequireAuth, which is
+// responsible for loading the user and stamping CtxUserRole on
+// the Gin context.
+//
+// Returns 401 when CtxUserRole is missing (RequireAuth did not
+// run) and 403 when the role is set but not "creator".
+func RequireCreatorRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, ok := c.Get(CtxUserRole)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no user role in context"})
+			return
+		}
+		if role.(string) != "creator" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "creator role required"})
+			return
+		}
 		c.Next()
 	}
 }

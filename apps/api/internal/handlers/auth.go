@@ -192,6 +192,7 @@ type userResponse struct {
 	ID        uint      `json:"id"`
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
+	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -200,6 +201,7 @@ func toUserResponse(u models.User) userResponse {
 		ID:        u.ID,
 		Email:     u.Email,
 		Name:      u.Name,
+		Role:      u.Role,
 		CreatedAt: u.CreatedAt,
 	}
 }

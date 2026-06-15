@@ -243,3 +243,138 @@ func TestMiddlewareRequireAuthReason(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Sub-Spec C M1 — Task 2: RequireOperatorRole / RequireCreatorRole tests.
+//
+// Both role-check middlewares are designed to run AFTER RequireAuth,
+// which is responsible for resolving the session cookie and stamping
+// user_id + user_role on the Gin context. The tests below exercise the
+// role-check middleware in isolation: they pre-populate the Gin context
+// with the role value RequireAuth would have set, then verify the
+// middleware either lets the request through (200) or short-circuits
+// with the documented status (401 if no role, 403 if role mismatch).
+// =============================================================================
+
+// newRouterWithMiddleware builds a router that runs the given
+// middleware chain and then serves a dummy GET /x handler. The chain
+// runs in the order given, mirroring how main.go composes
+// RequireAuth + RequireOperatorRole into a single /api/admin group.
+func newRouterWithMiddleware(mw ...gin.HandlerFunc) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	for _, m := range mw {
+		r.Use(m)
+	}
+	r.GET("/x", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+	return r
+}
+
+// stampRole is the test-mode "RequireAuth already ran" middleware:
+// it sets user_role on the Gin context from the X-Test-Role header,
+// mirroring the production chain that RequireAuth runs before the
+// role-check middleware.
+func stampRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if role := c.GetHeader("X-Test-Role"); role != "" {
+			c.Set("user_role", role)
+		}
+		c.Next()
+	}
+}
+
+// TestRequireOperatorRoleOperatorPass: an operator-role session
+// reaches the downstream handler.
+func TestRequireOperatorRoleOperatorPass(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(
+		stampRole(),
+		middleware.RequireOperatorRole(),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-Test-Role", "operator")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("operator pass, got %d want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireOperatorRoleCreatorFail: a creator-role session is
+// rejected with 403 by the operator-only middleware.
+func TestRequireOperatorRoleCreatorFail(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(
+		stampRole(),
+		middleware.RequireOperatorRole(),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-Test-Role", "creator")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("creator fail, got %d want 403; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireOperatorRoleUnauthFail: no role in context (RequireAuth
+// did not run) is rejected with 401.
+func TestRequireOperatorRoleUnauthFail(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(middleware.RequireOperatorRole())
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("unauth fail, got %d want 401; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireCreatorRoleCreatorPass: a creator-role session reaches
+// the downstream handler.
+func TestRequireCreatorRoleCreatorPass(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(
+		stampRole(),
+		middleware.RequireCreatorRole(),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-Test-Role", "creator")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("creator pass, got %d want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireCreatorRoleOperatorFail: an operator-role session is
+// rejected with 403 by the creator-only middleware.
+func TestRequireCreatorRoleOperatorFail(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(
+		stampRole(),
+		middleware.RequireCreatorRole(),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("X-Test-Role", "operator")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("operator fail, got %d want 403; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireCreatorRoleUnauthFail: no role in context (RequireAuth
+// did not run) is rejected with 401.
+func TestRequireCreatorRoleUnauthFail(t *testing.T) {
+	t.Parallel()
+	r := newRouterWithMiddleware(middleware.RequireCreatorRole())
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("unauth fail, got %d want 401; body: %s", w.Code, w.Body.String())
+	}
+}

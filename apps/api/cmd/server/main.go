@@ -277,6 +277,20 @@ func main() {
 		handlers.NewRequireAuth(gormDB, slog.Default()),
 		middleware.CallLog(middleware.CallLogConfig{DB: gormDB, Logger: slog.Default()}),
 	)
+
+	// Sub-Spec C M1 — Task 2: external creator admin endpoints
+	// (operator-only). Sits on a sibling /api/admin group so the
+	// role-check middleware is scoped to operator-only URLs and
+	// does not run on the broader /api/* CRUD surface. RequireAuth
+	// must run before RequireOperatorRole (which reads user_role
+	// from the context RequireAuth stamps).
+	adminGroup := r.Group("/api/admin",
+		handlers.NewRequireAuth(gormDB, slog.Default()),
+		middleware.RequireOperatorRole(),
+	)
+	creatorH := handlers.NewCreatorHandler(gormDB)
+	creatorH.RegisterRoutes(adminGroup)
+
 	topicH.RegisterRoutes(apiGroup)
 	scriptH.RegisterRoutes(apiGroup)
 	contentItemH.RegisterRoutes(apiGroup)
