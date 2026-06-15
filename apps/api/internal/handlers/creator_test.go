@@ -136,6 +136,10 @@ func atoi(s string) uint {
 // headers instead of a session cookie. This keeps the unit tests
 // hermetic (no bcrypt dance, no session table) while still
 // exercising the real middleware chain.
+//
+// The handler is mounted on a /api/admin group (matching
+// cmd/server/main.go) so RegisterRoutes uses the same relative
+// paths it does in production.
 func newTestRouter(db *gorm.DB) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -143,8 +147,9 @@ func newTestRouter(db *gorm.DB) *gin.Engine {
 	// Use the production middleware under test. They run AFTER
 	// stampAuthContext so user_id + user_role are populated.
 	r.Use(testRequireAuth(), testRequireOperatorRole())
+	adminGroup := r.Group("/api/admin")
 	h := NewCreatorHandler(db)
-	h.RegisterRoutes(r)
+	h.RegisterRoutes(adminGroup)
 	return r
 }
 

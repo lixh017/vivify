@@ -468,24 +468,128 @@ fi
 rm -f "$CLI_OUT"
 
 # ---------------------------------------------------------------------------
+# Sub-Spec C M1: external creator flow (Task 5)
+# ---------------------------------------------------------------------------
+# Four cases covering the invite-only-beta path: operator creates a
+# creator via /api/admin/creators, creator logs in, creator hits the
+# topic endpoint, creator is correctly rejected from the admin
+# surface. Smoke re-runs tolerate a 409 on step 1 (creator already
+# exists from a prior run) by falling through to login; that keeps
+# the test idempotent without polluting the user table.
+section "external creator (Phase 2 sub-spec C M1)"
+
+# 1. Operator creates a creator (re-uses the smoke operator session
+# already established above — the default role for the registration
+# path is "operator", so the cookie jar from the early login is
+# authorized for /api/admin/creators).
+creator_resp=$(call POST /api/admin/creators \
+    '{"email":"creator1@beta.com","password":"beta-pass-123"}')
+creator_code=$(printf '%s' "$creator_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+creator_body=$(printf '%s' "$creator_resp" | sed 's/__HTTP__[0-9]*$//')
+creator_id=$(echo "$creator_body" | jq '.user.id' 2>/dev/null)
+
+if [ "$creator_code" = "201" ] && [ -n "$creator_id" ] && [ "$creator_id" != "null" ]; then
+    pass "admin: creator created (id=$creator_id)"
+elif [ "$creator_code" = "409" ]; then
+    # Re-run: creator already exists. Pick the id by listing so the
+    # login step below can still proceed.
+    list_resp=$(call GET /api/admin/creators "")
+    list_body=$(printf '%s' "$list_resp" | sed 's/__HTTP__[0-9]*$//')
+    creator_id=$(echo "$list_body" | jq '.creators[] | select(.email=="creator1@beta.com") | .id' 2>/dev/null | head -1)
+    if [ -n "$creator_id" ] && [ "$creator_id" != "null" ]; then
+        pass "admin: creator already exists from prior run (id=$creator_id)"
+    else
+        fail "admin: 409 on create but could not find creator1@beta.com in list"
+    fi
+else
+    fail "admin: creator creation failed (HTTP $creator_code body=$(truncate "$creator_body" 200))"
+fi
+
+# 2. Creator logs in via a fresh cookie jar (the main smoke cookie
+# jar is operator-scoped — we deliberately keep them separate so
+# the 403 case below can prove the creator session is what gets
+# rejected, not the operator).
+CREATOR_COOKIE_JAR="/tmp/opc-smoke-creator-cookies.txt"
+rm -f "$CREATOR_COOKIE_JAR"
+
+creator_login_resp=$(curl -sS --max-time 30 -X POST \
+    -H 'Content-Type: application/json' \
+    -b "$CREATOR_COOKIE_JAR" -c "$CREATOR_COOKIE_JAR" \
+    -d '{"email":"creator1@beta.com","password":"beta-pass-123"}' \
+    -w '\n__HTTP__%{http_code}' \
+    "$BASE_URL/api/auth/login")
+creator_login_code=$(printf '%s' "$creator_login_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+creator_session=$(grep opc_session "$CREATOR_COOKIE_JAR" 2>/dev/null | awk '{print $7}' | tail -1)
+
+if [ "$creator_login_code" = "200" ] && [ -n "$creator_session" ]; then
+    pass "creator: login successful"
+else
+    fail "creator: login failed (HTTP $creator_login_code, session='$creator_session')"
+fi
+
+# 3. Creator generates a topic via the B M1 endpoint. We hit the
+# endpoint with the creator's cookie jar instead of the operator
+# jar to prove the refactor in B M1 didn't accidentally lock
+# non-operator callers out. Demo mode (MINIMAX_API_KEY="") still
+# returns 5 topics, so this case is independent of API key state.
+if [ -n "$creator_session" ]; then
+    creator_topic_resp=$(curl -sS --max-time 30 -X POST \
+        -H 'Content-Type: application/json' \
+        -b "$CREATOR_COOKIE_JAR" \
+        -d '{"seed":"个人成长","platform":"抖音","count":5}' \
+        -w '\n__HTTP__%{http_code}' \
+        "$BASE_URL/api/ai/topics")
+    creator_topic_code=$(printf '%s' "$creator_topic_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+    creator_topic_body=$(printf '%s' "$creator_topic_resp" | sed 's/__HTTP__[0-9]*$//')
+    creator_topic_count=$(echo "$creator_topic_body" | jq '.topics | length' 2>/dev/null)
+
+    if [ "$creator_topic_code" = "200" ] && [ "$creator_topic_count" = "5" ]; then
+        pass "creator: topic HTTP returns 5 topics"
+    else
+        fail "creator: topic HTTP got code=$creator_topic_code count=$creator_topic_count (want 200/5)"
+    fi
+else
+    skip "creator: topic HTTP (skipped because creator login failed above)"
+fi
+
+# 4. Creator tries to call an admin endpoint — must 403. This is
+# the C M1 role-check gate live-firing; a regression that drops
+# the middleware on /api/admin/creators would flip this to 201.
+if [ -n "$creator_session" ]; then
+    creator_admin_code=$(curl -sS --max-time 30 -o /dev/null -w "%{http_code}" -X POST \
+        -H 'Content-Type: application/json' \
+        -b "$CREATOR_COOKIE_JAR" \
+        -d '{"email":"should-not-be-created@beta.com","password":"x-pass-1234"}' \
+        "$BASE_URL/api/admin/creators")
+    if [ "$creator_admin_code" = "403" ]; then
+        pass "creator: admin endpoint correctly 403"
+    else
+        fail "creator: admin endpoint returned $creator_admin_code, want 403"
+    fi
+else
+    skip "creator: admin endpoint 403 (skipped because creator login failed above)"
+fi
+rm -f "$CREATOR_COOKIE_JAR"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 # Expected total depends on whether MINIMAX_API_KEY was set in the
 # caller's env:
-#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI = 12 (PASS_COUNT=12)
-#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP = 12 (PASS_COUNT=11, SKIP_COUNT=1)
-# Either way TOTAL = PASS + FAIL + SKIP must be 12.
+#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI + 4 creator = 16 (PASS_COUNT=16)
+#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP + 4 creator = 16 (PASS_COUNT=15, SKIP_COUNT=1)
+# Either way TOTAL = PASS + FAIL + SKIP must be 16.
 TOTAL=$((PASS_COUNT + FAIL_COUNT + SKIP_COUNT))
 echo
 echo "========================================"
-if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "12" ]; then
-    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 12)"
+if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "16" ]; then
+    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 16)"
     echo "========================================"
     exit 0
 fi
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 12: 5 handler + 4 IP type + 1 advisory + 2 topic)"
+    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 16: 5 handler + 4 IP type + 1 advisory + 2 topic + 4 creator)"
     echo "========================================"
     exit 0
 fi

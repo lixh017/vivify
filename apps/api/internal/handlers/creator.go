@@ -37,13 +37,18 @@ func NewCreatorHandler(db *gorm.DB) *CreatorHandler {
 }
 
 // RegisterRoutes attaches the 4 admin endpoints to the router.
-// The router group is expected to already carry
+// The router group is expected to already be mounted at the
+// /api/admin prefix AND to already carry
 // RequireAuth + RequireOperatorRole — see cmd/server/main.go.
+// The paths below are written RELATIVE to that prefix; an
+// earlier version of this file used the absolute "/api/admin/..."
+// form, which doubled the prefix and made every request hit
+// NoRoute (404).
 func (h *CreatorHandler) RegisterRoutes(r gin.IRouter) {
-	r.POST("/api/admin/creators", h.CreateCreator)
-	r.GET("/api/admin/creators", h.ListCreators)
-	r.POST("/api/admin/creators/:id/reset-password", h.ResetPassword)
-	r.POST("/api/admin/creators/:id/disable", h.DisableCreator)
+	r.POST("/creators", h.CreateCreator)
+	r.GET("/creators", h.ListCreators)
+	r.POST("/creators/:id/reset-password", h.ResetPassword)
+	r.POST("/creators/:id/disable", h.DisableCreator)
 }
 
 // CreateCreator handles POST /api/admin/creators.
