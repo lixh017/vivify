@@ -239,6 +239,7 @@ ok "logged in as $SMOKE_EMAIL"
 # in case the final summary needs to call out a partial.
 PASS_COUNT=0
 FAIL_COUNT=0
+SKIP_COUNT=0
 FAIL_LIST=()
 
 run_test() {
@@ -347,6 +348,14 @@ run_test "pipeline" POST /api/ai/pipeline \
 section() { log "$*"; }
 pass()    { ok "$*"; PASS_COUNT=$((PASS_COUNT+1)); }
 fail()    { err "$*"; FAIL_COUNT=$((FAIL_COUNT+1)); FAIL_LIST+=("$*"); }
+# skip counts toward TOTAL but is not a failure. The summary block
+# knows the difference: PASS_COUNT is "tests that ran and passed",
+# SKIP_COUNT is "tests that intentionally did not run" (typically
+# because a required env var is missing). The CLI topic case
+# below uses skip when MINIMAX_API_KEY is not set, since the CLI
+# hard-errors on a missing key and we don't want to require every
+# developer to have one wired up to run the smoke.
+skip()    { warn "$*"; SKIP_COUNT=$((SKIP_COUNT+1)); }
 
 # opc_asset_check runs the CLI and trims to the JSON tail so the
 # trailing score line is what awk/grep operate on. --type is the
@@ -404,26 +413,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Topic capability (Phase 2 sub-spec B M1)
+# ---------------------------------------------------------------------------
+# Re-exercises the topic capability through both the HTTP surface
+# (POST /api/ai/topics, after the Task 2 handler refactor delegates
+# to the topic library) and the CLI surface (opc-asset topic, Task 3).
+# The HTTP case works in demo mode because MINIMAX_API_KEY is
+# intentionally empty above — the handler short-circuits to the
+# canned 10-topic pool and trims to req.Count (5 by default). The
+# CLI case requires a real MINIMAX_API_KEY; without one the CLI
+# hard-errors and we SKIP rather than fail (developer ergonomics:
+# running this script should not require a paid API key).
+section "topic capability (Phase 2 sub-spec B M1)"
+
+# HTTP topic case — uses the cookie jar from the earlier login,
+# so we route through call() for cookie consistency instead of
+# hand-rolling -H "Cookie: opc_session=$TOKEN".
+topic_resp=$(call POST /api/ai/topics \
+    '{"seed":"个人成长","platform":"抖音","count":5}')
+topic_code=$(printf '%s' "$topic_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+topic_body=$(printf '%s' "$topic_resp" | sed 's/__HTTP__[0-9]*$//')
+if [ "$topic_code" != "200" ]; then
+    fail "topic HTTP: HTTP $topic_code body=$(truncate "$topic_body" 160)"
+else
+    topic_count=$(echo "$topic_body" | jq '.topics | length' 2>/dev/null)
+    if [ "$topic_count" = "5" ]; then
+        pass "topic HTTP: 5 topics returned (seed=个人成长, platform=抖音)"
+    else
+        fail "topic HTTP: jq length = '$topic_count', want 5 (raw: $(truncate "$topic_body" 200))"
+    fi
+fi
+
+# CLI topic case — real LLM call against MiniMax; SKIP gracefully
+# when MINIMAX_API_KEY is not set. We capture the env that the
+# outer test runner passed in (the script's earlier `export
+# MINIMAX_API_KEY=""` only affects the API server, not the
+# subprocess; we pass through the value from the parent env).
+CLI_OUT=$(mktemp -t opc-topic-smoke.XXXXXX.json)
+if [ -z "${MINIMAX_API_KEY:-}" ]; then
+    skip "topic CLI: MINIMAX_API_KEY not set, skipping (CLI hard-errors without a key)"
+else
+    if ./apps/bin/opc-asset topic \
+        --seed "个人成长" --platform "抖音" --count 5 --out "$CLI_OUT" 2>/dev/null; then
+        cli_count=$(jq 'length' < "$CLI_OUT" 2>/dev/null)
+        if [ "$cli_count" = "5" ]; then
+            pass "topic CLI: 5 topics written to $CLI_OUT"
+        else
+            fail "topic CLI: jq length = $cli_count, want 5"
+        fi
+    else
+        fail "topic CLI: opc-asset topic exited non-zero (is MINIMAX_API_KEY valid?)"
+    fi
+fi
+rm -f "$CLI_OUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-# Expected total: 5 handler tests + 4 IP type checks + 1 advisory = 10.
-TOTAL=$((PASS_COUNT + FAIL_COUNT))
+# Expected total depends on whether MINIMAX_API_KEY was set in the
+# caller's env:
+#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI = 12 (PASS_COUNT=12)
+#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP = 12 (PASS_COUNT=11, SKIP_COUNT=1)
+# Either way TOTAL = PASS + FAIL + SKIP must be 12.
+TOTAL=$((PASS_COUNT + FAIL_COUNT + SKIP_COUNT))
 echo
 echo "========================================"
-if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "10" ]; then
-    ok "RESULT: ${PASS_COUNT}/${TOTAL} PASS"
+if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "12" ]; then
+    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 12)"
     echo "========================================"
     exit 0
 fi
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    warn "RESULT: ${PASS_COUNT}/${TOTAL} PASS (expected 10 tests: 5 handler + 4 IP type + 1 advisory)"
+    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 12: 5 handler + 4 IP type + 1 advisory + 2 topic)"
     echo "========================================"
     exit 0
 fi
 
 # Build a comma-separated list of failing test names for the summary.
 joined=$(IFS=', '; echo "${FAIL_LIST[*]}")
-err "RESULT: ${PASS_COUNT}/${TOTAL} PARTIAL  (failed: $joined)"
+err "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, failed: $joined)"
 echo "========================================"
 exit 1
