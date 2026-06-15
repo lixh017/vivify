@@ -37,6 +37,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -49,6 +50,7 @@ import (
 
 	"github.com/opc/api/internal/agents"
 	"github.com/opc/api/internal/assetgen"
+	"github.com/opc/api/internal/capabilities/topic"
 
 	// Blank-import sub-packages so their init() functions register
 	// the IP-type schemas into assetgen's dispatcher. Without
@@ -109,6 +111,8 @@ func main() {
 		err = runCheck(os.Args[2:])
 	case "generate":
 		err = runGenerate(os.Args[2:], logger)
+	case "topic":
+		err = runTopic(os.Args[2:], logger)
 	case "ledger":
 		err = runLedger(os.Args[2:])
 	case "-h", "--help", "help":
@@ -161,6 +165,59 @@ func runCheck(args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+// runTopic handles `opc-asset topic --seed X --platform Y --count N --out /tmp/x.json`.
+// Calls the topic capability library, marshals the result to
+// indented JSON, and writes to --out. Cost summary goes to stderr
+// (M1 does not write to a ledger; that's a M2 decision).
+func runTopic(args []string, logger *slog.Logger) error {
+	fs := flag.NewFlagSet("topic", flag.ExitOnError)
+	seed := fs.String("seed", "", "Topic seed phrase (required)")
+	platform := fs.String("platform", "", "Target platform: 抖音/哔哩哔哩/小红书 (required)")
+	count := fs.Int("count", 5, "Number of topics to generate (1-20)")
+	out := fs.String("out", "", "Output JSON file path (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *seed == "" || *platform == "" || *out == "" {
+		fs.Usage()
+		return errors.New("--seed, --platform, --out are required")
+	}
+	if *count <= 0 || *count > 20 {
+		return fmt.Errorf("--count must be 1-20, got %d", *count)
+	}
+
+	// Reuse the same env var as the API server. We construct a
+	// fresh minimax client per CLI invocation (cheap; ~ms to init).
+	text := agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
+	if !text.Available() {
+		return errors.New("minimax: MINIMAX_API_KEY env var not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	res, err := topic.Generate(ctx, text, topic.Input{
+		Seed:     *seed,
+		Platform: *platform,
+		Count:    *count,
+	})
+	if err != nil {
+		return fmt.Errorf("generate failed: %w", err)
+	}
+
+	blob, err := json.MarshalIndent(res.Topics, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := os.WriteFile(*out, blob, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", *out, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Wrote %d topics to %s (cost: %d in / %d out tokens)\n",
+		len(res.Topics), *out, res.Cost.InputTokens, res.Cost.OutputTokens)
+	return nil
 }
 
 func runGenerate(args []string, logger *slog.Logger) error {

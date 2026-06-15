@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -67,6 +68,33 @@ func TestRunCheckDefaultsToAnthropomorphic(t *testing.T) {
 	})
 	if !strings.Contains(output, "0.99") && !strings.Contains(output, "1.00") && !strings.Contains(output, "\"score\": 1") {
 		t.Errorf("default --type should be anthropomorphic, output: %s", output)
+	}
+}
+
+// TestRunTopicMissingFlags confirms runTopic returns an error
+// when --seed/--platform/--out are missing. Does not depend
+// on the LLM (no API key required).
+func TestRunTopicMissingFlags(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"no flags", []string{"topic"}},
+		{"only seed", []string{"topic", "--seed", "x"}},
+		{"seed and platform, no out", []string{"topic", "--seed", "x", "--platform", "抖音"}},
+		{"seed and out, no platform", []string{"topic", "--seed", "x", "--out", "/tmp/x.json"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := runTopic(tc.args, slog.Default())
+			if err == nil {
+				t.Fatalf("runTopic(%v) error = nil, want error", tc.args)
+			}
+		})
 	}
 }
 
