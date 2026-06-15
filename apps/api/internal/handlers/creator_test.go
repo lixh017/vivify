@@ -38,7 +38,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("gorm open: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&models.User{}, &models.Session{}); err != nil {
+	if err := gormDB.AutoMigrate(&models.User{}, &models.Session{}, &models.Agent{}); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
 	sqlDB, err := gormDB.DB()
@@ -148,8 +148,13 @@ func newTestRouter(db *gorm.DB) *gin.Engine {
 	// stampAuthContext so user_id + user_role are populated.
 	r.Use(testRequireAuth(), testRequireOperatorRole())
 	adminGroup := r.Group("/api/admin")
-	h := NewCreatorHandler(db)
-	h.RegisterRoutes(adminGroup)
+	// Mount every admin handler the platform currently exposes
+	// on the same /api/admin group. Sub-Spec C creators +
+	// Sub-Spec D agents are both operator-only; the
+	// RequireOperatorRole middleware above enforces the role
+	// gate for the whole subtree.
+	NewCreatorHandler(db).RegisterRoutes(adminGroup)
+	NewAgentHandler(db).RegisterRoutes(adminGroup)
 	return r
 }
 

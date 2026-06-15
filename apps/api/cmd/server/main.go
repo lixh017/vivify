@@ -291,6 +291,18 @@ func main() {
 	creatorH := handlers.NewCreatorHandler(gormDB)
 	creatorH.RegisterRoutes(adminGroup)
 
+	// Sub-Spec D M1 — Task 2: agent API key admin endpoints
+	// (operator-only). Sits on the SAME /api/admin group as the
+	// creator endpoints above — both surfaces share the
+	// RequireAuth + RequireOperatorRole chain. IMPORTANT: pass
+	// the router group (not the absolute path) so routes
+	// register with RELATIVE paths. The Sub-Spec C Task 2
+	// 'RegisterRoutes absolute path' bug doubled the prefix and
+	// 4xx'd every admin endpoint until smoke caught it in
+	// Task 5. We use relative paths here from the start.
+	agentH := handlers.NewAgentHandler(gormDB)
+	agentH.RegisterRoutes(adminGroup)
+
 	topicH.RegisterRoutes(apiGroup)
 	scriptH.RegisterRoutes(apiGroup)
 	contentItemH.RegisterRoutes(apiGroup)
