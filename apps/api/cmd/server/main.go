@@ -285,7 +285,14 @@ func main() {
 	// the inner call to a resolver-aware factory that walks
 	// the ProviderResolver chain.
 	batchH := handlers.NewBatchHandler(func() agents.TextProvider {
-		return pipelineH.Text()
+		// Batch runs in a background goroutine — no per-request
+		// user context is available, so the resolver chain would
+		// fall through to Echo (resolver.Text returns Echo for
+		// userID=0 per the userID != 0 guard). Use the legacy
+		// MiniMax client as the background-tick default. Future
+		// work: thread a system user_id from a config row so
+		// per-org credentials can be honored in the batch path.
+		return mmxClient
 	}, gormDB)
 	coverH := handlers.NewCoverHandler(mmxClient)
 
