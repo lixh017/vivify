@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -85,5 +86,54 @@ func TestProviderResolver_NoCredential_ReturnsEcho(t *testing.T) {
 	}
 	if p.Name() != "echo" {
 		t.Errorf("want fallback=echo, got %q", p.Name())
+	}
+}
+
+func TestProviderResolver_ExactScopeWinsOverAll(t *testing.T) {
+	// User has a scope="text" credential AND a scope="all" credential.
+	// resolver.text(ctx, 7, "text") MUST return the scope="text" one.
+	db := &fakeCredentialDB{
+		rows: map[uint]map[string]resolvedCredential{
+			7: {
+				"text": {Protocol: "anthropic", BaseURL: "https://text.example.com", ModelName: "claude-sonnet-4-5", APIKey: []byte("text-key")},
+				"all":  {Protocol: "openai", BaseURL: "https://all.example.com", ModelName: "gpt-4o-mini", APIKey: []byte("all-key")},
+			},
+		},
+	}
+	resolver := newResolverForTest(db)
+	p, err := resolver.text(context.Background(), 7, "text")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if p.Name() != "anthropic" {
+		t.Errorf("want exact-scope (anthropic) wins, got %q", p.Name())
+	}
+}
+
+func TestProviderResolver_UserIDZeroReturnsEcho(t *testing.T) {
+	db := &fakeCredentialDB{rows: map[uint]map[string]resolvedCredential{}}
+	resolver := newResolverForTest(db)
+	p, err := resolver.text(context.Background(), 0, "all")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if p.Name() != "echo" {
+		t.Errorf("want echo for userID=0, got %q", p.Name())
+	}
+}
+
+func TestProviderResolver_UnsupportedProtocolReturnsError(t *testing.T) {
+	db := &fakeCredentialDB{
+		rows: map[uint]map[string]resolvedCredential{
+			7: {"all": {Protocol: "gopher", ModelName: "x", APIKey: []byte("k")}},
+		},
+	}
+	resolver := newResolverForTest(db)
+	_, err := resolver.text(context.Background(), 7, "all")
+	if err == nil {
+		t.Fatal("want error for unsupported protocol")
+	}
+	if !strings.Contains(err.Error(), "gopher") {
+		t.Errorf("want error mentioning gopher, got %v", err)
 	}
 }

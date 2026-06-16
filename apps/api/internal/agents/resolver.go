@@ -21,10 +21,12 @@ type ProviderResolver struct {
 	decrypt      func([]byte) ([]byte, error)
 	defaultMedia MediaProvider // MiniMax (built-in, env-driven)
 
-	// Memoize adapters by (providerType, baseURL) so we don't
-	// rebuild the http.Client on every call. The credential
-	// row's APIKey still flows in per-request — only the client
-	// struct is cached.
+	// clients memoizes adapters by (protocol, baseURL, credentialID, updatedAt).
+	// The UpdatedAt suffix ensures a key rotation (which writes a new
+	// UpdatedAt via Save) evicts the cache on the next call, so the new
+	// API key is honored immediately without a process restart. Memory
+	// grows by one entry per rotation; for Phase 4's small cardinality
+	// (a handful of providers per user) this is acceptable.
 	mu      sync.Mutex
 	clients map[string]TextProvider
 }
@@ -40,11 +42,6 @@ func NewProviderResolver(db *gorm.DB, decrypt func([]byte) ([]byte, error), defa
 		clients:      make(map[string]TextProvider),
 	}
 }
-
-// ErrNoCredential is returned when the resolver cannot find a
-// credential matching the requested scope. Callers fall back
-// to the package Echo / a demo-mode handler.
-var ErrNoCredential = errors.New("no credential configured for this user/scope")
 
 // Text returns a TextProvider for the given (userID, scope).
 // scope can be "all" or a specific skill name; the resolver
@@ -66,7 +63,7 @@ func (r *ProviderResolver) Text(ctx context.Context, userID uint, scope string) 
 	}
 	switch models.Protocol(cred.Protocol) {
 	case models.ProtocolAnthropic:
-		return r.cachedClient("anthropic:"+cred.BaseURL, func() TextProvider {
+		return r.cachedClient(r.cacheKey(cred, "anthropic"), func() TextProvider {
 			return NewAnthropicCompatProvider(AnthropicCompatConfig{
 				APIKey:    string(key),
 				BaseURL:   cred.BaseURL,
@@ -74,7 +71,7 @@ func (r *ProviderResolver) Text(ctx context.Context, userID uint, scope string) 
 			})
 		}), nil
 	case models.ProtocolOpenAI:
-		return r.cachedClient("openai:"+cred.BaseURL, func() TextProvider {
+		return r.cachedClient(r.cacheKey(cred, "openai"), func() TextProvider {
 			return NewOpenAICompatProvider(OpenAICompatConfig{
 				APIKey:    string(key),
 				BaseURL:   cred.BaseURL,
@@ -90,7 +87,7 @@ func (r *ProviderResolver) Text(ctx context.Context, userID uint, scope string) 
 // media is out of scope for Phase 4 — MiniMax remains the
 // built-in. The signature is here so handlers can adopt a
 // uniform resolver surface.
-func (r *ProviderResolver) Media(_ context.Context, _ uint, _ string) (MediaProvider, error) {
+func (r *ProviderResolver) Media(_ context.Context, _ uint, _ string) (MediaProvider, error) { //nolint:unused // Phase 4 placeholder; signature kept for uniform resolver surface
 	if r.defaultMedia == nil {
 		return nil, errors.New("resolver: no default media provider configured")
 	}
@@ -133,4 +130,13 @@ func (r *ProviderResolver) cachedClient(key string, build func() TextProvider) T
 	c := build()
 	r.clients[key] = c
 	return c
+}
+
+// cacheKey derives a unique key per (protocol, baseURL, credentialID,
+// updatedAt) so a key rotation (which writes a new UpdatedAt) evicts
+// the cached provider on the next call. Including UpdatedAt rather
+// than just ID is required because the rotate endpoint Save()s the
+// row in place — the ID stays the same, but UpdatedAt advances.
+func (r *ProviderResolver) cacheKey(cred *models.Credential, protocol string) string {
+	return fmt.Sprintf("%s:%s:%d:%d", protocol, cred.BaseURL, cred.ID, cred.UpdatedAt.UnixNano())
 }
