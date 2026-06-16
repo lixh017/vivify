@@ -208,6 +208,7 @@ func main() {
 	// belt-and-braces last check.
 	r.POST("/api/ai/topics",
 		middleware.RequireEitherAuth(gormDB, slog.Default()),
+		middleware.CallLog(middleware.CallLogConfig{DB: gormDB, Logger: slog.Default()}),
 		aiH.GenerateTopics,
 	)
 	qualityH := handlers.NewQualityHandler(resolver, gormDB)
