@@ -188,11 +188,14 @@ func runTopic(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("--count must be 1-20, got %d", *count)
 	}
 
-	// Reuse the same env var as the API server. We construct a
-	// fresh minimax client per CLI invocation (cheap; ~ms to init).
-	text := agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
+	// Phase 4: the text client is now env-var driven. The CLI is
+	// single-user (no credential table lookup), so the user picks
+	// a protocol via OPC_ASSET_PROVIDER and supplies an API key via
+	// OPC_ASSET_API_KEY (or the legacy ANTHROPIC_AUTH_TOKEN alias).
+	// Falls back to MiniMax for back-compat with old deployments.
+	text := buildAssetProviderFromEnv()
 	if !text.Available() {
-		return errors.New("minimax: MINIMAX_API_KEY env var not set")
+		return errors.New("opc-asset: no text provider configured — set OPC_ASSET_PROVIDER + OPC_ASSET_API_KEY, or MINIMAX_API_KEY for the legacy path")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -245,10 +248,14 @@ func runGenerate(args []string, logger *slog.Logger) error {
 	consistency := assetgen.ConsistencyCheck(prof, prompt)
 
 	startedAt := time.Now()
-	// MiniMax picks the API key from MINIMAX_API_KEY in the env
-	// (godotenv above). The CLI mirrors the platform's auth path
-	// so a contributor running `opc-asset` on the same host as
-	// the server uses the same quota + key.
+	// Media surface (image / video) — MiniMax is the only provider
+	// that supports both endpoints today. User-configurable media
+	// is out of scope for Phase 4; the asset CLI falls back to the
+	// MINIMAX_API_KEY env var for media just like before. The text
+	// path is env-var driven via buildAssetProviderFromEnv; the
+	// media path is a separate *agents.MiniMax instance because
+	// the env-var helper returns the protocol-agnostic TextProvider
+	// surface, not the rich Text/Image/Video/Speech interface.
 	mm := agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
 	if !mm.Available() {
 		entry := newLedgerEntry(*sceneID, prof.Version(), "minimax", *assetType, *outfit, startedAt, consistency.Score, int64(0), *out, "", "missing-api-key")
@@ -482,3 +489,44 @@ func copyFile(src, dst string) error {
 // direct use; the linter would catch a real dead-import, but
 // this guards against a half-edit.
 var _ = strings.Contains
+
+// buildAssetProviderFromEnv constructs a TextProvider for the
+// opc-asset CLI from environment variables. The CLI is single-
+// user (no credential table lookup), so configuration comes
+// from the process env.
+//
+// Protocol selection (in order):
+//  1. OPC_ASSET_PROVIDER=anthropic → AnthropicCompatProvider
+//     with OPC_ASSET_API_KEY + OPC_ASSET_BASE_URL + OPC_ASSET_MODEL.
+//  2. OPC_ASSET_PROVIDER=openai → OpenAICompatProvider
+//     with the same env vars.
+//  3. (default) MINIMAX_API_KEY → MiniMax client (legacy).
+//  4. (default) no key → Echo (no-op).
+func buildAssetProviderFromEnv() agents.TextProvider {
+	provider := os.Getenv("OPC_ASSET_PROVIDER")
+	apiKey := os.Getenv("OPC_ASSET_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_AUTH_TOKEN")
+	}
+	baseURL := os.Getenv("OPC_ASSET_BASE_URL")
+	model := os.Getenv("OPC_ASSET_MODEL")
+	if provider == "anthropic" && apiKey != "" {
+		return agents.NewAnthropicCompatProvider(agents.AnthropicCompatConfig{
+			APIKey:    apiKey,
+			BaseURL:   baseURL,
+			ModelName: model,
+		})
+	}
+	if provider == "openai" && apiKey != "" {
+		return agents.NewOpenAICompatProvider(agents.OpenAICompatConfig{
+			APIKey:    apiKey,
+			BaseURL:   baseURL,
+			ModelName: model,
+		})
+	}
+	// Legacy MiniMax path (back-compat for old deployments).
+	if os.Getenv("MINIMAX_API_KEY") != "" {
+		return agents.NewMiniMax(os.Getenv("MINIMAX_API_KEY"))
+	}
+	return agents.Echo
+}

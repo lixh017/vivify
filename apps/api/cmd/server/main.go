@@ -85,19 +85,10 @@ func main() {
 	// router-aware handler migration coming in the next phase.
 	_ = aiRouter
 
-	// Construct the MCP server. The stdio transport blocks for the
-	// lifetime of the process, so we run it in its own goroutine and
-	// let SIGINT/SIGTERM cancel the context to shut it down cleanly.
-	// Pass nil for the resolver slot — Task 9 will wire the real
-	// *agents.ProviderResolver here. Until then, the AI-backed
-	// tools fall through to the default text provider (mmxClient).
-	mcpServer, err := mcp.NewServer(gormDB, mmxClient, nil)
-	if err != nil {
-		slog.Error("mcp server init failed", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("mcp tools exposed", "tools", mcpServer.ListTools())
-
+	// The MCP server is constructed below, after the resolver is
+	// built (further down). The stdio transport blocks for the
+	// lifetime of the process, so we declare the cancel + WaitGroup
+	// here and start the goroutine right after construction.
 	mcpCtx, mcpCancel := context.WithCancel(context.Background())
 	defer mcpCancel()
 	// Use a WaitGroup to wait for the MCP goroutine to actually
@@ -105,14 +96,7 @@ func main() {
 	// be too long (delaying process exit) or too short (letting the
 	// process exit before the transport flushes its last log line).
 	var mcpWG sync.WaitGroup
-	mcpWG.Add(1)
-	go func() {
-		defer mcpWG.Done()
-		if err := mcpServer.ServeStdio(mcpCtx); err != nil {
-			slog.Error("mcp stdio exited", "error", err)
-			mcpCancel()
-		}
-	}()
+	var mcpServer *mcp.Server
 
 	// Silence gin's default debug logger — every request now flows
 	// through the structured request logger middleware below, so the
@@ -182,6 +166,18 @@ func main() {
 	encryptionKey := auth.MustLoadKey()
 	credentialH := handlers.NewCredentialHandler(gormDB, encryptionKey, slog.Default())
 
+	// ProviderResolver: maps user_id + scope → live TextProvider.
+	// It reads the credentials table on every call so a key
+	// rotation lands on the next request without a restart.
+	// The decrypt closure uses auth.Decrypt with the master key
+	// loaded above. The mmxClient is passed as the defaultMedia
+	// so the media surface (image/speech/video) still works
+	// through the same MiniMax client — user-configurable media
+	// is out of scope for Phase 4.
+	resolver := agents.NewProviderResolver(gormDB, func(cipher []byte) ([]byte, error) {
+		return auth.Decrypt(cipher, encryptionKey)
+	}, mmxClient)
+
 	// FTS5 search route must be registered on the same router BEFORE
 	// the CRUD :id route. Gin's radix tree resolves the static segment
 	// "search" before the :id wildcard in practice, but we still keep
@@ -192,7 +188,13 @@ func main() {
 	knowledgeSearchH := handlers.NewKnowledgeSearchHandler(gormDB)
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	seriesH := handlers.NewSeriesHandler(gormDB)
-	aiH := handlers.NewAIHandlerWithDefault(mmxClient, gormDB)
+	// The 4 text-consuming handlers now resolve their provider
+	// through the resolver, so a logged-in user with a configured
+	// credential lands on AnthropicCompat / OpenAICompat instead
+	// of the legacy MiniMax default. mmxClient remains in scope
+	// below for the media surface (image/speech/video) and as the
+	// MCP server's default text provider.
+	aiH := handlers.NewAIHandler(resolver, gormDB)
 
 	// Sub-Spec D M1 — Task 3 + Task 5 fix: /api/ai/topics accepts
 	// EITHER a session cookie OR an X-API-Key. The original chain
@@ -208,9 +210,30 @@ func main() {
 		middleware.RequireEitherAuth(gormDB, slog.Default()),
 		aiH.GenerateTopics,
 	)
-	qualityH := handlers.NewQualityHandlerWithDefault(mmxClient, gormDB)
-	deconstructH := handlers.NewDeconstructHandlerWithDefault(mmxClient)
-	pipelineH := handlers.NewPipelineHandlerWithDefault(mmxClient, gormDB)
+	qualityH := handlers.NewQualityHandler(resolver, gormDB)
+	deconstructH := handlers.NewDeconstructHandler(resolver)
+	pipelineH := handlers.NewPipelineHandler(resolver, gormDB)
+
+	// Construct the MCP server now that the resolver is available.
+	// The stdio transport blocks for the lifetime of the process, so
+	// we run it in its own goroutine and let SIGINT/SIGTERM cancel
+	// the context to shut it down cleanly. The resolver slot is the
+	// per-user text-provider resolver; mmxClient remains the
+	// default text surface for callers with no credential row.
+	mcpServer, err = mcp.NewServer(gormDB, mmxClient, resolver)
+	if err != nil {
+		slog.Error("mcp server init failed", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("mcp tools exposed", "tools", mcpServer.ListTools())
+	mcpWG.Add(1)
+	go func() {
+		defer mcpWG.Done()
+		if err := mcpServer.ServeStdio(mcpCtx); err != nil {
+			slog.Error("mcp stdio exited", "error", err)
+			mcpCancel()
+		}
+	}()
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
