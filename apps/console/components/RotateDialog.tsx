@@ -11,6 +11,17 @@ import { FormEvent, useEffect, useState } from 'react'
 import { ApiError } from '@opc/shared/api'
 import type { Credential } from '@opc/shared/types'
 
+// truncate keeps long base_url values from blowing up the
+// dialog header row. Matches the helper used in
+// app/(console)/credentials/page.tsx — the full value stays
+// reachable via the span's title attribute (browser tooltip
+// on hover). The ellipsis suffix is unicode so we avoid a
+// sentinel byte that a real URL could legally contain.
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value
+  return value.slice(0, max - 1) + '…'
+}
+
 export function RotateDialog({
   credential,
   open,
@@ -105,8 +116,11 @@ export function RotateDialog({
                 {credential.base_url && (
                   <>
                     <span className="text-claude-hairline">·</span>
-                    <span className="font-mono break-all">
-                      {credential.base_url}
+                    <span
+                      className="font-mono truncate max-w-[16rem]"
+                      title={credential.base_url}
+                    >
+                      {truncate(credential.base_url, 32)}
                     </span>
                   </>
                 )}

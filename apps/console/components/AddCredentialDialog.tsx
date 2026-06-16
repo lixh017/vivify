@@ -83,6 +83,14 @@ export function AddCredentialDialog({
 
   const providerConfig = PROVIDER_CONFIG[provider]
   const requiresProtocol = providerConfig !== undefined
+  // Gate the submit button on a trimmed-non-empty model_name when
+  // the chosen provider requires a protocol. The HTML `required`
+  // attribute would let a string of only whitespace pass, then
+  // handleSubmit would silently fall back to the provider default
+  // (line 148), which masks the user's empty input. Driving the
+  // gate from a derived flag keeps the validation honest and
+  // matches the on-screen error messaging.
+  const isModelNameValid = !requiresProtocol || modelName.trim().length > 0
 
   // Reset the form every time the dialog re-opens so a
   // cancelled-then-reopened dialog never carries over a stale
@@ -112,8 +120,13 @@ export function AddCredentialDialog({
     }
     setBaseUrl(providerConfig.defaultBaseURL)
     setModelName(providerConfig.defaultModel)
-  }, [provider]) // providerConfig is derived from provider; including
-                 // it in deps would loop on the object identity.
+  }, [provider]) // eslint-disable-line react-hooks/exhaustive-deps
+  // PROVIDER_CONFIG is a module-level constant — its values are
+  // stable across renders, so [provider] is the correct dep.
+  // Including providerConfig in the array would not cause an
+  // infinite loop (React's dep check is reference equality, and
+  // the object identity is stable) but the lint rule still wants
+  // the dep narrow.
 
   useEffect(() => {
     if (!open) return
@@ -262,10 +275,10 @@ export function AddCredentialDialog({
                 </label>
                 <input
                   type="text"
-                  required
                   value={modelName}
                   onChange={(e) => setModelName(e.target.value)}
                   placeholder={providerConfig.defaultModel}
+                  aria-invalid={!isModelNameValid && modelName.length > 0}
                   className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
                 />
                 <p className="mt-1 text-[11px] text-claude-muted-soft">
@@ -353,7 +366,7 @@ export function AddCredentialDialog({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !isModelNameValid}
               className="px-4 py-1.5 text-sm bg-claude-coral text-claude-on-primary rounded-md hover:bg-claude-coral-active disabled:opacity-50 transition-colors"
             >
               {submitting ? '保存中…' : '保存'}
