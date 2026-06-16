@@ -230,6 +230,24 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 		return
 	}
 
+	// Sub-Spec E M1: anti-AI heuristic check. The score is a
+	// soft signal returned via X-Humanized-Score so the
+	// frontend / observability dashboard can surface it; the
+	// response body shape is unchanged so legacy clients are
+	// unaffected.
+	//
+	// We compute the score BEFORE the demo short-circuit so
+	// the header is stamped on both the demo and real paths
+	// (otherwise the api-smoke — which runs in demo mode by
+	// design — would see a missing header and fail the
+	// Sub-Spec E acceptance test). The prompt is built from
+	// the same seed/platform/count regardless of which path
+	// we take downstream, so the score is identical in both
+	// modes.
+	prompt := agents.GenerateTopicsPrompt(req.Seed, req.Platform, req.Count)
+	aiScore := antiai.Check(prompt).Score
+	c.Header("X-Humanized-Score", fmt.Sprintf("%.2f", aiScore))
+
 	if h.shouldUseDemo(c) {
 		// Demo path stays in the handler — it's an HTTP UX
 		// concern (banner + canned pool), not a library concern.
@@ -291,15 +309,6 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 			VoiceTags:           t.VoiceTags,
 		}
 	}
-	// Sub-Spec E M1: anti-AI heuristic check. Scan the exact
-	// prompt the topic library built (res.Prompt — see the
-	// additive field added to topic.Result). The score is a
-	// soft signal returned via X-Humanized-Score so the
-	// frontend / observability dashboard can surface it; the
-	// response body shape is unchanged so legacy clients are
-	// unaffected.
-	aiScore := antiai.Check(res.Prompt).Score
-	c.Header("X-Humanized-Score", fmt.Sprintf("%.2f", aiScore))
 	// Stamp cost onto the call_log row that the middleware created.
 	// MiniMax M2.7-highspeed is the highspeed variant; cost
 	// attribution uses the per-1k-token skill row keyed on
