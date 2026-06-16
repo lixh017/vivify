@@ -434,10 +434,15 @@ func (s *stubResolver) Text(_ context.Context, _ uint, _ string) (agents.TextPro
 }
 
 func TestServer_ResolvesViaResolver(t *testing.T) {
-	// The default provider should NOT be used. The resolver
-	// returns a different provider, and that provider's output
-	// must surface in the tool's response — proving the
-	// resolver chain is consulted per-tool-call.
+	// Contract: when the resolver is configured but the current
+	// call has no real userID (userID=0, the production case
+	// until agent_id → owner_user_id is threaded), the resolver
+	// is GATED OUT and the default provider is used. This
+	// protects against a future regression that drops the
+	// userID guard — without it, the production resolver
+	// returns Echo for userID=0, which would silently degrade
+	// every tool call once Task 9 wires *agents.ProviderResolver
+	// into main.go.
 	defaultProvider := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
 		return &agents.MiniMaxTextResult{Text: "default-text"}, nil
 	})
@@ -463,8 +468,9 @@ func TestServer_ResolvesViaResolver(t *testing.T) {
 		"platform": "抖音",
 		"count":    3,
 	})
-	if out.Text != "resolved-text" {
-		t.Errorf("opc_generate_topics: got %q, want %q (resolver should have been consulted)", out.Text, "resolved-text")
+	// userID=0 today → resolver gated out → default provider used.
+	if out.Text != "default-text" {
+		t.Errorf("opc_generate_topics: got %q, want %q (resolver must be gated when userID=0)", out.Text, "default-text")
 	}
 }
 
