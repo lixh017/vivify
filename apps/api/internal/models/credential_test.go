@@ -49,6 +49,21 @@ func TestCredential_Validate_RequiresModelForNewProtocols(t *testing.T) {
 	}
 }
 
+func TestCredential_Validate_NormalizesProtocolCase(t *testing.T) {
+	c := Credential{
+		Name:      "primary",
+		Provider:  "anthropic",
+		Protocol:  "ANTHROPIC",
+		ModelName: "claude-sonnet-4-5",
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("want nil for uppercase protocol, got %v", err)
+	}
+	if c.Protocol != "anthropic" {
+		t.Fatalf("want normalized protocol=anthropic, got %q", c.Protocol)
+	}
+}
+
 func TestProviderIsAllowed_IncludesAnthropicAndOpenAI(t *testing.T) {
 	for _, p := range []string{"anthropic", "openai", "Anthropic", "OPENAI"} {
 		if !ProviderIsAllowed(p) {
