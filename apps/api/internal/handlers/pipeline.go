@@ -79,10 +79,11 @@ func (h *PipelineHandler) Text() agents.TextProvider {
 	return h.defaultText
 }
 
-// Resolver exposes the text resolver so callers (like main.go
-// wiring the batch handler) can build a per-call factory. Returns
-// the interface type so callers don't depend on the agents
-// package directly.
+// Resolver exposes the text resolver so the batch handler
+// (Task 6) can build a per-call factory. Has no callers in
+// Task 5; it lands as a forward-declared seam. Returns the
+// interface type so callers don't depend on the agents package
+// directly.
 func (h *PipelineHandler) Resolver() textClientResolver {
 	return h.resolver
 }
