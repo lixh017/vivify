@@ -31,12 +31,12 @@ import (
 // Claude Code connects.
 //
 // The test sequence mirrors what Claude Code does on connect:
-//   1. Client.Connect runs the initialize handshake and the
-//      notifications/initialized notification.
-//   2. ListTools is the discovery step the LLM uses to learn what's
-//      callable.
-//   3. CallTool on opc_list_topics is the smallest invocation that
-//      touches the real handler (DB read) without needing AI.
+//  1. Client.Connect runs the initialize handshake and the
+//     notifications/initialized notification.
+//  2. ListTools is the discovery step the LLM uses to learn what's
+//     callable.
+//  3. CallTool on opc_list_topics is the smallest invocation that
+//     touches the real handler (DB read) without needing AI.
 //
 // If any of these steps break, Claude Code will fail to call
 // generate_video (or anything else) in production.
@@ -53,7 +53,7 @@ func TestStdioE2EHandshake(t *testing.T) {
 	}
 	mmx := agents.NewMiniMax("test-key-not-used")
 
-	srv, err := NewServer(gormDB, mmx)
+	srv, err := NewServer(gormDB, mmx, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

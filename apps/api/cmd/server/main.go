@@ -88,7 +88,10 @@ func main() {
 	// Construct the MCP server. The stdio transport blocks for the
 	// lifetime of the process, so we run it in its own goroutine and
 	// let SIGINT/SIGTERM cancel the context to shut it down cleanly.
-	mcpServer, err := mcp.NewServer(gormDB, mmxClient)
+	// Pass nil for the resolver slot — Task 9 will wire the real
+	// *agents.ProviderResolver here. Until then, the AI-backed
+	// tools fall through to the default text provider (mmxClient).
+	mcpServer, err := mcp.NewServer(gormDB, mmxClient, nil)
 	if err != nil {
 		slog.Error("mcp server init failed", "error", err)
 		os.Exit(1)

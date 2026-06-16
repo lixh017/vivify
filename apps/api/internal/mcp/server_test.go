@@ -91,7 +91,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("migrate: %v", err)
 	}
 	claude := agents.NewMiniMax("test-key")
-	s, err := NewServer(gormDB, claude)
+	s, err := NewServer(gormDB, claude, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestOpcHumanizeScriptRoundTrip(t *testing.T) {
 	claude := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
 		return &agents.MiniMaxTextResult{Text: "改写后的脚本：带停顿"}, nil
 	})
-	s, err := NewServer(gormDB, claude)
+	s, err := NewServer(gormDB, claude, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestNewServerRejectsNilDB(t *testing.T) {
 	claude := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
 		return &agents.MiniMaxTextResult{}, nil
 	})
-	_, err := NewServer(nil, claude)
+	_, err := NewServer(nil, claude, nil)
 	if err == nil {
 		t.Error("expected error when db is nil")
 	}
@@ -388,7 +388,7 @@ func TestNewServerRejectsNilClaude(t *testing.T) {
 	if err := db.Migrate(gormDB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	_, err = NewServer(gormDB, nil)
+	_, err = NewServer(gormDB, nil, nil)
 	if err == nil {
 		t.Error("expected error when claude is nil")
 	}
@@ -412,4 +412,89 @@ func TestEveryToolBackedByModel(t *testing.T) {
 	// grows: this anchor prevents an unused-import error if the
 	// set is ever inlined.
 	_ = models.Topic{}
+}
+
+// ---- resolver-aware behavior ----------------------------------------
+
+// stubResolver is a minimal textClientResolver shim for MCP tests.
+// It returns a fixed provider regardless of (userID, scope) so the
+// test can assert that the resolver was consulted end-to-end and
+// that the resolved provider's output is what the tool surfaces.
+//
+// We use this in lieu of *agents.ProviderResolver because the
+// production resolver needs a real gorm.DB + decryption key;
+// standing one up here would couple MCP tests to the credential
+// table.
+type stubResolver struct {
+	provider agents.TextProvider
+}
+
+func (s *stubResolver) Text(_ context.Context, _ uint, _ string) (agents.TextProvider, error) {
+	return s.provider, nil
+}
+
+func TestServer_ResolvesViaResolver(t *testing.T) {
+	// The default provider should NOT be used. The resolver
+	// returns a different provider, and that provider's output
+	// must surface in the tool's response — proving the
+	// resolver chain is consulted per-tool-call.
+	defaultProvider := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		return &agents.MiniMaxTextResult{Text: "default-text"}, nil
+	})
+	resolvedProvider := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		return &agents.MiniMaxTextResult{Text: "resolved-text"}, nil
+	})
+	resolver := &stubResolver{provider: resolvedProvider}
+
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm open: %v", err)
+	}
+	if err := db.Migrate(gormDB); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	srv, err := NewServer(gormDB, defaultProvider, resolver)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	out := callTool(t, srv, "opc_generate_topics", map[string]any{
+		"seed":     "美食",
+		"platform": "抖音",
+		"count":    3,
+	})
+	if out.Text != "resolved-text" {
+		t.Errorf("opc_generate_topics: got %q, want %q (resolver should have been consulted)", out.Text, "resolved-text")
+	}
+}
+
+func TestServer_FallsBackToDefaultWhenResolverNil(t *testing.T) {
+	// Sanity-check the second branch of the resolver chain:
+	// when no resolver is configured, the default provider
+	// must be used. This is the path every existing test
+	// exercises; pinning it here so a future refactor that
+	// dropped the fallback would be caught.
+	defaultProvider := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		return &agents.MiniMaxTextResult{Text: "default-text"}, nil
+	})
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm open: %v", err)
+	}
+	if err := db.Migrate(gormDB); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	srv, err := NewServer(gormDB, defaultProvider, nil)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	out := callTool(t, srv, "opc_generate_topics", map[string]any{
+		"seed":     "美食",
+		"platform": "抖音",
+		"count":    3,
+	})
+	if out.Text != "default-text" {
+		t.Errorf("opc_generate_topics (no resolver): got %q, want %q", out.Text, "default-text")
+	}
 }

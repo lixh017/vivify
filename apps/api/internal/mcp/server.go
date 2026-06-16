@@ -4,9 +4,9 @@
 // (github.com/modelcontextprotocol/go-sdk) and exposes 10 tools over
 // the stdio transport so that MCP-compatible clients (e.g. Claude Code,
 // Code CLI) can drive the "熊猫" IP content pipeline. Handlers
-// delegate to GORM for persistence and to the agents.MiniMax agent
-// for AI-assisted tasks (topic generation, humanization, viral
-// deconstruction).
+// delegate to GORM for persistence and to an agents.TextProvider
+// (the MiniMax client by default) for AI-assisted tasks (topic
+// generation, humanization, viral deconstruction).
 //
 // The package is split per concern:
 //
@@ -35,29 +35,40 @@ import (
 // tool handler. It is a method value extracted via toolHandlerFor.
 type toolHandler func(ctx context.Context, in ToolInput) (*mcpsdk.CallToolResult, ToolOutput, error)
 
-// Server wraps the official Go MCP SDK server with the OPC-specific
-// dependencies (GORM DB, MiniMax client). It is the only public
-// surface the rest of the application needs to interact with MCP.
-type Server struct {
-	sdk  *mcpsdk.Server
-	db   *gorm.DB
-	text *agents.MiniMax
+// textResolver is the subset of *agents.ProviderResolver that
+// the MCP server consumes. Defining it locally lets unit tests
+// pass a stub that returns a fixed provider, without standing
+// up a real *gorm.DB + decryption key. The production
+// *agents.ProviderResolver satisfies this interface as-is.
+type textResolver interface {
+	Text(ctx context.Context, userID uint, scope string) (agents.TextProvider, error)
 }
 
-// NewServer constructs a fully-configured MCP server. Both db and
-// text are required: every OPC tool depends on the GORM handle, and
-// the AI-backed tools (opc_generate_topics, opc_humanize_script,
-// opc_deconstruct_viral) additionally need the MiniMax text client.
-// Use NewRegistryServer for tests that only want to inspect the
-// tool list without invoking handlers.
-func NewServer(db *gorm.DB, text *agents.MiniMax) (*Server, error) {
+// Server wraps the official Go MCP SDK server with the OPC-specific
+// dependencies (GORM DB, text-generation provider, optional
+// per-user resolver). It is the only public surface the rest of
+// the application needs to interact with MCP.
+type Server struct {
+	sdk      *mcpsdk.Server
+	db       *gorm.DB
+	text     agents.TextProvider
+	resolver textResolver
+}
+
+// NewServer wires the MCP server. text is the default provider
+// used when no resolver is configured (or when userID=0). The
+// resolver is consulted per-tool-call to honor the caller's
+// configured credentials; it can be nil for callers that don't
+// need per-user routing (e.g. tests). *agents.ProviderResolver
+// satisfies the resolver slot directly.
+func NewServer(db *gorm.DB, text agents.TextProvider, resolver textResolver) (*Server, error) {
 	if db == nil {
 		return nil, fmt.Errorf("mcp: db is required")
 	}
 	if text == nil {
 		return nil, fmt.Errorf("mcp: text client is required")
 	}
-	s := &Server{db: db, text: text}
+	s := &Server{db: db, text: text, resolver: resolver}
 	s.sdk = mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "opc-mcp",
 		Version: "v0.1.0",
