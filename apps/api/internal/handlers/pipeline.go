@@ -26,26 +26,41 @@ import (
 // step is opt-in via `include_knowledge` and is implemented as a
 // pre-step that augments the topic + script prompts with a
 // "STYLE REFERENCE" block pulled from the user's knowledge base.
+//
+// Phase 4 wiring: the handler holds a textClientResolver
+// (production) + a defaultText fallback (tests). The BatchHandler
+// (Task 6) shares the same provider by calling Resolver() and
+// building a per-call factory.
 type PipelineHandler struct {
-	text   *agents.MiniMax
-	db     *gorm.DB
-	logger *slog.Logger
+	resolver    textClientResolver
+	defaultText agents.TextProvider
+	db          *gorm.DB
+	logger      *slog.Logger
 }
 
-// NewPipelineHandler wires a PipelineHandler. db is required for
-// the RAG step; if it is nil the handler still works (the RAG step
-// is silently skipped) but the demo / live MiniMax paths will
-// fall through. Tests that don't need RAG can pass nil.
-func NewPipelineHandler(text *agents.MiniMax, db ...*gorm.DB) *PipelineHandler {
-	l := slog.Default()
-	var d *gorm.DB
-	if len(db) > 0 {
-		d = db[0]
-	}
+// NewPipelineHandler wires a PipelineHandler that resolves the text
+// provider per-request from the supplied resolver. db is required
+// for the RAG step; if it is nil the handler still works (the RAG
+// step is silently skipped) but the demo / live paths will fall
+// through. Tests that don't need RAG can pass nil.
+func NewPipelineHandler(resolver textClientResolver, db *gorm.DB) *PipelineHandler {
 	return &PipelineHandler{
-		text:   text,
-		db:     d,
-		logger: l,
+		resolver: resolver,
+		db:       db,
+		logger:   slog.Default(),
+	}
+}
+
+// NewPipelineHandlerWithDefault is a transitional constructor
+// kept during the Phase 4 migration. It wires the handler with a
+// fixed TextProvider and no resolver, used by tests that have not
+// been migrated to a stub resolver yet. New callers should prefer
+// NewPipelineHandler(resolver, db).
+func NewPipelineHandlerWithDefault(text agents.TextProvider, db *gorm.DB) *PipelineHandler {
+	return &PipelineHandler{
+		defaultText: text,
+		db:          db,
+		logger:      slog.Default(),
 	}
 }
 
@@ -54,20 +69,34 @@ func (h *PipelineHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/pipeline", h.RunPipeline)
 }
 
-// Text returns the underlying MiniMax text client. Sibling
-// handlers (e.g. /ai/batch) can share the same text surface
-// without a second constructor. Returns the concrete struct so
-// callers don't need to depend on the agents package directly.
-func (h *PipelineHandler) Text() *agents.MiniMax {
-	return h.text
+// Text returns the configured default text provider. The pipeline
+// doesn't have a per-request gin context inside the per-step
+// helpers (they pass context.Context, not *gin.Context), so the
+// step methods fall back to the configured default. Batch (Task 6)
+// wires the resolver via Resolver() to build a per-tick factory so
+// each batch run resolves with the current credentials.
+func (h *PipelineHandler) Text() agents.TextProvider {
+	return h.defaultText
+}
+
+// Resolver exposes the text resolver so callers (like main.go
+// wiring the batch handler) can build a per-call factory. Returns
+// the interface type so callers don't depend on the agents
+// package directly.
+func (h *PipelineHandler) Resolver() textClientResolver {
+	return h.resolver
 }
 
 // shouldUseDemo mirrors AIHandler.shouldUseDemo: demo mode kicks in
-// when the caller passes ?demo=true or when no MiniMax API key is
-// configured. Duplicated rather than shared so handlers stay
-// decoupled.
+// when the caller passes ?demo=true or when the resolved provider
+// reports it is not configured. Duplicated rather than shared so
+// handlers stay decoupled.
 func (h *PipelineHandler) shouldUseDemo(c *gin.Context) bool {
-	return isDemoRequest(c) || !h.text.Available()
+	if isDemoRequest(c) {
+		return true
+	}
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
+	return !text.Available()
 }
 
 // pipelineRequest is the JSON body for POST /ai/pipeline.
@@ -317,15 +346,15 @@ func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
-	topics, perr := parseTopicsLegacy(res.Text)
+	topics, perr := parseTopicsLegacy(body)
 	if perr != nil {
-		return nil, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, perr
+		return nil, textUsage{Input: usage.InputTokens, Output: usage.OutputTokens}, perr
 	}
-	return topics, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
+	return topics, textUsage{Input: usage.InputTokens, Output: usage.OutputTokens}, nil
 }
 
 // runScriptStep asks MiniMax to expand the chosen topic into a
@@ -341,17 +370,17 @@ func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopi
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
-	body := strings.TrimSpace(res.Text)
+	trimmed := strings.TrimSpace(body)
 	return &pipelineScript{
 		Title:   topic.Title,
-		Content: body,
+		Content: trimmed,
 		Angle:   topic.Angle,
 		Topic:   topic.Title,
-	}, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
+	}, textUsage{Input: usage.InputTokens, Output: usage.OutputTokens}, nil
 }
 
 // runScoreStep evaluates the generated script on the standard
@@ -364,12 +393,12 @@ func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platf
 	prompt := agents.ScoreContentPrompt(title, script, platform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usageRaw, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
-	usage := textUsage{Input: res.InputTokens, Output: res.OutputTokens}
-	out, perr := parseQualityScore(res.Text)
+	usage := textUsage{Input: usageRaw.InputTokens, Output: usageRaw.OutputTokens}
+	out, perr := parseQualityScore(body)
 	if perr != nil {
 		// Gracefully degrade to the rule-based scorer on parse
 		// failure, matching the /ai/score handler. The frontend
@@ -403,15 +432,15 @@ func (h *PipelineHandler) runAdaptStep(ctx context.Context, title, angle, source
 	prompt := agents.PlatformAdaptPrompt(title, angle, sourcePlatform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := h.text.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
-	out, perr := parsePlatformAdapt(res.Text)
+	out, perr := parsePlatformAdapt(body)
 	if perr != nil {
-		return nil, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, perr
+		return nil, textUsage{Input: usage.InputTokens, Output: usage.OutputTokens}, perr
 	}
-	return &out, textUsage{Input: res.InputTokens, Output: res.OutputTokens}, nil
+	return &out, textUsage{Input: usage.InputTokens, Output: usage.OutputTokens}, nil
 }
 
 // injectRAG prepends the "STYLE REFERENCE" block to the prompt.

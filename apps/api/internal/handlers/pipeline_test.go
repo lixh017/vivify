@@ -31,9 +31,9 @@ func setupPipelineRouter(t *testing.T, fn textOverrideFn, db *gorm.DB) *gin.Engi
 	}
 	r := gin.New()
 	if db != nil {
-		NewPipelineHandler(c, db).RegisterRoutes(r)
+		NewPipelineHandlerWithDefault(c, db).RegisterRoutes(r)
 	} else {
-		NewPipelineHandler(c).RegisterRoutes(r)
+		NewPipelineHandlerWithDefault(c, nil).RegisterRoutes(r)
 	}
 	return r
 }

@@ -24,33 +24,48 @@ import (
 //   - POST /ai/platform-adapt     — adapt one idea to 抖音/哔哩哔哩/小红书
 //   - POST /ai/publish-checklist  — pre-publish rule-based checks
 //
-// The first two follow the same demo/MiniMax split as the rest of
+// The first two follow the same demo/real split as the rest of
 // the AI surface. The third is rule-based and always available.
+//
+// Phase 4 wiring: the handler holds a textClientResolver
+// (production) + a defaultText fallback (tests). At request time
+// resolveTextForRequest consults the resolver first, then the
+// default, then Echo.
 type QualityHandler struct {
-	text   *agents.MiniMax
-	db     *gorm.DB
-	logger *slog.Logger
+	resolver    textClientResolver
+	defaultText agents.TextProvider
+	db          *gorm.DB
+	logger      *slog.Logger
 }
 
-// NewQualityHandler wires a QualityHandler. db is optional — the
-// /ai/publish-checklist endpoint needs it (to look up Script +
+// NewQualityHandler wires a QualityHandler that resolves the text
+// provider per-request from the supplied resolver. db is optional —
+// the /ai/publish-checklist endpoint needs it (to look up Script +
 // ContentItem); the other two endpoints are DB-free. Tests that
 // only need score/adapt can pass nil.
-func NewQualityHandler(text *agents.MiniMax, db ...*gorm.DB) *QualityHandler {
-	l := slog.Default()
-	var d *gorm.DB
-	if len(db) > 0 {
-		d = db[0]
-	}
-	return &QualityHandler{text: text, db: d, logger: l}
+func NewQualityHandler(resolver textClientResolver, db *gorm.DB) *QualityHandler {
+	return &QualityHandler{resolver: resolver, db: db, logger: slog.Default()}
+}
+
+// NewQualityHandlerWithDefault is a transitional constructor kept
+// during the Phase 4 migration. It wires the handler with a fixed
+// TextProvider and no resolver, used by tests that have not been
+// migrated to a stub resolver yet. New callers should prefer
+// NewQualityHandler(resolver, db).
+func NewQualityHandlerWithDefault(text agents.TextProvider, db *gorm.DB) *QualityHandler {
+	return &QualityHandler{defaultText: text, db: db, logger: slog.Default()}
 }
 
 // shouldUseDemo mirrors AIHandler.shouldUseDemo: demo mode kicks in
-// when the caller passes ?demo=true or when no MiniMax API key is
-// configured. Duplicated rather than shared so the handlers stay
-// decoupled.
+// when the caller passes ?demo=true or when the resolved provider
+// reports it is not configured. Duplicated rather than shared so
+// the handlers stay decoupled.
 func (h *QualityHandler) shouldUseDemo(c *gin.Context) bool {
-	return isDemoRequest(c) || !h.text.Available()
+	if isDemoRequest(c) {
+		return true
+	}
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
+	return !text.Available()
 }
 
 // RegisterRoutes attaches the three quality endpoints.
@@ -172,12 +187,13 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 
 	prompt := agents.ScoreContentPrompt(req.Title, req.Script, req.Platform)
 
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := text.CompleteWithUsage(ctx, prompt, agents.CompleteOptions{})
 	if err != nil {
-		// MiniMax returns its own error envelope; treat it the
+		// Provider returns its own error envelope; treat it the
 		// same way as the no-API-key case and degrade to the
 		// rule-based scorer so the frontend still gets a
 		// useful 200.
@@ -191,9 +207,9 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 		c.JSON(http.StatusOK, fb)
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
+	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
-	out, err := parseQualityScore(res.Text)
+	out, err := parseQualityScore(body)
 	if err != nil {
 		// Parse failure: log it but degrade gracefully to
 		// rule-based scoring. Better to give the user a
@@ -384,18 +400,19 @@ func (h *QualityHandler) PlatformAdapt(c *gin.Context) {
 
 	prompt := agents.PlatformAdaptPrompt(req.Title, req.Angle, req.SourcePlatform)
 
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := text.CompleteWithUsage(ctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		h.logger.Error("platform-adapt text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
+	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
-	out, err := parsePlatformAdapt(res.Text)
+	out, err := parsePlatformAdapt(body)
 	if err != nil {
 		h.logger.Error("platform-adapt parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})

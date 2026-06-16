@@ -37,7 +37,7 @@ func setupAITestRouter(t *testing.T, override textOverrideFn) *gin.Engine {
 	// override X-API-Key on the request and seed an Agent row
 	// separately (none today; a future test would do so).
 	r.Use(middleware.StubUser(1))
-	h := NewAIHandler(m)
+	h := NewAIHandlerWithDefault(m, nil)
 	h.RegisterRoutes(r)
 	return r
 }
@@ -281,7 +281,7 @@ func newPostmortemRouterWithOverride(db *gorm.DB, fn textOverrideFn) *gin.Engine
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewAIHandler(m, db).RegisterRoutes(r)
+	NewAIHandlerWithDefault(m, db).RegisterRoutes(r)
 	return r
 }
 
@@ -455,7 +455,7 @@ func setupDemoRouter(t *testing.T) *gin.Engine {
 	m := agents.NewMiniMaxForDemo() // forces Available()==false
 	r := gin.New()
 	r.Use(middleware.StubUser(1))
-	NewAIHandler(m).RegisterRoutes(r)
+	NewAIHandlerWithDefault(m, nil).RegisterRoutes(r)
 	return r
 }
 
@@ -470,7 +470,7 @@ func setupDemoRouterWithKey(t *testing.T) *gin.Engine {
 	m := agents.NewMiniMax("fake-key-for-tests")
 	r := gin.New()
 	r.Use(middleware.StubUser(1))
-	NewAIHandler(m).RegisterRoutes(r)
+	NewAIHandlerWithDefault(m, nil).RegisterRoutes(r)
 	return r
 }
 
@@ -486,7 +486,7 @@ func setupDemoRouterWithKeyAndOverride(t *testing.T, fn textOverrideFn) *gin.Eng
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
 	r.Use(middleware.StubUser(1))
-	NewAIHandler(m).RegisterRoutes(r)
+	NewAIHandlerWithDefault(m, nil).RegisterRoutes(r)
 	return r
 }
 

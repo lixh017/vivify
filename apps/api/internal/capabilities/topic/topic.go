@@ -6,7 +6,7 @@
 //
 // The library is pure: no HTTP context, no middleware, no IO
 // besides the LLM call (which is provided by the caller via
-// *agents.MiniMax). The HTTP handler adds demo-mode + call_log
+// agents.TextProvider). The HTTP handler adds demo-mode + call_log
 // cost stamping on top; the CLI adds file output + stderr cost
 // summary on top.
 package topic
@@ -68,7 +68,13 @@ const maxCount = 20
 // Generate is the library entry point. It validates input,
 // builds the prompt, calls the LLM, parses the JSON array
 // response, and returns topics + token counts.
-func Generate(ctx context.Context, text *agents.MiniMax, input Input) (*Result, error) {
+//
+// text is the Phase-4 TextProvider interface; both *agents.MiniMax
+// and the resolver-managed AnthropicCompat / OpenAICompat
+// providers satisfy it. The library uses the legacy MiniMax
+// Text(...) entry point so the existing test seam (which mocks
+// via NewMiniMaxWithTextOverride) keeps working unchanged.
+func Generate(ctx context.Context, text agents.TextProvider, input Input) (*Result, error) {
 	if err := validate(input); err != nil {
 		return nil, err
 	}
@@ -76,11 +82,17 @@ func Generate(ctx context.Context, text *agents.MiniMax, input Input) (*Result, 
 		return nil, errors.New("topic: text provider is nil")
 	}
 	prompt := agents.GenerateTopicsPrompt(input.Seed, input.Platform, input.Count)
-	res, err := text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	// CompleteWithUsage is the provider-neutral entry point on
+	// TextProvider. *agents.MiniMax implements it (it falls
+	// through to Text internally), and so do the AnthropicCompat /
+	// OpenAICompat providers. Model is left empty so the
+	// configured credential's ModelName (or the provider's own
+	// default) is used.
+	body, usage, err := text.CompleteWithUsage(ctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("topic: LLM call failed: %w", err)
 	}
-	topics, err := parseTopics(res.Text)
+	topics, err := parseTopics(body)
 	if err != nil {
 		return nil, fmt.Errorf("topic: parse failed: %w", err)
 	}
@@ -89,7 +101,7 @@ func Generate(ctx context.Context, text *agents.MiniMax, input Input) (*Result, 
 	}
 	return &Result{
 		Topics: topics,
-		Cost:   CostInfo{InputTokens: res.InputTokens, OutputTokens: res.OutputTokens},
+		Cost:   CostInfo{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens},
 	}, nil
 }
 

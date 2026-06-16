@@ -25,7 +25,7 @@ func setupQualityTestRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewQualityHandler(m).RegisterRoutes(r)
+	NewQualityHandlerWithDefault(m, nil).RegisterRoutes(r)
 	return r
 }
 
@@ -38,7 +38,7 @@ func setupQualityDemoRouter(t *testing.T) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(m).RegisterRoutes(r)
+	NewQualityHandlerWithDefault(m, nil).RegisterRoutes(r)
 	return r
 }
 
@@ -75,7 +75,7 @@ func TestScoreForcedDemoWithKey(t *testing.T) {
 	m := agents.NewMiniMax("fake-key-for-tests")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	NewQualityHandler(m).RegisterRoutes(r)
+	NewQualityHandlerWithDefault(m, nil).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/score?demo=true", map[string]any{
 		"title":    "标题",
@@ -380,7 +380,7 @@ func setupChecklistRouter(t *testing.T, userID uint, schedule *time.Time) (*gin.
 
 	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(m, db).RegisterRoutes(r)
+	NewQualityHandlerWithDefault(m, db).RegisterRoutes(r)
 	return r, db, ci.ID
 }
 
@@ -559,7 +559,7 @@ func TestPublishChecklistScriptMissing(t *testing.T) {
 	}
 	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewQualityHandler(m, db).RegisterRoutes(r)
+	NewQualityHandlerWithDefault(m, db).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/publish-checklist", map[string]any{
 		"content_item_id": ci.ID,

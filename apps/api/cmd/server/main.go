@@ -189,7 +189,7 @@ func main() {
 	knowledgeSearchH := handlers.NewKnowledgeSearchHandler(gormDB)
 	knowledgeDocH := handlers.NewKnowledgeDocHandler(gormDB)
 	seriesH := handlers.NewSeriesHandler(gormDB)
-	aiH := handlers.NewAIHandler(mmxClient, gormDB)
+	aiH := handlers.NewAIHandlerWithDefault(mmxClient, gormDB)
 
 	// Sub-Spec D M1 — Task 3 + Task 5 fix: /api/ai/topics accepts
 	// EITHER a session cookie OR an X-API-Key. The original chain
@@ -205,9 +205,9 @@ func main() {
 		middleware.RequireEitherAuth(gormDB, slog.Default()),
 		aiH.GenerateTopics,
 	)
-	qualityH := handlers.NewQualityHandler(mmxClient, gormDB)
-	deconstructH := handlers.NewDeconstructHandler(mmxClient)
-	pipelineH := handlers.NewPipelineHandler(mmxClient, gormDB)
+	qualityH := handlers.NewQualityHandlerWithDefault(mmxClient, gormDB)
+	deconstructH := handlers.NewDeconstructHandlerWithDefault(mmxClient)
+	pipelineH := handlers.NewPipelineHandlerWithDefault(mmxClient, gormDB)
 
 	// IP template routes — derived view over the knowledge_docs table.
 	// Mounted after the AI handler so the URL space is owned by each
@@ -252,7 +252,7 @@ func main() {
 	// scoped to the caller's rows in a future iteration (the
 	// cover handler is also where the topic_id persistence
 	// seam will land).
-	batchH := handlers.NewBatchHandler(pipelineH.Text(), gormDB)
+	batchH := handlers.NewBatchHandler(mmxClient, gormDB)
 	coverH := handlers.NewCoverHandler(mmxClient)
 
 	// Phase 4 media surface. SpeechHandler and VideoHandler

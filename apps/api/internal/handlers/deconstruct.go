@@ -28,29 +28,44 @@ const maxTranscriptBytes = 256 * 1024
 //     reusable patterns
 //   - POST /ai/viral-formula    — extract a named, reusable formula
 //
-// Both follow the same demo/MiniMax split as the rest of the AI
+// Both follow the same demo/real split as the rest of the AI
 // surface: an unconfigured client or ?demo=true short-circuits to
-// canned data, otherwise the prompt is sent to MiniMax and the
-// response is parsed.
+// canned data, otherwise the prompt is sent to the configured text
+// provider and the response is parsed.
+//
+// Phase 4 wiring: the handler holds a textClientResolver
+// (production) + a defaultText fallback (tests).
 type DeconstructHandler struct {
-	text   *agents.MiniMax
-	logger *slog.Logger
+	resolver    textClientResolver
+	defaultText agents.TextProvider
+	logger      *slog.Logger
 }
 
-// NewDeconstructHandler wires a DeconstructHandler. No DB dependency
-// — both endpoints are stateless (the transcript is posted in the
-// request body, not stored).
-func NewDeconstructHandler(text *agents.MiniMax) *DeconstructHandler {
-	return &DeconstructHandler{
-		text:   text,
-		logger: slog.Default(),
-	}
+// NewDeconstructHandler wires a DeconstructHandler that resolves the
+// text provider per-request from the supplied resolver. No DB
+// dependency — both endpoints are stateless (the transcript is
+// posted in the request body, not stored).
+func NewDeconstructHandler(resolver textClientResolver) *DeconstructHandler {
+	return &DeconstructHandler{resolver: resolver, logger: slog.Default()}
+}
+
+// NewDeconstructHandlerWithDefault is a transitional constructor
+// kept during the Phase 4 migration. It wires the handler with a
+// fixed TextProvider and no resolver, used by tests that have not
+// been migrated to a stub resolver yet. New callers should prefer
+// NewDeconstructHandler(resolver).
+func NewDeconstructHandlerWithDefault(text agents.TextProvider) *DeconstructHandler {
+	return &DeconstructHandler{defaultText: text, logger: slog.Default()}
 }
 
 // shouldUseDemo mirrors AIHandler.shouldUseDemo. Duplicated rather
 // than shared so handlers stay decoupled.
 func (h *DeconstructHandler) shouldUseDemo(c *gin.Context) bool {
-	return isDemoRequest(c) || !h.text.Available()
+	if isDemoRequest(c) {
+		return true
+	}
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
+	return !text.Available()
 }
 
 // RegisterRoutes attaches the two endpoints under /ai.
@@ -195,18 +210,19 @@ func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 	}
 	prompt := agents.DeconstructPrompt(req.Transcript, meta)
 
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := text.CompleteWithUsage(ctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		h.logger.Error("deconstruct text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
+	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
-	out, err := parseDeconstruct(res.Text)
+	out, err := parseDeconstruct(body)
 	if err != nil {
 		h.logger.Error("deconstruct parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})
@@ -321,18 +337,19 @@ func (h *DeconstructHandler) ViralFormula(c *gin.Context) {
 
 	prompt := agents.ViralFormulaPrompt(req.Transcript)
 
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiTimeout)
 	defer cancel()
 
-	res, err := h.text.Text(ctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	body, usage, err := text.CompleteWithUsage(ctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		h.logger.Error("viral-formula text failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.InputTokens, res.OutputTokens)
+	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
-	out, err := parseViralFormula(res.Text)
+	out, err := parseViralFormula(body)
 	if err != nil {
 		h.logger.Error("viral-formula parse failed", "err", err.Error(), "request_id", c.GetString("request_id"))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "AI returned output that could not be parsed: " + err.Error()})

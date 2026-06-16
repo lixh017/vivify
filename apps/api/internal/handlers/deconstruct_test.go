@@ -20,7 +20,7 @@ func setupDeconstructTestRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxWithTextOverride(toTextResult(fn))
 	r := gin.New()
-	NewDeconstructHandler(m).RegisterRoutes(r)
+	NewDeconstructHandlerWithDefault(m).RegisterRoutes(r)
 	return r
 }
 
@@ -31,7 +31,7 @@ func setupDeconstructDemoRouter(t *testing.T) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMaxForDemo()
 	r := gin.New()
-	NewDeconstructHandler(m).RegisterRoutes(r)
+	NewDeconstructHandlerWithDefault(m).RegisterRoutes(r)
 	return r
 }
 
@@ -83,7 +83,7 @@ func TestDeconstructForcedDemoWithKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	m := agents.NewMiniMax("fake-key-for-tests")
 	r := gin.New()
-	NewDeconstructHandler(m).RegisterRoutes(r)
+	NewDeconstructHandlerWithDefault(m).RegisterRoutes(r)
 
 	w := doJSON(t, r, http.MethodPost, "/ai/deconstruct?demo=true", map[string]any{
 		"transcript": "任意文本",
