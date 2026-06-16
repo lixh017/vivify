@@ -39,8 +39,13 @@ TIMEOUT="${TIMEOUT:-30}"
 # fixed 32-byte base64 value keeps the script self-contained; this is
 # throwaway test data, not a real session, and the smoke user is
 # registered fresh on each run. The literal is a base64 encoding of
-# the 32-byte ASCII string "opc-smoke-test-encryption-key-32bytes".
-export ENCRYPTION_KEY="${ENCRYPTION_KEY:-b3BjLXNtb2tlLXRlc3QtZW5jcnlwdGlvbi1rZXktMzJieXRlcw==}"
+# the 32-byte ASCII string "phase4-verify-encryption-32bytes".
+# (Historical key "opc-smoke-test-encryption-key-32bytes" was 36
+# bytes and made Encrypt() return "invalid key size 37" whenever
+# the smoke path tried to insert a credential — fine for the
+# credential-less paths the script exercises, but a latent bug for
+# any future addition like Phase 4's verify-phase4-provider.sh.)
+export ENCRYPTION_KEY="${ENCRYPTION_KEY:-cGhhc2U0LXZlcmlmeS1lbmNyeXB0aW9uLTMyYnl0ZXM=}"
 # OPC_INSECURE_COOKIES=1 lets the session cookie travel over plain
 # HTTP. Required for any localhost /readyz + auth round-trip.
 export OPC_INSECURE_COOKIES=1

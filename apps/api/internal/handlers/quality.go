@@ -56,6 +56,16 @@ func NewQualityHandlerWithDefault(text agents.TextProvider, db *gorm.DB) *Qualit
 	return &QualityHandler{defaultText: text, db: db, logger: slog.Default()}
 }
 
+// NewQualityHandlerWithResolverAndDefault wires the full Phase 4
+// chain: per-request resolver + configured default. See
+// NewAIHandlerWithResolverAndDefault for the rationale; the same
+// bug (resolver short-circuited to nil, every call landing on
+// the default) bit this handler in the same verify-phase4
+// reproduction.
+func NewQualityHandlerWithResolverAndDefault(resolver textClientResolver, text agents.TextProvider, db *gorm.DB) *QualityHandler {
+	return &QualityHandler{resolver: resolver, defaultText: text, db: db, logger: slog.Default()}
+}
+
 // shouldUseDemo mirrors AIHandler.shouldUseDemo: demo mode kicks in
 // when the caller passes ?demo=true or when the resolved provider
 // reports it is not configured. Duplicated rather than shared so

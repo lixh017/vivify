@@ -64,6 +64,22 @@ func NewPipelineHandlerWithDefault(text agents.TextProvider, db *gorm.DB) *Pipel
 	}
 }
 
+// NewPipelineHandlerWithResolverAndDefault wires the full
+// Phase 4 chain. See NewAIHandlerWithResolverAndDefault for
+// the rationale; the pipeline's per-step helpers (runTopicsStep
+// etc.) consume the resolved text directly, so leaving the
+// resolver nil would silently route every live-path step to
+// the configured default even when a per-user credential was
+// available.
+func NewPipelineHandlerWithResolverAndDefault(resolver textClientResolver, text agents.TextProvider, db *gorm.DB) *PipelineHandler {
+	return &PipelineHandler{
+		resolver:    resolver,
+		defaultText: text,
+		db:          db,
+		logger:      slog.Default(),
+	}
+}
+
 // RegisterRoutes attaches the pipeline endpoint to the router.
 func (h *PipelineHandler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/ai/pipeline", h.RunPipeline)

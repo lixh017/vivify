@@ -199,7 +199,7 @@ func main() {
 	// would route "no credential" requests to the deterministic
 	// Echo stub and skip shouldUseDemo's available-key short
 	// circuit (caught by api-smoke.sh on 2026-06-16).
-	aiH := handlers.NewAIHandlerWithDefault(mmxClient, gormDB)
+	aiH := handlers.NewAIHandlerWithResolverAndDefault(resolver, mmxClient, gormDB)
 
 	// Sub-Spec D M1 — Task 3 + Task 5 fix: /api/ai/topics accepts
 	// EITHER a session cookie OR an X-API-Key. The original chain
@@ -216,9 +216,9 @@ func main() {
 		middleware.CallLog(middleware.CallLogConfig{DB: gormDB, Logger: slog.Default()}),
 		aiH.GenerateTopics,
 	)
-	qualityH := handlers.NewQualityHandlerWithDefault(mmxClient, gormDB)
-	deconstructH := handlers.NewDeconstructHandlerWithDefault(mmxClient)
-	pipelineH := handlers.NewPipelineHandlerWithDefault(mmxClient, gormDB)
+	qualityH := handlers.NewQualityHandlerWithResolverAndDefault(resolver, mmxClient, gormDB)
+	deconstructH := handlers.NewDeconstructHandlerWithResolverAndDefault(resolver, mmxClient)
+	pipelineH := handlers.NewPipelineHandlerWithResolverAndDefault(resolver, mmxClient, gormDB)
 
 	// Construct the MCP server now that the resolver is available.
 	// The stdio transport blocks for the lifetime of the process, so

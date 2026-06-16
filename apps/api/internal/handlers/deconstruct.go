@@ -58,6 +58,14 @@ func NewDeconstructHandlerWithDefault(text agents.TextProvider) *DeconstructHand
 	return &DeconstructHandler{defaultText: text, logger: slog.Default()}
 }
 
+// NewDeconstructHandlerWithResolverAndDefault wires the full
+// Phase 4 chain. See NewAIHandlerWithResolverAndDefault for
+// the rationale; this handler's shouldUseDemo has the same
+// "resolver nil ⇒ skip lookup" behavior.
+func NewDeconstructHandlerWithResolverAndDefault(resolver textClientResolver, text agents.TextProvider) *DeconstructHandler {
+	return &DeconstructHandler{resolver: resolver, defaultText: text, logger: slog.Default()}
+}
+
 // shouldUseDemo mirrors AIHandler.shouldUseDemo. Duplicated rather
 // than shared so handlers stay decoupled.
 func (h *DeconstructHandler) shouldUseDemo(c *gin.Context) bool {

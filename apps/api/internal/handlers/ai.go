@@ -82,6 +82,30 @@ func NewAIHandlerWithDefault(text agents.TextProvider, db *gorm.DB) *AIHandler {
 	return &AIHandler{defaultText: text, db: db, logger: slog.Default()}
 }
 
+// NewAIHandlerWithResolverAndDefault wires the full Phase 4
+// chain: a per-request resolver (DB-backed credential lookup
+// via *agents.ProviderResolver) AND a configured default
+// TextProvider used when the resolver returns the Echo
+// "no credential configured" sentinel. The 3-arg shape keeps
+// resolveTextForRequest on the happy path: a real user with a
+// real credential lands on the real adapter, the audit row
+// gets stamped with the resolved provider name, and a user
+// without a credential still gets a sensible fallback (the
+// demo short-circuit, since defaultText with no API key
+// reports Available()==false).
+//
+// Why this exists: NewAIHandlerWithDefault leaves resolver
+// nil, so the per-request credential lookup is short-circuited
+// and every call lands on defaultText — meaning a logged-in
+// user with a configured anthropic/openai credential would
+// never see their protocol adapter picked. Caught by
+// verify-phase4-provider.sh on 2026-06-16 when call_log
+// rows kept stamping provider="minimax" even with valid
+// credentials in the DB.
+func NewAIHandlerWithResolverAndDefault(resolver textClientResolver, text agents.TextProvider, db *gorm.DB) *AIHandler {
+	return &AIHandler{resolver: resolver, defaultText: text, db: db, logger: slog.Default()}
+}
+
 // RegisterRoutes attaches the AI endpoints to the router. The route
 // table mirrors the legacy Claude-based handler (now MiniMax) exactly so the
 // frontend does not have to learn new paths after the provider swap.
