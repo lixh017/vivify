@@ -19,8 +19,35 @@ import (
 const (
 	ProviderVolcengine = "volcengine"
 	ProviderAnthropic  = "anthropic"
+	ProviderOpenAI     = "openai"
 	ProviderDouyin     = "douyin"
 )
+
+// Protocol enumerates the wire shape of the upstream LLM endpoint a
+// tenant may target. Phase 4 (provider-agnostic) introduces
+// user-configurable Anthropic- and OpenAI-protocol endpoints on top
+// of the original closed provider set. The Protocol field is a
+// typed string so the resolver (Task 4) can do
+// `switch models.Protocol(cred.Protocol)` safely.
+type Protocol string
+
+const (
+	ProtocolAnthropic Protocol = "anthropic"
+	ProtocolOpenAI    Protocol = "openai"
+)
+
+// ProtocolIsAllowed reports whether protocol is one of the values
+// Credential accepts. The check is case-insensitive so "Anthropic"
+// and "anthropic" both pass; we normalize the stored value to
+// lowercase in Validate.
+func ProtocolIsAllowed(p string) bool {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case string(ProtocolAnthropic), string(ProtocolOpenAI):
+		return true
+	default:
+		return false
+	}
+}
 
 // ProviderIsAllowed reports whether provider is one of the values
 // Credential accepts. The check is case-insensitive so "Volcengine"
@@ -28,7 +55,7 @@ const (
 // lowercase in Validate.
 func ProviderIsAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case ProviderVolcengine, ProviderAnthropic, ProviderDouyin:
+	case ProviderVolcengine, ProviderAnthropic, ProviderOpenAI, ProviderDouyin:
 		return true
 	default:
 		return false
@@ -56,6 +83,9 @@ type Credential struct {
 	ID           uint       `gorm:"primaryKey" json:"id"`
 	UserID       uint       `gorm:"index" json:"user_id"`
 	Provider     string     `gorm:"index" json:"provider"`
+	Protocol     string     `gorm:"size:32" json:"protocol,omitempty"`
+	BaseURL      string     `gorm:"size:512" json:"base_url,omitempty"`
+	ModelName    string     `gorm:"size:128" json:"model_name,omitempty"`
 	Name         string     `json:"name"`
 	EncryptedKey []byte     `json:"-"` // never expose
 	Scope        string     `json:"scope"`
@@ -73,11 +103,19 @@ func (Credential) TableName() string { return "credentials" }
 // without echoing the inner message verbatim.
 var ErrCredentialInvalid = errors.New("credential: invalid")
 
-// Validate normalizes the provider/scope and rejects empty /
-// out-of-set values. Called by the handler before persisting so
-// bad rows never reach the DB.
+// Validate normalizes the provider/protocol/scope and rejects
+// empty / out-of-set values. Called by the handler before
+// persisting so bad rows never reach the DB.
+//
+// For Anthropic/OpenAI providers both Protocol and ModelName are
+// required; for media providers (volcengine/douyin) the protocol
+// fields are still accepted on input but not required, so existing
+// rows produced before Phase 4 keep validating.
 func (c *Credential) Validate() error {
 	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
+	c.Protocol = strings.ToLower(strings.TrimSpace(c.Protocol))
+	c.BaseURL = strings.TrimSpace(c.BaseURL)
+	c.ModelName = strings.TrimSpace(c.ModelName)
 	c.Scope = strings.ToLower(strings.TrimSpace(c.Scope))
 	c.Name = strings.TrimSpace(c.Name)
 	if c.Name == "" {
@@ -88,6 +126,15 @@ func (c *Credential) Validate() error {
 	}
 	if c.Scope == "" {
 		c.Scope = "all"
+	}
+	// For Anthropic/OpenAI providers, require protocol + model_name.
+	if c.Provider == ProviderAnthropic || c.Provider == ProviderOpenAI {
+		if !ProtocolIsAllowed(c.Protocol) {
+			return wrapInvalid("protocol is required and must be 'anthropic' or 'openai' for this provider")
+		}
+		if c.ModelName == "" {
+			return wrapInvalid("model_name is required for anthropic/openai providers")
+		}
 	}
 	return nil
 }
