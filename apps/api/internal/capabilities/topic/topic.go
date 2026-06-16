@@ -45,11 +45,22 @@ type Input struct {
 // (so callers can stamp it to call_log or write to a CLI ledger)
 // + the prompt that was sent to the model.
 //
-// Prompt is added in Sub-Spec E M1 so the HTTP handler can run
-// antiai.Check on the exact prompt the model saw, without
-// rebuilding it (rebuilding risks drift if GenerateTopicsPrompt
-// gains new fields and the handler call site is missed). The
-// library has always built the prompt internally; this just
+// Prompt is added in Sub-Spec E M1 as an additive field. The
+// HTTP handler does NOT consume it today — it builds the prompt
+// locally via agents.GenerateTopicsPrompt so the same code path
+// can run before the demo short-circuit (which doesn't call
+// topic.Generate at all). The field is exposed for:
+//
+//   - M2's planned output-side anti-AI check (Sub-Spec E M2:
+//     check res.Text, the model's response, against the prompt
+//     for tighter grounding).
+//   - Operator observability: a future "show the prompt the
+//     model saw" panel can read res.Prompt without re-running
+//     the LLM.
+//   - Test coverage: pins the invariant that the library
+//     exposes what it builds (see TestGenerateReturnsPromptUsed).
+//
+// The library has always built the prompt internally; this just
 // exposes it. Additive change — existing callers that only
 // read Topics or Cost are unaffected.
 type Result struct {
