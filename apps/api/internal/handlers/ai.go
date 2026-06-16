@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/antiai"
 	"github.com/opc/api/internal/capabilities/topic"
 	"github.com/opc/api/internal/config"
 	"github.com/opc/api/internal/models"
@@ -289,6 +291,15 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 			VoiceTags:           t.VoiceTags,
 		}
 	}
+	// Sub-Spec E M1: anti-AI heuristic check. Scan the exact
+	// prompt the topic library built (res.Prompt — see the
+	// additive field added to topic.Result). The score is a
+	// soft signal returned via X-Humanized-Score so the
+	// frontend / observability dashboard can surface it; the
+	// response body shape is unchanged so legacy clients are
+	// unaffected.
+	aiScore := antiai.Check(res.Prompt).Score
+	c.Header("X-Humanized-Score", fmt.Sprintf("%.2f", aiScore))
 	// Stamp cost onto the call_log row that the middleware created.
 	// MiniMax M2.7-highspeed is the highspeed variant; cost
 	// attribution uses the per-1k-token skill row keyed on

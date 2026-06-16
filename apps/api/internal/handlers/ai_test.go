@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/opc/api/internal/agents"
+	"github.com/opc/api/internal/db"
 	"github.com/opc/api/internal/middleware"
 	"github.com/opc/api/internal/models"
 )
@@ -674,5 +676,56 @@ func TestDemoQueryParamVariants(t *testing.T) {
 				t.Errorf("X-Demo-Mode header = %q, want %q for %q", got, "true", tc.query)
 			}
 		})
+	}
+}
+
+// ====================
+// Sub-Spec E M1: X-Humanized-Score response header
+// ====================
+
+// TestGenerateTopicsStampsHumanizedScoreHeader verifies that the
+// real (non-demo) /ai/topics path stamps the X-Humanized-Score
+// header. The canned prompt for the test seed has no AI tells,
+// so the antiai.Check score is 1.0 and we expect "1.00" in the
+// header. This is a soft signal — never blocks the request.
+func TestGenerateTopicsStampsHumanizedScoreHeader(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm: %v", err)
+	}
+	if err := db.Migrate(gormDB); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	stub := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		// Canned JSON array of 3 topics so parseTopics succeeds
+		// against req.Count==3.
+		return &agents.MiniMaxTextResult{Text: `[{"title":"a","angle":"b","expected_performance":"c","hook":"d","pattern":"e","voice_tags":["f"]},{"title":"a2","angle":"b2","expected_performance":"c2","hook":"d2","pattern":"e2","voice_tags":["f2"]},{"title":"a3","angle":"b3","expected_performance":"c3","hook":"d3","pattern":"e3","voice_tags":["f3"]}]`}, nil
+	})
+	resolver := stubReturning{p: stub}
+	h := NewAIHandlerWithResolverAndDefault(resolver, stub, gormDB)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/ai/topics", strings.NewReader(`{"seed":"x","platform":"抖音","count":3}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("user_id", uint(1)) // bypass RequireEitherAuth
+
+	h.GenerateTopics(c)
+
+	score := w.Header().Get("X-Humanized-Score")
+	if score == "" {
+		t.Fatal("X-Humanized-Score header missing")
+	}
+	got, err := strconv.ParseFloat(score, 64)
+	if err != nil {
+		t.Fatalf("X-Humanized-Score not a float: %q (%v)", score, err)
+	}
+	if got < 0.0 || got > 1.0 {
+		t.Errorf("X-Humanized-Score = %v, want [0, 1]", got)
+	}
+	// Canned prompt for the test seed has no AI tells → 1.0.
+	if got != 1.00 {
+		t.Errorf("X-Humanized-Score = %v, want 1.00 (canned prompt has no AI tells)", got)
 	}
 }

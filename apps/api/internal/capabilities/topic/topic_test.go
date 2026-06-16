@@ -212,6 +212,40 @@ func TestGenerateAcceptsFewerTopicsThanCount(t *testing.T) {
 }
 
 // ====================
+// Sub-Spec E M1: topic.Result.Prompt exposure
+// ====================
+
+// TestGenerateReturnsPromptUsed verifies that the topic library
+// exposes the exact prompt it sent to the LLM. The HTTP handler
+// in internal/handlers/ai.go runs antiai.Check on this string to
+// stamp the X-Humanized-Score response header. The field is
+// additive — existing callers that only read Topics or Cost are
+// unaffected.
+func TestGenerateReturnsPromptUsed(t *testing.T) {
+	t.Parallel()
+	stub := agents.NewMiniMaxWithTextOverride(func(_ context.Context, _ string, _ agents.MiniMaxTextOptions) (*agents.MiniMaxTextResult, error) {
+		// Empty JSON array — no topics but valid response so
+		// parseTopics succeeds. We only care about res.Prompt.
+		return &agents.MiniMaxTextResult{Text: "[]"}, nil
+	})
+	res, err := topic.Generate(context.Background(), stub, topic.Input{
+		Seed: "测试", Platform: "抖音", Count: 5,
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if res.Prompt == "" {
+		t.Error("res.Prompt is empty — library did not expose the prompt it built")
+	}
+	if !strings.Contains(res.Prompt, "测试") {
+		t.Errorf("res.Prompt missing seed: %q", res.Prompt)
+	}
+	if !strings.Contains(res.Prompt, "抖音") {
+		t.Errorf("res.Prompt missing platform: %q", res.Prompt)
+	}
+}
+
+// ====================
 // Test helpers
 // ====================
 

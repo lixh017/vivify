@@ -42,10 +42,20 @@ type Input struct {
 }
 
 // Result is what Generate returns: parsed topics + cost data
-// (so callers can stamp it to call_log or write to a CLI ledger).
+// (so callers can stamp it to call_log or write to a CLI ledger)
+// + the prompt that was sent to the model.
+//
+// Prompt is added in Sub-Spec E M1 so the HTTP handler can run
+// antiai.Check on the exact prompt the model saw, without
+// rebuilding it (rebuilding risks drift if GenerateTopicsPrompt
+// gains new fields and the handler call site is missed). The
+// library has always built the prompt internally; this just
+// exposes it. Additive change — existing callers that only
+// read Topics or Cost are unaffected.
 type Result struct {
 	Topics []Topic
 	Cost   CostInfo
+	Prompt string // exact prompt sent to the LLM (Sub-Spec E M1)
 }
 
 // CostInfo carries the per-call token counts. Callers compute
@@ -102,6 +112,7 @@ func Generate(ctx context.Context, text agents.TextProvider, input Input) (*Resu
 	return &Result{
 		Topics: topics,
 		Cost:   CostInfo{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens},
+		Prompt: prompt,
 	}, nil
 }
 
