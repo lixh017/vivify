@@ -679,24 +679,80 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Sub-Spec E M1: anti-AI heuristic check
+# ---------------------------------------------------------------------------
+# Two cases covering the new X-Humanized-Score header (set by the
+# handler in apps/api/internal/handlers/ai.go:GenerateTopics, which
+# builds the prompt locally via agents.GenerateTopicsPrompt and
+# stamps the score before the demo short-circuit so the header is
+# present in BOTH the demo and real paths):
+#   1. The header is present and parses as a float in [0, 1]
+#   2. The response body is unchanged (still 5 topics, same JSON shape)
+#
+# Both cases go through the existing cookie jar (the operator
+# session is already authenticated by the earlier login). The
+# api-smoke always runs in demo mode (MINIMAX_API_KEY="" above),
+# so the handler's pre-short-circuit stamping is what makes this
+# test pass — without that fix (c0591bd), the header would be
+# missing and this section would FAIL.
+section "anti-AI heuristic (Phase 2 sub-spec E M1)"
+
+# 1. X-Humanized-Score header present and in [0, 1]
+# Use -i to dump response headers, then grep for our header.
+# The header is set by the handler before the demo short-circuit,
+# so the score reflects the prompt the topic library would have
+# built for this seed/platform.
+anti_resp=$(call POST /api/ai/topics \
+    '{"seed":"个人成长","platform":"抖音","count":5}')
+anti_code=$(printf '%s' "$anti_resp" | sed -n 's/^__HTTP__//p' | tail -1)
+anti_body=$(printf '%s' "$anti_resp" | sed 's/__HTTP__[0-9]*$//')
+anti_headers=$(curl -sS --max-time 30 -i -X POST \
+    -H 'Content-Type: application/json' \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    -d '{"seed":"个人成长","platform":"抖音","count":5}' \
+    "$BASE_URL/api/ai/topics")
+
+anti_score=$(printf '%s' "$anti_headers" \
+    | grep -i '^X-Humanized-Score:' \
+    | head -1 \
+    | sed 's/^[^:]*: *//' \
+    | tr -d '\r\n')
+
+if [ -z "$anti_score" ]; then
+    fail "anti-AI: X-Humanized-Score header missing (got code=$anti_code body=$anti_body)"
+elif awk "BEGIN{exit !($anti_score >= 0.0 && $anti_score <= 1.0)}"; then
+    pass "anti-AI: X-Humanized-Score header present, value=$anti_score in [0, 1]"
+else
+    fail "anti-AI: X-Humanized-Score = $anti_score, want value in [0, 1]"
+fi
+
+# 2. Response body unchanged (still 5 topics, same shape)
+anti_topic_count=$(printf '%s' "$anti_body" | jq '.topics | length' 2>/dev/null)
+if [ "$anti_topic_count" = "5" ]; then
+    pass "anti-AI: response body unchanged (5 topics)"
+else
+    fail "anti-AI: response body changed, got $anti_topic_count topics (want 5)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 # Expected total depends on whether MINIMAX_API_KEY was set in the
 # caller's env:
-#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI + 4 creator + 4 agent = 20 (PASS_COUNT=20)
-#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP + 4 creator + 4 agent = 20 (PASS_COUNT=19, SKIP_COUNT=1)
-# Either way TOTAL = PASS + FAIL + SKIP must be 20.
+#   key set:    5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI + 4 creator + 4 agent + 2 anti-AI = 22 (PASS_COUNT=22)
+#   key absent: 5 handler + 4 IP type + 1 advisory + 1 topic HTTP + 1 topic CLI-SKIP + 4 creator + 4 agent + 2 anti-AI = 22 (PASS_COUNT=21, SKIP_COUNT=1)
+# Either way TOTAL = PASS + FAIL + SKIP must be 22.
 TOTAL=$((PASS_COUNT + FAIL_COUNT + SKIP_COUNT))
 echo
 echo "========================================"
-if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "20" ]; then
-    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 20)"
+if [ "$FAIL_COUNT" -eq 0 ] && [ "$TOTAL" = "22" ]; then
+    ok "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total 22)"
     echo "========================================"
     exit 0
 fi
 
 if [ "$FAIL_COUNT" -eq 0 ]; then
-    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 20: 5 handler + 4 IP type + 1 advisory + 2 topic + 4 creator + 4 agent)"
+    warn "RESULT: ${PASS_COUNT} pass / ${SKIP_COUNT} skip / ${FAIL_COUNT} fail  (total $TOTAL, expected 22: 5 handler + 4 IP type + 1 advisory + 2 topic + 4 creator + 4 agent + 2 anti-AI)"
     echo "========================================"
     exit 0
 fi
