@@ -76,6 +76,21 @@ type CallLogSummary struct {
 	// ByProvider is the per-provider cost rollup. Sorted by cost
 	// DESC so the most expensive provider is on top.
 	ByProvider []ByProviderRow `json:"by_provider"`
+	// ByHourDow is the sparse activity heatmap: one cell per
+	// (dow, hour) bucket that had at least one call in the
+	// window. dow follows time.Weekday (0=Sun..6=Sat); hour is
+	// 0-23 in time.Local. The array is dense-zero on the wire
+	// (cells with zero calls are omitted) so the dashboard
+	// densifies by defaulting missing cells to 0.
+	ByHourDow []ByHourDowCell `json:"by_hour_dow"`
+}
+
+// ByHourDowCell is one cell in the 7×24 activity heatmap. See
+// the CallLogSummary.ByHourDow doc for the dow + hour semantics.
+type ByHourDowCell struct {
+	DOW   int   `json:"dow"`   // 0=Sun, 1=Mon, ..., 6=Sat
+	Hour  int   `json:"hour"`  // 0-23 in time.Local
+	Calls int64 `json:"calls"`
 }
 
 // TodaySummary is the calendar-day rollup.
@@ -220,6 +235,17 @@ func (h *ObservabilityHandler) Summary(c *gin.Context) {
 		return
 	}
 	out.ByProvider = byProvider
+
+	// --- by_hour_dow: sparse (dow, hour, calls) for the 7x24
+	//     activity heatmap. Only cells with >= 1 call are
+	//     emitted; the dashboard densifies to the 7x24 grid
+	//     by defaulting missing cells to 0. -----------------
+	byHourDow, err := h.aggregateByHourDow(c, userID, windowStart, windowEnd)
+	if err != nil {
+		respondInternal(c, "by-hour-dow aggregate", err)
+		return
+	}
+	out.ByHourDow = byHourDow
 
 	c.JSON(http.StatusOK, out)
 }
@@ -507,6 +533,75 @@ func percentileNearest(sorted []int, p float64) int {
 		rank = n
 	}
 	return sorted[rank-1]
+}
+
+// aggregateByHourDow returns the sparse (dow, hour, calls) cell
+// set for the 7x24 activity heatmap. SQL folds both axes into a
+// single GROUP BY using strftime (SQLite) / date_part (Postgres)
+// — GORM does not abstract this cleanly, so we hand-write the
+// expression. The cast to INT (not TEXT) lets the JSON encoder
+// emit numeric dow / hour fields without a string-quote surprise.
+//
+// SQLite is the production target (see cmd/server/main.go), so
+// strftime is the right tool. A future Postgres migration would
+// swap to EXTRACT(DOW FROM created_at) + EXTRACT(HOUR FROM
+// created_at). The window is whatever windowForRange returns,
+// which is in time.Local — the bucketing naturally aligns with
+// the operator's calendar.
+func (h *ObservabilityHandler) aggregateByHourDow(
+	c *gin.Context, userID uint, start, end time.Time,
+) ([]ByHourDowCell, error) {
+	type aggRow struct {
+		Dow   int
+		Hour  int
+		Calls int64
+	}
+	var rows []aggRow
+	// The strftime expressions are duplicated in GROUP BY
+	// rather than aliased because some SQLite client bindings
+	// (and GORM's raw SQL pass-through) do not substitute the
+	// alias into GROUP BY — keeping the expression verbatim
+	// guarantees the GROUP BY targets the same column as the
+	// SELECT. CAST to INTEGER is required for the JSON encoder
+	// to emit numeric dow / hour; SQLite's strftime returns
+	// TEXT by default, which would surface as string "0",
+	// "1", … in the wire shape and force the dashboard to
+	// re-parse.
+	//
+	// The SELECT uses quoted lowercase aliases ("dow", "hour",
+	// "calls") so GORM's Scan can map to the struct fields
+	// by exact match — an unquoted alias like AS dow folds to
+	// the SQL keyword and is treated as a column reference,
+	// which produces zero rows on Scan.
+	err := h.db.WithContext(c.Request.Context()).
+		Model(&models.CallLog{}).
+		Select(`
+			CAST(strftime('%w', created_at) AS INTEGER) AS "dow",
+			CAST(strftime('%H', created_at) AS INTEGER) AS "hour",
+			COUNT(*) AS "calls"
+		`).
+		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, start, end).
+		Group(`CAST(strftime('%w', created_at) AS INTEGER), CAST(strftime('%H', created_at) AS INTEGER)`).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ByHourDowCell, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ByHourDowCell{DOW: r.Dow, Hour: r.Hour, Calls: r.Calls})
+	}
+	// Defensive sort. GROUP BY in SQLite is order-preserving
+	// for the keys, but the wire shape does not promise an
+	// order — the dashboard sorts client-side anyway. Keeping
+	// (dow, hour) ascending here means a snapshot test can
+	// pin exact output.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DOW != out[j].DOW {
+			return out[i].DOW < out[j].DOW
+		}
+		return out[i].Hour < out[j].Hour
+	})
+	return out, nil
 }
 
 // respondInternal is the canonical 500 logger + responder. The

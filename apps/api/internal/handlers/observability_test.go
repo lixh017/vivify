@@ -324,6 +324,63 @@ func TestObservability_Summary_ByProvider(t *testing.T) {
 	}
 }
 
+// TestObservability_Summary_ByHourDow pins the heatmap
+// aggregation: (a) cells are sorted by (dow, hour) ascending;
+// (b) dow is in [0, 6] and hour is in [0, 23]; (c) sum of
+// cells equals the total calls the user made in the window
+// (the other-user row from seedCallLogs must NOT be
+// included — multi-tenant safety).
+func TestObservability_Summary_ByHourDow(t *testing.T) {
+	db := openObservabilityTestDB(t)
+	seedCallLogs(t, db, 7)
+	r := newObservabilityRouter(t, db, 7)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/observability/summary?range=7d", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var got CallLogSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.ByHourDow == nil {
+		t.Fatal("by_hour_dow is nil; should be at least an empty array")
+	}
+
+	var sum int64
+	var prevDOW, prevHour int
+	for i, c := range got.ByHourDow {
+		if c.DOW < 0 || c.DOW > 6 {
+			t.Errorf("cell %d: dow = %d, want [0, 6]", i, c.DOW)
+		}
+		if c.Hour < 0 || c.Hour > 23 {
+			t.Errorf("cell %d: hour = %d, want [0, 23]", i, c.Hour)
+		}
+		if c.Calls <= 0 {
+			t.Errorf("cell %d: calls = %d, want > 0", i, c.Calls)
+		}
+		if i > 0 {
+			if c.DOW < prevDOW || (c.DOW == prevDOW && c.Hour <= prevHour) {
+				t.Errorf("cells not sorted (dow, hour): (%d,%d) before (%d,%d)",
+					prevDOW, prevHour, c.DOW, c.Hour)
+			}
+		}
+		prevDOW, prevHour = c.DOW, c.Hour
+		sum += c.Calls
+	}
+	// seedCallLogs inserts 86 rows for the test user (50 + 20
+	// + 10 + 5 + 1) plus 1 row for a different user that must
+	// not leak in. The 7d window covers all the seed timestamps
+	// (0-69 hours ago, all within 168 hours), so the sum
+	// should equal 86. A larger value would indicate a
+	// multi-tenant leak; a smaller value would mean the
+	// GROUP BY is dropping rows.
+	if sum != 86 {
+		t.Errorf("sum(by_hour_dow.calls) = %d, want 86 (multi-tenant leak or aggregation bug)", sum)
+	}
+}
+
 // TestObservability_Summary_TodayRange pins the range=today
 // shape: Last7Days has exactly 1 point, Range is "today".
 func TestObservability_Summary_TodayRange(t *testing.T) {

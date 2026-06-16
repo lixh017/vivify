@@ -24,6 +24,7 @@ import { TopBar } from '@/components/TopBar'
 import { TrendChart } from '@/components/TrendChart'
 import { useObservabilitySummary } from '@/lib/use-observability'
 import type {
+  ObservabilityByHourDowCell,
   ObservabilityByProviderRow,
   ObservabilityBySkillRow,
   ObservabilitySummary,
@@ -289,6 +290,126 @@ function ErrorBanner({
   )
 }
 
+// Heatmap renders the 7×24 activity grid: rows = days of week
+// (Mon first, Sun last — the Chinese dashboard convention; dow=0
+// is Sunday in time.Weekday so the order is [1, 2, 3, 4, 5, 6, 0]),
+// columns = hours of day 00..23. Each cell is a tiny square whose
+// color intensity reflects the call count on a log2 scale so a
+// 1-call cell and a 100-call cell are both visible (a linear
+// scale would compress the bottom 90% into the lightest bucket).
+//
+// The cells are SPARSE on the wire (the server only emits cells
+// with at least one call); we densify to a 7×24 grid by
+// defaulting missing cells to 0. The title attribute carries
+// the day + hour + count for hover inspection.
+//
+// Why log2: a fresh tenant might have a single high-traffic
+// hour and 23 empty hours; a linear scale would render both as
+// the lightest shade, hiding the pattern entirely. log2
+// preserves "one cell stands out" regardless of absolute scale.
+function Heatmap({
+  cells,
+  loading,
+}: {
+  cells: ObservabilityByHourDowCell[]
+  loading: boolean
+}) {
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {[0, 1, 2].map((i) => (
+          <SkeletonBar key={i} width={`${70 - i * 10}%`} />
+        ))}
+      </div>
+    )
+  }
+  if (cells.length === 0) {
+    return (
+      <div className="text-sm text-claude-muted py-6 text-center">
+        该时间范围内还没有调用记录
+      </div>
+    )
+  }
+
+  // Densify sparse cells into a 7×24 grid. Out-of-range cells
+  // (which should never appear from a correct server) are
+  // silently dropped — defensive against a future bug or
+  // timezone offset shift.
+  const grid: number[][] = Array.from({ length: 7 }, () =>
+    Array(24).fill(0),
+  )
+  let maxCount = 0
+  for (const c of cells) {
+    if (c.dow >= 0 && c.dow < 7 && c.hour >= 0 && c.hour < 24) {
+      grid[c.dow][c.hour] = c.calls
+      if (c.calls > maxCount) maxCount = c.calls
+    }
+  }
+
+  // Mon-first display order. time.Weekday has Sun=0, so we
+  // re-order to the Chinese dashboard convention.
+  const dayOrder = [1, 2, 3, 4, 5, 6, 0]
+  const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+  // Log2 bucketing. Empty cells fall to the empty bucket;
+  // every other cell maps to one of four intensities based on
+  // its position on the log2 scale between 1 and maxCount.
+  // The exact Tailwind class strings are picked so a
+  // future change to claude-coral or the opacity scale is
+  // local to this function.
+  const bucket = (n: number): string => {
+    if (n === 0) return 'bg-claude-canvas border border-claude-hairline-soft'
+    if (maxCount === 1) return 'bg-claude-coral/40'
+    const ratio = Math.log2(n + 1) / Math.log2(maxCount + 1)
+    if (ratio < 0.25) return 'bg-claude-coral/20'
+    if (ratio < 0.5) return 'bg-claude-coral/40'
+    if (ratio < 0.75) return 'bg-claude-coral/70'
+    return 'bg-claude-coral'
+  }
+
+  return (
+    <div className="overflow-x-auto pb-1">
+      <table
+        className="border-separate"
+        style={{ borderSpacing: 2 }}
+      >
+        <thead>
+          <tr>
+            <th className="w-10" />
+            {Array.from({ length: 24 }, (_, h) => (
+              <th
+                key={h}
+                className="w-[18px] text-[10px] text-claude-muted-soft font-mono font-normal text-center"
+              >
+                {h % 3 === 0 ? h.toString().padStart(2, '0') : ''}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {dayOrder.map((dow, i) => (
+            <tr key={dow}>
+              <td className="text-[11px] text-claude-muted pr-2 text-right font-medium whitespace-nowrap">
+                {dayLabels[i]}
+              </td>
+              {Array.from({ length: 24 }, (_, h) => {
+                const c = grid[dow][h]
+                return (
+                  <td
+                    key={h}
+                    className={`w-[18px] h-[18px] rounded-[2px] ${bucket(c)} cursor-default`}
+                    title={`${dayLabels[i]} ${h.toString().padStart(2, '0')}:00 — ${c.toLocaleString('zh-CN')} calls`}
+                  />
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // Skill sort options — the page defaults to "调用次数倒序" to
 // match the server's natural order, and offers 成功率 / 成本
 // alternatives so an operator can pivot quickly without a
@@ -374,6 +495,34 @@ export default function ObservabilityPage() {
             </span>
           </div>
           <TrendChart points={data?.last_7_days ?? []} loading={trendLoading} />
+        </div>
+
+        {/* 活跃时段热力图 — when in the week are calls concentrated?
+            Shows peak hours and dead hours at a glance. Complements
+            the trend chart (which shows WHEN in absolute time)
+            with a WHEN-in-the-week view (which is more actionable
+            for staffing + capacity planning). */}
+        <div className="bg-white border border-claude-hairline rounded-lg p-5 shadow-claude-soft">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-medium text-claude-ink">
+                活跃时段热力图
+              </h2>
+              <p className="text-[11px] text-claude-muted-soft mt-0.5">
+                按 周 × 小时 聚合的调用密度 · 颜色越深调用越多
+              </p>
+            </div>
+            <div className="flex items-center gap-1 text-[10px] text-claude-muted-soft">
+              <span>少</span>
+              <span className="w-[14px] h-[14px] rounded-[2px] bg-claude-canvas border border-claude-hairline-soft" />
+              <span className="w-[14px] h-[14px] rounded-[2px] bg-claude-coral/20" />
+              <span className="w-[14px] h-[14px] rounded-[2px] bg-claude-coral/40" />
+              <span className="w-[14px] h-[14px] rounded-[2px] bg-claude-coral/70" />
+              <span className="w-[14px] h-[14px] rounded-[2px] bg-claude-coral" />
+              <span>多</span>
+            </div>
+          </div>
+          <Heatmap cells={data?.by_hour_dow ?? []} loading={trendLoading} />
         </div>
 
         {/* 底部 2 个表格 */}

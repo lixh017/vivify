@@ -785,6 +785,21 @@ export interface ObservabilityByProviderRow {
   cost_cents: number
 }
 
+// ObservabilityByHourDowCell is one cell in the 7×24 activity
+// heatmap (dow × hour-of-day). dow follows Go's time.Weekday
+// convention (0 = Sunday, 6 = Saturday). hour is 0-23 in the
+// server's local timezone. The array is SPARSE — only cells
+// with at least one call are emitted; the dashboard densifies
+// to a 7×24 grid by defaulting missing cells to 0. Sparse
+// keeps the wire shape small (typically 30-80 cells active
+// in a 7-day window) and lets the same shape work for a
+// 30-day window without a payload blow-up.
+export interface ObservabilityByHourDowCell {
+  dow: number
+  hour: number
+  calls: number
+}
+
 // ObservabilitySummary is the full wire shape of
 // GET /api/observability/summary. Every array field is
 // always a non-null array (the server initializes to []).
@@ -797,6 +812,7 @@ export interface ObservabilitySummary {
   last_7_days: ObservabilityDayPoint[]
   by_skill: ObservabilityBySkillRow[]
   by_provider: ObservabilityByProviderRow[]
+  by_hour_dow: ObservabilityByHourDowCell[]
 }
 
 // ObservabilitySummaryParams is the parameter bag for
