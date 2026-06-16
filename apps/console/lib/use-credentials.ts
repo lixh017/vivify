@@ -52,6 +52,12 @@ export function useCredentials(): UseCredentials {
   // row lands in canonical server order (newest first). The
   // returned Credential is the freshly inserted row, which
   // dialogs can use to surface a confirmation toast.
+  //
+  // CreateCredentialInput carries the optional
+  // protocol/base_url/model_name fields introduced in Phase 4;
+  // the dialog only populates them for anthropic/openai, so the
+  // shape stays valid for media providers without conditional
+  // branching here.
   const add = useCallback(
     async (input: CreateCredentialInput): Promise<Credential> => {
       const created = await api.credentials.create(input)

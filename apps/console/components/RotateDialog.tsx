@@ -89,6 +89,29 @@ export function RotateDialog({
             <p className="text-xs text-claude-muted mt-0.5">
               {credential.name} · {credential.provider}
             </p>
+            {/* Surface the protocol/model/base_url as read-only
+                context so the operator can confirm they're rotating
+                the right row. Rotate is intentionally narrow —
+                the only editable field is the new key. */}
+            {credential.protocol && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-claude-muted-soft">
+                <span className="font-mono">{credential.protocol}</span>
+                {credential.model_name && (
+                  <>
+                    <span className="text-claude-hairline">·</span>
+                    <span className="font-mono">{credential.model_name}</span>
+                  </>
+                )}
+                {credential.base_url && (
+                  <>
+                    <span className="text-claude-hairline">·</span>
+                    <span className="font-mono break-all">
+                      {credential.base_url}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <button
             type="button"

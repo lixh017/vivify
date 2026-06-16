@@ -15,14 +15,42 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { ApiError } from '@opc/shared/api'
 import type {
   CredentialProvider,
+  CredentialProtocol,
   CreateCredentialInput,
 } from '@opc/shared/types'
 
 const PROVIDERS: { value: CredentialProvider; label: string; hint: string }[] = [
   { value: 'volcengine', label: '火山引擎', hint: '内容平台 / 视频理解' },
   { value: 'anthropic', label: 'Anthropic', hint: 'Claude API key' },
+  { value: 'openai', label: 'OpenAI', hint: '兼容 OpenAI 协议' },
   { value: 'douyin', label: '抖音开放平台', hint: '发布 / 数据接口' },
 ]
+
+// PROVIDER_CONFIG carries the protocol/base_url/model_name defaults
+// for providers that speak an LLM protocol. The defaults are
+// pre-filled into the form so an operator adding an Anthropic row
+// for the canonical endpoint only needs to paste their key. The
+// `requiresProtocol` flag controls whether the protocol/URL/model
+// fields are shown at all — media providers (volcengine, douyin)
+// stay on the original three-field UX.
+type ProviderConfig = {
+  protocol: CredentialProtocol
+  defaultBaseURL: string
+  defaultModel: string
+}
+
+const PROVIDER_CONFIG: Partial<Record<CredentialProvider, ProviderConfig>> = {
+  anthropic: {
+    protocol: 'anthropic',
+    defaultBaseURL: 'https://api.anthropic.com',
+    defaultModel: 'claude-sonnet-4-5',
+  },
+  openai: {
+    protocol: 'openai',
+    defaultBaseURL: 'https://api.openai.com',
+    defaultModel: 'gpt-4o-mini',
+  },
+}
 
 // Common scope tags surfaced as quick-pick chips. The user
 // can also type a free-form scope; we just need a string the
@@ -42,9 +70,19 @@ export function AddCredentialDialog({
   const [name, setName] = useState('')
   const [plaintextKey, setPlaintextKey] = useState('')
   const [scope, setScope] = useState<string>('default')
+  // protocol/base_url/model_name only apply to anthropic/openai.
+  // We seed them from PROVIDER_CONFIG when the user picks one of
+  // those providers and clear them when they switch back to a
+  // media provider, so the wire shape stays consistent with the
+  // server's `omitempty` semantics.
+  const [baseUrl, setBaseUrl] = useState('')
+  const [modelName, setModelName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
+
+  const providerConfig = PROVIDER_CONFIG[provider]
+  const requiresProtocol = providerConfig !== undefined
 
   // Reset the form every time the dialog re-opens so a
   // cancelled-then-reopened dialog never carries over a stale
@@ -55,9 +93,27 @@ export function AddCredentialDialog({
     setName('')
     setPlaintextKey('')
     setScope('default')
+    setBaseUrl('')
+    setModelName('')
     setError(null)
     setSubmitting(false)
   }, [open])
+
+  // When the user picks a protocol-bearing provider (anthropic /
+  // openai), seed base_url + model_name with the canonical defaults
+  // so the operator only has to paste the key. When they switch back
+  // to a media provider, clear the fields — the server ignores them
+  // for volcengine/douyin but the wire shape stays tidy.
+  useEffect(() => {
+    if (!providerConfig) {
+      setBaseUrl('')
+      setModelName('')
+      return
+    }
+    setBaseUrl(providerConfig.defaultBaseURL)
+    setModelName(providerConfig.defaultModel)
+  }, [provider]) // providerConfig is derived from provider; including
+                 // it in deps would loop on the object identity.
 
   useEffect(() => {
     if (!open) return
@@ -75,12 +131,23 @@ export function AddCredentialDialog({
     setSubmitting(true)
     setError(null)
     try {
-      await onSubmit({
+      // For protocol-bearing providers, the backend requires
+      // protocol + model_name and accepts base_url. For media
+      // providers we omit the optional fields entirely so the
+      // wire shape stays clean and avoids carrying empty strings
+      // into the server.
+      const input: CreateCredentialInput = {
         provider,
         name: name.trim(),
         plaintext_key: plaintextKey.trim(),
         scope: scope.trim() || 'default',
-      })
+      }
+      if (requiresProtocol && providerConfig) {
+        input.protocol = providerConfig.protocol
+        input.base_url = baseUrl.trim() || providerConfig.defaultBaseURL
+        input.model_name = modelName.trim() || providerConfig.defaultModel
+      }
+      await onSubmit(input)
       onClose()
     } catch (err: unknown) {
       setError(
@@ -150,6 +217,63 @@ export function AddCredentialDialog({
               ))}
             </select>
           </div>
+
+          {/* Protocol/base_url/model_name only surface for LLM
+              providers; the backend rejects an anthropic/openai
+              row without a protocol + model_name, so we render the
+              fields here and validate client-side. Media providers
+              (volcengine / douyin) hide this block entirely. */}
+          {requiresProtocol && providerConfig && (
+            <div className="space-y-4 rounded-md border border-claude-hairline-soft bg-claude-canvas/50 p-3">
+              <div>
+                <label className="block text-sm font-medium text-claude-ink">
+                  Protocol
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={providerConfig.protocol}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-surface-soft text-claude-body font-mono cursor-not-allowed"
+                />
+                <p className="mt-1 text-[11px] text-claude-muted-soft">
+                  与 provider 保持一致，不可修改。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-claude-ink">
+                  Base URL
+                </label>
+                <input
+                  type="url"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={providerConfig.defaultBaseURL}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
+                />
+                <p className="mt-1 text-[11px] text-claude-muted-soft">
+                  留空则使用官方默认地址；可填入自部署代理。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-claude-ink">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  placeholder={providerConfig.defaultModel}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-claude-hairline rounded bg-claude-canvas text-claude-ink font-mono focus:border-claude-coral focus:outline-none focus:ring-1 focus:ring-claude-coral"
+                />
+                <p className="mt-1 text-[11px] text-claude-muted-soft">
+                  后端必填；留空时回退到默认模型。
+                </p>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-claude-ink">

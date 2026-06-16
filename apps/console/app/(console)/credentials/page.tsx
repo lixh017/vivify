@@ -43,6 +43,15 @@ const PROVIDER_META: Record<
     tone: 'bg-claude-coral/15 text-claude-coral-active',
     dot: 'bg-claude-coral',
   },
+  openai: {
+    label: 'OpenAI',
+    // Distinct from the coral Anthropic tone so the table stays
+    // legible when both providers sit side-by-side. We reuse the
+    // violet accent introduced for secondary callouts; it pairs
+    // well with the warm coral without competing for attention.
+    tone: 'bg-claude-accent-violet/15 text-claude-accent-violet-active',
+    dot: 'bg-claude-accent-violet',
+  },
   douyin: {
     label: '抖音',
     tone: 'bg-claude-accent-amber/20 text-claude-accent-amber-active',
@@ -61,6 +70,17 @@ function formatDate(iso: string | undefined): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
+}
+
+// truncate keeps the base_url column readable when a tenant
+// self-hosts on a long internal hostname. The full value
+// stays reachable via the cell's title attribute (browser
+// tooltip on hover). The ellipsis suffix is unicode so we
+// avoid a sentinel byte that a real URL could legally
+// contain.
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value
+  return value.slice(0, max - 1) + '…'
 }
 
 function ProviderChip({ provider }: { provider: CredentialProvider }) {
@@ -94,6 +114,36 @@ function TableRow({
       </td>
       <td className="px-4 py-3">
         <ProviderChip provider={credential.provider} />
+      </td>
+      <td className="px-4 py-3 text-sm text-claude-body">
+        {credential.protocol ? (
+          <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-claude-surface-soft text-claude-body">
+            {credential.protocol}
+          </span>
+        ) : (
+          <span className="text-claude-muted-soft">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-sm text-claude-body max-w-[14rem]">
+        {credential.base_url ? (
+          <span
+            className="font-mono text-xs block truncate"
+            title={credential.base_url}
+          >
+            {truncate(credential.base_url, 32)}
+          </span>
+        ) : (
+          <span className="text-claude-muted-soft">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-sm text-claude-body">
+        {credential.model_name ? (
+          <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-claude-surface-soft text-claude-body">
+            {credential.model_name}
+          </span>
+        ) : (
+          <span className="text-claude-muted-soft">—</span>
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-claude-body">
         <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-claude-surface-soft text-claude-body">
@@ -244,6 +294,9 @@ export default function CredentialsPage() {
                 <tr>
                   <th className="px-4 py-2.5 font-medium">名称</th>
                   <th className="px-4 py-2.5 font-medium">Provider</th>
+                  <th className="px-4 py-2.5 font-medium">Protocol</th>
+                  <th className="px-4 py-2.5 font-medium">Base URL</th>
+                  <th className="px-4 py-2.5 font-medium">Model</th>
                   <th className="px-4 py-2.5 font-medium">Scope</th>
                   <th className="px-4 py-2.5 font-medium">创建时间</th>
                   <th className="px-4 py-2.5 font-medium">最后使用</th>

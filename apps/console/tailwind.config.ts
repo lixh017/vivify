@@ -34,6 +34,12 @@ const config: Config = {
         'claude-accent-teal-active': '#3f8a7c',
         'claude-accent-amber': '#e8a55a',
         'claude-accent-amber-active': '#c08a45',
+        // Violet accent for the OpenAI provider chip — sits between
+        // the warm Anthropic coral and the cool Volcengine teal so
+        // the four-provider badge palette stays balanced without
+        // overlapping with any existing accent.
+        'claude-accent-violet': '#8b6fb5',
+        'claude-accent-violet-active': '#6d5294',
         'claude-success': '#5db872',
         'claude-warning': '#d4a017',
         'claude-error': '#c64545',

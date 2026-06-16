@@ -99,7 +99,19 @@ export type AuthUser = {
 // with a 400, so the string-literal union gives the UI an
 // exhaustiveness check on switch statements that render per-
 // provider badges / icons.
-export type CredentialProvider = 'volcengine' | 'anthropic' | 'douyin'
+export type CredentialProvider =
+  | 'volcengine'
+  | 'anthropic'
+  | 'openai'
+  | 'douyin'
+
+// CredentialProtocol is the wire shape of the upstream LLM endpoint
+// a tenant may target. Phase 4 (provider-agnostic) introduced
+// user-configurable Anthropic- and OpenAI-protocol endpoints on top
+// of the original closed provider set; the field is optional on the
+// wire because media providers (volcengine / douyin) do not carry a
+// protocol in this phase.
+export type CredentialProtocol = 'anthropic' | 'openai'
 
 // Credential is the metadata projection of /api/credentials rows.
 // The encrypted key NEVER appears on the wire — the Go handler
@@ -111,6 +123,14 @@ export type Credential = {
   id: number
   user_id: number
   provider: CredentialProvider
+  // Optional: protocol/base_url/model_name only apply to
+  // anthropic/openai providers. The Go handler emits them with
+  // `omitempty`, so a credential whose provider is volcengine
+  // / douyin (or one created before Phase 4) will lack these
+  // fields — the UI should treat them as not applicable.
+  protocol?: CredentialProtocol
+  base_url?: string
+  model_name?: string
   name: string
   scope: string
   created_at: string
@@ -122,9 +142,16 @@ export type Credential = {
 
 // CreateCredentialInput is the body for POST /api/credentials.
 // plaintext_key is required and is encrypted server-side; it is
-// never echoed back in the response.
+// never echoed back in the response. protocol/base_url/model_name
+// are optional on the wire but the server requires protocol +
+// model_name when provider is anthropic/openai — the Add dialog
+// surfaces that as conditional required fields so the wire shape
+// stays valid by construction.
 export interface CreateCredentialInput {
   provider: CredentialProvider
+  protocol?: CredentialProtocol
+  base_url?: string
+  model_name?: string
   name: string
   plaintext_key: string
   scope?: string
