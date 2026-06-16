@@ -16,18 +16,22 @@ import (
 //  1. The resolver's per-user pick (when a non-zero user context
 //     is available — future: thread agent_id → owner_user_id).
 //     Today the MCP server has no per-request user_id (tools run
-//     under the configured agent identity), so this branch fires
-//     only when a future caller threads a user_id through
-//     ToolInput.
+//     under the configured agent identity), so this branch is
+//     GATED on a real userID — otherwise the production resolver
+//     returns Echo for userID=0, which would silently degrade
+//     every tool call once Task 9 wires *agents.ProviderResolver
+//     into main.go. Mirrors the userID != 0 guard in
+//     apps/api/internal/handlers/provider_resolver_helper.go.
 //  2. The server's configured default text provider.
 //
 // The function never returns nil: at minimum it returns
 // agents.Echo so a misconfigured resolver cannot panic a tool.
 func (s *Server) resolveTextProvider(ctx context.Context) agents.TextProvider {
-	if s.resolver != nil {
-		// userID=0 today. See comment above for the planned
-		// agent_id → owner_user_id threading.
-		if p, err := s.resolver.Text(ctx, 0, "all"); err == nil && p != nil {
+	// TODO(Task 9): replace 0 with a real user_id once
+	// agent_id → owner_user_id is threaded through ToolInput.
+	const currentUserID uint = 0
+	if s.resolver != nil && currentUserID != 0 {
+		if p, err := s.resolver.Text(ctx, currentUserID, "all"); err == nil && p != nil {
 			return p
 		}
 	}
