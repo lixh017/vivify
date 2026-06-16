@@ -383,7 +383,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 	// scriptContent is tracked across iterations of the steps
 	// loop so a caller that lists "script" twice (e.g. once to
 	// also force regeneration after a future flag) only pays for
-	// one MiniMax call. Today normalizeBatchSteps dedupes by
+	// one provider call. Today normalizeBatchSteps dedupes by
 	// string, so this is a defensive no-op, but the variable
 	// keeps the loop correct if that policy ever relaxes.
 	var scriptContent string
