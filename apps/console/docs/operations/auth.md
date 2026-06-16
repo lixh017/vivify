@@ -143,3 +143,29 @@ session 过期 (401) 时, 客户端要重新跑一次 `POST /api/auth/login` 拿
 更稳的做法是引入一个内存 + 持久化 (例如 `~/.opc/session.json`) 的 cookie jar, 把 `Set-Cookie` 头解析后存起来, 每次请求自动带上。这样续期、过期、重登都由客户端自己管, 体验和浏览器一致。
 
 OPC 官方 SDK (在 `apps/console/lib/api-client.ts` 同一套) 默认会提供这个 cookie jar 的实现, MCP 集成时直接复用即可。
+
+## Provider resolution (Phase 4)
+
+每个 AI 技能在执行时, 上游 LLM provider **不再**由环境变量决定, 而是按调用方配置的凭据当场解析:
+
+1. 在 `/credentials` 页面(或 `POST /api/credentials`)新增一条凭据, 选择 `provider=anthropic` 或 `provider=openai`, 填入 protocol-specific 字段(`api_key`、`model_name`、可选 `base_url`)。
+2. 凭据以 **AES-GCM** 加密存储在 `credentials` 表, 密钥来自 `ENCRYPTION_KEY` 环境变量。
+3. 每次请求到达后, 解析器 (`internal/agents/resolver.go`) 读取调用方对应的行, 解密 key, 按 `protocol` 字段挂载对应的协议适配器 (Anthropic Messages API 或 OpenAI Chat Completions API)。
+4. **Key 轮转下次请求即生效** — 不需要重启服务, 也不需要改任何代码。
+
+这意味着 MCN 运营方在同一个 OPC 部署里可以为不同 operator 配不同 provider (例如一部分用 Anthropic Sonnet、一部分用 GPT-4o-mini、一部分指向 MiniMax), `/credentials` 是控制面, `ProviderResolver` 是后端执行点。
+
+### MiniMax 兼容示例
+
+MiniMax 提供 Anthropic 协议兼容的文本接口。配置一条凭据即可让所有 AI 技能走它:
+
+| 字段 | 值 |
+|------|----|
+| `name` | MiniMax (Anthropic 兼容) |
+| `provider` | `anthropic` |
+| `protocol` | `anthropic` |
+| `model_name` | `MiniMax-M2.7-highspeed` |
+| `base_url` | `https://api.minimaxi.com` |
+| `api_key` | `<your MiniMax key>` |
+
+媒体类技能 (封面、TTS、视频) 仍走 MiniMax 自带客户端, **不**经过本解析器 — 文本类 skill (选题 / 人化 / 评分 / 拆解 / 平台适配 / 公式 / pipeline / batch) 才会按上述凭据解析。

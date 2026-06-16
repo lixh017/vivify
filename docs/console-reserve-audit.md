@@ -323,4 +323,28 @@ grep -rn "quota\|payment\|invoice\|subscription" /root/workspace/opc/apps/api/in
 
 ---
 
+## Phase 4 — Provider-agnostic (done 2026-06)
+
+The operator-facing surface now lets each user pick:
+
+- Protocol: Anthropic Messages API | OpenAI Chat Completions API
+- Model: free-form string (e.g. `claude-sonnet-4-5`, `gpt-4o-mini`,
+  `MiniMax-M2.7-highspeed`)
+- Base URL: optional override for self-hosted / mirror deployments
+- API key: stored encrypted in the `credentials` table
+
+The `ProviderResolver` (`internal/agents/resolver.go`) maps
+`(user_id, scope)` → live `TextProvider` on every call. MiniMax
+remains the built-in media provider (image/speech/video); its
+text path is also reachable via the Anthropic protocol by
+pointing at `https://api.minimaxi.com`.
+
+For MCN operators running this for many creators, this means
+**one OPC deployment can serve users on different providers**
+without any code change. The `/credentials` page in the console
+is the operator's control surface; the `ProviderResolver` is the
+back-end enforcement.
+
+---
+
 (报告完)

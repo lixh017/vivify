@@ -59,6 +59,8 @@ export default function SkillDetailPage({ params }: SkillDetailPageProps) {
 
         <BasicInfoCard skill={skill} />
 
+        <ProviderNote />
+
         <ParamsCard params={skill.params} />
 
         <RequestExampleCard example={skill.example} />
@@ -118,6 +120,51 @@ function BasicInfoCard({ skill }: { skill: SkillMeta }) {
           <dd className="text-claude-ink">{categoryLabel(skill.category)}</dd>
         </div>
       </dl>
+    </section>
+  )
+}
+
+// ProviderNote is rendered on every per-skill docs page to surface
+// the Phase 4 user-configurable provider model. The skill itself
+// doesn't pick a model — the resolver (internal/agents/resolver.go)
+// reads the caller's configured credential at request time and
+// wires the right protocol adapter (Anthropic Messages API or
+// OpenAI Chat Completions API).
+//
+// We surface this on every page (not per-skill) so operators only
+// have to learn the model once.
+function ProviderNote() {
+  return (
+    <section
+      aria-labelledby="provider-note-heading"
+      className="bg-claude-surface border border-claude-hairline rounded-lg px-5 py-4"
+    >
+      <h3 id="provider-note-heading" className="text-sm font-medium text-claude-ink">
+        模型与 Provider
+      </h3>
+      <p className="text-xs text-claude-muted mt-1.5 leading-relaxed">
+        <strong className="text-claude-ink font-medium">Provider:</strong>{' '}
+        在调用时根据当前 operator 配置的凭据解析。请先在{' '}
+        <Link href="/credentials" className="text-claude-coral hover:underline">
+          /credentials
+        </Link>{' '}
+        页面新增一条凭据, 选择 <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">protocol</code>{' '}
+        (Anthropic Messages API 或 OpenAI Chat Completions API)、填入{' '}
+        <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">model_name</code> 与{' '}
+        <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">api_key</code>,
+        可选 <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">base_url</code> 用于自托管或镜像地址。Key 以 AES-GCM 加密存储,
+        切换或轮转在下次请求生效, 无需重启。
+      </p>
+      <p className="text-xs text-claude-muted mt-2 leading-relaxed">
+        若想用 MiniMax 的 Anthropic 兼容接口跑文本, 把{' '}
+        <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">base_url</code>{' '}
+        设为{' '}
+        <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">https://api.minimaxi.com</code>
+        , <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">protocol</code> 选 Anthropic,{' '}
+        <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">model_name</code>{' '}
+        用 <code className="font-mono text-[11px] px-1 py-0.5 bg-white rounded">MiniMax-M2.7-highspeed</code>。
+        媒体类 skill (封面/TTS/视频) 仍走 MiniMax 自带客户端, 不受本次改动影响。
+      </p>
     </section>
   )
 }
