@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,11 +34,10 @@ type AnthropicCompatProvider struct {
 // APIKey is OK — Available() reports false and callers fall back
 // to demo mode.
 func NewAnthropicCompatProvider(cfg AnthropicCompatConfig) *AnthropicCompatProvider {
-	base := cfg.BaseURL
-	if base == "" {
-		base = "https://api.anthropic.com"
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.anthropic.com"
 	}
-	_ = base
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &AnthropicCompatProvider{
 		cfg:  cfg,
 		http: &http.Client{Timeout: DefaultProviderTimeout},
@@ -49,39 +47,48 @@ func NewAnthropicCompatProvider(cfg AnthropicCompatConfig) *AnthropicCompatProvi
 func (p *AnthropicCompatProvider) Name() string    { return "anthropic" }
 func (p *AnthropicCompatProvider) Available() bool { return strings.TrimSpace(p.cfg.APIKey) != "" }
 
+type anthropicCompatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type anthropicCompatRequest struct {
-	Model     string `json:"model"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
-	System    string `json:"system,omitempty"`
-	Messages  []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	} `json:"messages"`
+	Model     string                   `json:"model"`
+	MaxTokens int                      `json:"max_tokens,omitempty"`
+	System    string                   `json:"system,omitempty"`
+	Messages  []anthropicCompatMessage `json:"messages"`
 }
 
 func (p *AnthropicCompatProvider) CompleteWithUsage(ctx context.Context, prompt string, opts CompleteOptions) (string, Usage, error) {
 	if !p.Available() {
-		return "", Usage{}, errors.New("anthropic-compat: APIKey not configured")
+		return "", Usage{}, fmt.Errorf("anthropic-compat: %w", ErrProviderUnavailable)
 	}
 	model := opts.Model
 	if model == "" {
 		model = p.cfg.ModelName
 	}
 	if model == "" {
-		return "", Usage{}, errors.New("anthropic-compat: model name not configured")
+		return "", Usage{}, fmt.Errorf("anthropic-compat: %w", ErrProviderUnavailable)
 	}
+	timeout := DefaultProviderTimeout
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	req := anthropicCompatRequest{
 		Model:     model,
 		MaxTokens: int(opts.MaxTokens),
 		System:    "You are a helpful AI assistant.",
 	}
-	req.Messages = append(req.Messages, struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}{Role: "user", Content: prompt})
-	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(p.cfg.BaseURL, "/")+"/v1/messages", bytes.NewReader(body))
+	req.Messages = []anthropicCompatMessage{{Role: "user", Content: prompt}}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("anthropic-compat: marshal: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(cctx, http.MethodPost,
+		p.cfg.BaseURL+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("anthropic-compat: build request: %w", err)
 	}
@@ -94,41 +101,18 @@ func (p *AnthropicCompatProvider) CompleteWithUsage(ctx context.Context, prompt 
 		return "", Usage{}, fmt.Errorf("anthropic-compat: http: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return "", Usage{}, fmt.Errorf("anthropic-compat: read: %w", err)
 	}
 	if resp.StatusCode >= 400 {
 		return "", Usage{}, fmt.Errorf("anthropic-compat: api %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
-	var env struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
-		BaseResp struct {
-			StatusCode int    `json:"status_code"`
-			StatusMsg  string `json:"status_msg"`
-		} `json:"base_resp"`
+	result, err := parseAnthropicMessagesResponse(raw)
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("anthropic-compat: %w", err)
 	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", Usage{}, fmt.Errorf("anthropic-compat: parse: %w (raw=%s)", err, truncate(string(raw), 200))
-	}
-	if env.BaseResp.StatusCode != 0 {
-		return "", Usage{}, fmt.Errorf("anthropic-compat: api error %d: %s",
-			env.BaseResp.StatusCode, env.BaseResp.StatusMsg)
-	}
-	var sb strings.Builder
-	for _, b := range env.Content {
-		if b.Type == "text" {
-			sb.WriteString(b.Text)
-		}
-	}
-	return sb.String(), Usage{InputTokens: env.Usage.InputTokens, OutputTokens: env.Usage.OutputTokens}, nil
+	return result.Text, Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}, nil
 }
 
 // Compile-time check that AnthropicCompatProvider satisfies TextProvider.
