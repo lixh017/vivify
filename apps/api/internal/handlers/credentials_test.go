@@ -210,7 +210,7 @@ func TestCredentialsList(t *testing.T) {
 		t.Fatalf("seed #1 status = %d, want 201", w.Code)
 	}
 	if w := credentialsDo(t, r, "POST", "/credentials", map[string]any{
-		"provider": "anthropic", "name": "b", "plaintext_key": "k2",
+		"provider": "anthropic", "protocol": "anthropic", "base_url": "https://api.anthropic.com", "model_name": "claude-sonnet-4-5", "name": "b", "plaintext_key": "k2",
 	}); w.Code != http.StatusCreated {
 		t.Fatalf("seed #2 status = %d, want 201", w.Code)
 	}
@@ -244,7 +244,7 @@ func TestCredentialsRotate(t *testing.T) {
 	r, db := setupCredentialsRouter(t)
 	// Create
 	cw := credentialsDo(t, r, "POST", "/credentials", map[string]any{
-		"provider": "anthropic", "name": "rotate-me", "plaintext_key": "old-key",
+		"provider": "anthropic", "protocol": "anthropic", "base_url": "https://api.anthropic.com", "model_name": "claude-sonnet-4-5", "name": "rotate-me", "plaintext_key": "old-key",
 	})
 	if cw.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201", cw.Code)
@@ -431,5 +431,91 @@ func TestCredentialsTenantIsolation(t *testing.T) {
 	}
 	if row.UserID != 1 {
 		t.Fatalf("row user_id = %d, want 1", row.UserID)
+	}
+}
+
+// TestCredential_Create_AcceptsProtocol covers the Phase 4
+// user-configurable provider path. POSTing an Anthropic-protocol
+// credential with base_url + model_name must return 201 and persist
+// all four Phase 4 fields. The resolver (Task 4) reads them back
+// unchanged to construct a live AnthropicCompatProvider.
+func TestCredential_Create_AcceptsProtocol(t *testing.T) {
+	r, db := setupCredentialsRouter(t)
+	w := credentialsDo(t, r, "POST", "/credentials", map[string]any{
+		"provider":      "anthropic",
+		"protocol":      "anthropic",
+		"base_url":      "https://api.anthropic.com",
+		"model_name":    "claude-haiku-4-5",
+		"name":          "primary",
+		"plaintext_key": "sk-test-key",
+		"scope":         "all",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v; body = %s", err, w.Body.String())
+	}
+	if got["protocol"] != "anthropic" {
+		t.Fatalf("protocol = %v, want anthropic", got["protocol"])
+	}
+	if got["base_url"] != "https://api.anthropic.com" {
+		t.Fatalf("base_url = %v, want https://api.anthropic.com", got["base_url"])
+	}
+	if got["model_name"] != "claude-haiku-4-5" {
+		t.Fatalf("model_name = %v, want claude-haiku-4-5", got["model_name"])
+	}
+	assertNoEncryptedKeyInBody(t, w.Body.Bytes())
+
+	// Row on disk must carry the Phase 4 fields, normalized to
+	// lowercase per Validate. EncryptedKey must be a real AES-GCM
+	// seal, not the plaintext.
+	var row models.Credential
+	if err := db.First(&row).Error; err != nil {
+		t.Fatalf("db.First: %v", err)
+	}
+	if row.Protocol != "anthropic" {
+		t.Fatalf("db protocol = %q, want anthropic", row.Protocol)
+	}
+	if row.BaseURL != "https://api.anthropic.com" {
+		t.Fatalf("db base_url = %q, want https://api.anthropic.com", row.BaseURL)
+	}
+	if row.ModelName != "claude-haiku-4-5" {
+		t.Fatalf("db model_name = %q, want claude-haiku-4-5", row.ModelName)
+	}
+	if len(row.EncryptedKey) < 12 {
+		t.Fatalf("EncryptedKey too short: %d bytes", len(row.EncryptedKey))
+	}
+	if bytes.Contains(row.EncryptedKey, []byte("sk-test-key")) {
+		t.Fatalf("plaintext leaked into EncryptedKey: %x", row.EncryptedKey)
+	}
+}
+
+// TestCredential_Create_RejectsMissingModelName covers the
+// Phase 4 Validate rule: for anthropic/openai providers both
+// protocol AND model_name are required. A POST with protocol but
+// no model_name must return 400 before any row is persisted.
+func TestCredential_Create_RejectsMissingModelName(t *testing.T) {
+	r, db := setupCredentialsRouter(t)
+	w := credentialsDo(t, r, "POST", "/credentials", map[string]any{
+		"provider":      "anthropic",
+		"protocol":      "anthropic",
+		"base_url":      "https://api.anthropic.com",
+		"name":          "incomplete",
+		"plaintext_key": "sk-test-key",
+		"scope":         "all",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	// No row should have been written — Validate ran before
+	// the insert path.
+	var count int64
+	if err := db.Model(&models.Credential{}).Count(&count).Error; err != nil {
+		t.Fatalf("db count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 rows after validation failure, got %d", count)
 	}
 }

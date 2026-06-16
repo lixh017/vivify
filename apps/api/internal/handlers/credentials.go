@@ -75,8 +75,17 @@ func (h *CredentialHandler) RegisterRoutes(r gin.IRouter) {
 // createRequest is the JSON body for POST /credentials. PlaintextKey
 // is the secret the client wants to store; we AES-GCM encrypt it
 // before persistence and never echo it back.
+//
+// Protocol, BaseURL, and ModelName are the Phase 4 user-configurable
+// provider fields. For Anthropic/OpenAI providers the Validate rule
+// added in Task 1 requires protocol + model_name; for media
+// providers (volcengine/douyin) they remain optional so existing
+// rows produced before Phase 4 keep validating.
 type createRequest struct {
 	Provider     string `json:"provider"`
+	Protocol     string `json:"protocol,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	ModelName    string `json:"model_name,omitempty"`
 	Name         string `json:"name"`
 	PlaintextKey string `json:"plaintext_key"`
 	Scope        string `json:"scope"`
@@ -109,10 +118,13 @@ func (h *CredentialHandler) Create(c *gin.Context) {
 		return
 	}
 	cred := models.Credential{
-		UserID:   UserIDFromContext(c),
-		Provider: req.Provider,
-		Name:     req.Name,
-		Scope:    req.Scope,
+		UserID:    UserIDFromContext(c),
+		Provider:  req.Provider,
+		Protocol:  req.Protocol,
+		BaseURL:   req.BaseURL,
+		ModelName: req.ModelName,
+		Name:      req.Name,
+		Scope:     req.Scope,
 	}
 	if err := cred.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -288,10 +300,18 @@ func (h *CredentialHandler) Delete(c *gin.Context) {
 // explicitly absent — the struct fields map directly to JSON keys
 // and the column simply isn't here, so a future maintainer cannot
 // accidentally add it back without a deliberate change.
+//
+// Protocol, BaseURL, and ModelName are echoed back when present so
+// the operator can confirm the Phase 4 fields were stored as
+// expected. omitempty keeps the wire shape clean for media
+// providers that don't need them.
 type credentialResponse struct {
 	ID         uint       `json:"id"`
 	UserID     uint       `json:"user_id"`
 	Provider   string     `json:"provider"`
+	Protocol   string     `json:"protocol,omitempty"`
+	BaseURL    string     `json:"base_url,omitempty"`
+	ModelName  string     `json:"model_name,omitempty"`
 	Name       string     `json:"name"`
 	Scope      string     `json:"scope"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -304,6 +324,9 @@ func toCredentialResponse(c models.Credential) credentialResponse {
 		ID:         c.ID,
 		UserID:     c.UserID,
 		Provider:   c.Provider,
+		Protocol:   c.Protocol,
+		BaseURL:    c.BaseURL,
+		ModelName:  c.ModelName,
 		Name:       c.Name,
 		Scope:      c.Scope,
 		CreatedAt:  c.CreatedAt,
