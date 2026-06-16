@@ -293,7 +293,7 @@ func (h *AIHandler) GenerateTopics(c *gin.Context) {
 	// MiniMax M2.7-highspeed is the highspeed variant; cost
 	// attribution uses the per-1k-token skill row keyed on
 	// SkillMiniMaxM27.
-	StampClaudeCost(c, config.SkillMiniMaxM27, res.Cost.InputTokens, res.Cost.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, res.Cost.InputTokens, res.Cost.OutputTokens)
 	c.JSON(http.StatusOK, generateTopicsResponse{Topics: out})
 }
 
@@ -406,7 +406,7 @@ func (h *AIHandler) HumanizeScript(c *gin.Context) {
 		})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	c.JSON(http.StatusOK, humanizeResponse{Humanized: body})
 }
@@ -514,7 +514,7 @@ func (h *AIHandler) Postmortem(c *gin.Context) {
 		})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	structured := parsePostmortemStructured(body)
 	c.JSON(http.StatusOK, postmortemResponse{Report: body, Structured: structured})

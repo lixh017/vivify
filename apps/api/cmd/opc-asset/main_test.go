@@ -6,8 +6,21 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// stdoutCaptureMu serializes the captureStdout swap of the
+// global os.Stdout so parallel subtests don't race on the
+// pointer (one subtest could restore the original between
+// another's os.Stdout read and the caller's write, dropping
+// or interleaving output).
+//
+// Pre-existing race: caught by `go test -race` on
+// 2026-06-16. The fix preserves the per-subtest isolation
+// (each still has its own pipe + buffer) while serializing
+// only the global-pointer read+write window.
+var stdoutCaptureMu sync.Mutex
 
 // TestRunCheckAllTypes confirms the --type flag is wired and each
 // of the 4 IP types produces a high ConsistencyResult for a
@@ -100,9 +113,14 @@ func TestRunTopicMissingFlags(t *testing.T) {
 
 // captureStdout redirects os.Stdout during fn, returns what was
 // printed. Used for CLI tests that print to stdout instead of
-// returning strings.
+// returning strings. The stdoutCaptureMu mutex serializes the
+// global-pointer read+write window; the per-call pipe + buffer
+// stay isolated so each caller still gets only its own output.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
+
+	stdoutCaptureMu.Lock()
+	defer stdoutCaptureMu.Unlock()
 
 	old := os.Stdout
 	r, w, err := os.Pipe()

@@ -228,7 +228,7 @@ func (h *DeconstructHandler) Deconstruct(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	out, err := parseDeconstruct(body)
 	if err != nil {
@@ -355,7 +355,7 @@ func (h *DeconstructHandler) ViralFormula(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	out, err := parseViralFormula(body)
 	if err != nil {

@@ -272,7 +272,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				h.surfaceStepError(c, "topics", err)
 				return
 			}
-			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
+			StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Topics = topics
 			if len(topics) > 0 {
 				bestTopic = topics[0]
@@ -293,7 +293,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				h.surfaceStepError(c, "script", err)
 				return
 			}
-			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
+			StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Script = script
 		case "score":
 			if resp.Script == nil {
@@ -307,7 +307,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				h.surfaceStepError(c, "score", err)
 				return
 			}
-			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
+			StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Score = score
 		case "adapt":
 			if resp.Script == nil {
@@ -321,7 +321,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				h.surfaceStepError(c, "adapt", err)
 				return
 			}
-			StampClaudeCost(c, config.SkillMiniMaxM27, usage.Input, usage.Output)
+			StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.Input, usage.Output)
 			resp.Adaptations = adapt
 		}
 	}

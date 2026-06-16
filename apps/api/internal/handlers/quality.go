@@ -217,7 +217,7 @@ func (h *QualityHandler) ScoreContent(c *gin.Context) {
 		c.JSON(http.StatusOK, fb)
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	out, err := parseQualityScore(body)
 	if err != nil {
@@ -420,7 +420,7 @@ func (h *QualityHandler) PlatformAdapt(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service failed: " + err.Error()})
 		return
 	}
-	StampClaudeCost(c, config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
+	StampTextCost(c, text.Name(), config.SkillMiniMaxM27, usage.InputTokens, usage.OutputTokens)
 
 	out, err := parsePlatformAdapt(body)
 	if err != nil {
