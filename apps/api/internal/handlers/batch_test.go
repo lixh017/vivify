@@ -18,7 +18,10 @@ import (
 // exercised in the tests we ship today — the persistence
 // branch is reserved for a future PR — but wiring it
 // through the constructor keeps the test harness close
-// to the production shape.
+// to the production shape. The handler takes a per-tick
+// factory (Task 6) so the override is wrapped in a closure
+// that returns the *agents.MiniMax (which already satisfies
+// agents.TextProvider via its CompleteWithUsage method).
 func setupBatchRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -29,7 +32,7 @@ func setupBatchRouter(t *testing.T, fn textOverrideFn) *gin.Engine {
 		c = agents.NewMiniMaxForDemo()
 	}
 	r := gin.New()
-	NewBatchHandler(c, nil).RegisterRoutes(r)
+	NewBatchHandler(func() agents.TextProvider { return c }, nil).RegisterRoutes(r)
 	return r
 }
 

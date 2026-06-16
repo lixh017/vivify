@@ -110,24 +110,31 @@ type batchResponse struct {
 }
 
 // BatchHandler exposes the batch endpoint. It reuses the
-// same *agents.MiniMax (topics + script + score + adapt) as
+// same text provider (topics + script + score + adapt) as
 // the pipeline handler so no new agent code is needed — the
 // batch logic is a concurrency shell over the same prompt
-// builders.
+// builders. The provider is supplied via a per-tick factory
+// (textFn) so a credentials table rotation on disk lands on
+// the next batch tick without restarting the process.
 type BatchHandler struct {
-	text   *agents.MiniMax
+	textFn func() agents.TextProvider
 	db     *gorm.DB
 	logger *slog.Logger
 }
 
-// NewBatchHandler wires a BatchHandler. db is required only
-// when auto_create_content_items is true; the rest of the
-// handler works without it. A nil logger falls back to
-// slog.Default().
-func NewBatchHandler(text *agents.MiniMax, db *gorm.DB) *BatchHandler {
+// NewBatchHandler wires a handler that resolves the text
+// provider per-tick via the supplied factory. The factory
+// pattern matters: the batch runs in a background goroutine
+// (not a gin context), so the per-tick factory gives the
+// resolver a chance to re-read the credentials table on each
+// batch run — key rotations land on the next tick, not on
+// process restart. db is required only when
+// auto_create_content_items is true; the rest of the handler
+// works without it. A nil logger falls back to slog.Default().
+func NewBatchHandler(textFn func() agents.TextProvider, db *gorm.DB) *BatchHandler {
 	l := slog.Default()
 	return &BatchHandler{
-		text:   text,
+		textFn: textFn,
 		db:     db,
 		logger: l,
 	}
@@ -136,7 +143,7 @@ func NewBatchHandler(text *agents.MiniMax, db *gorm.DB) *BatchHandler {
 // shouldUseDemo mirrors AIHandler.shouldUseDemo. Duplicated
 // rather than shared so handlers stay decoupled.
 func (h *BatchHandler) shouldUseDemo(c *gin.Context) bool {
-	return isDemoRequest(c) || !h.text.Available()
+	return isDemoRequest(c) || !h.textFn().Available()
 }
 
 // RegisterRoutes attaches the batch endpoint.
@@ -353,7 +360,7 @@ func (h *BatchHandler) runBatch(ctx context.Context, req batchRequest, steps, pl
 // already returned at the top level via batchResponse.KnowledgeUsed.
 func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform string, platforms, steps []string, ragContext string, _ []string) batchGeneratedItem {
 	res := batchGeneratedItem{}
-	topics, err := runBatchTopicsStep(ctx, h.text, seed, sourcePlatform, ragContext, 1)
+	topics, err := runBatchTopicsStep(ctx, h.textFn(), seed, sourcePlatform, ragContext, 1)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -389,7 +396,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 			if scriptContent != "" {
 				continue
 			}
-			s, err := runBatchScriptStep(ctx, h.text, bt.generatedTopic, sourcePlatform, ragContext)
+			s, err := runBatchScriptStep(ctx, h.textFn(), bt.generatedTopic, sourcePlatform, ragContext)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -401,7 +408,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 				res.Error = "score step requires a script"
 				return res
 			}
-			sc, err := runBatchScoreStep(ctx, h.text, res.Script.Title, res.Script.Content, sourcePlatform)
+			sc, err := runBatchScoreStep(ctx, h.textFn(), res.Script.Title, res.Script.Content, sourcePlatform)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -412,7 +419,7 @@ func (h *BatchHandler) runOneTopic(ctx context.Context, seed, sourcePlatform str
 				res.Error = "adapt step requires a script"
 				return res
 			}
-			a, err := runBatchAdaptStep(ctx, h.text, res.Script.Title, bt.Angle, sourcePlatform, platforms)
+			a, err := runBatchAdaptStep(ctx, h.textFn(), res.Script.Title, bt.Angle, sourcePlatform, platforms)
 			if err != nil {
 				res.Error = err.Error()
 				return res
@@ -523,30 +530,30 @@ func (h *BatchHandler) buildDemoOneTopic(steps, platforms []string) batchGenerat
 // dependencies and we don't want to widen the public API just
 // for the batch endpoint to share step helpers.
 
-// runBatchTopicsStep calls MiniMax to generate a single topic
-// for the batch. The count parameter is reserved for a future
-// "give me 3 ideas per slot" UX — today we always ask for 1
-// because the batch is itself the count parameter. rag is
-// injected under the same banner the pipeline uses.
-func runBatchTopicsStep(ctx context.Context, m *agents.MiniMax, seed, platform, rag string, _ int) ([]generatedTopic, error) {
+// runBatchTopicsStep calls the text provider to generate a
+// single topic for the batch. The count parameter is reserved
+// for a future "give me 3 ideas per slot" UX — today we always
+// ask for 1 because the batch is itself the count parameter.
+// rag is injected under the same banner the pipeline uses.
+func runBatchTopicsStep(ctx context.Context, m agents.TextProvider, seed, platform, rag string, _ int) ([]generatedTopic, error) {
 	prompt := agents.GenerateTopicsPrompt(seed, platform, 1)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	res, _, err := m.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return parseTopicsLegacy(res.Text)
+	return parseTopicsLegacy(res)
 }
 
-// runBatchScriptStep asks MiniMax to expand the topic into a
-// full script. Mirrors the pipeline handler's step exactly so
-// the batch output is consistent with the per-call pipeline
-// output.
-func runBatchScriptStep(ctx context.Context, m *agents.MiniMax, topic generatedTopic, platform, rag string) (*pipelineScript, error) {
+// runBatchScriptStep asks the text provider to expand the
+// topic into a full script. Mirrors the pipeline handler's
+// step exactly so the batch output is consistent with the
+// per-call pipeline output.
+func runBatchScriptStep(ctx context.Context, m agents.TextProvider, topic generatedTopic, platform, rag string) (*pipelineScript, error) {
 	seedScript := topic.Angle + "\n\n" + topic.Hook
 	prompt := agents.HumanizeScriptPrompt(seedScript)
 	if rag != "" {
@@ -554,13 +561,13 @@ func runBatchScriptStep(ctx context.Context, m *agents.MiniMax, topic generatedT
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	res, _, err := m.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, err
 	}
 	return &pipelineScript{
 		Title:   topic.Title,
-		Content: strings.TrimSpace(res.Text),
+		Content: strings.TrimSpace(res),
 		Angle:   topic.Angle,
 		Topic:   topic.Title,
 	}, nil
@@ -569,16 +576,16 @@ func runBatchScriptStep(ctx context.Context, m *agents.MiniMax, topic generatedT
 // runBatchScoreStep evaluates the generated script on the
 // standard axes. On parse failure it falls back to the
 // rule-based scorer so the batch never returns a hard 502 for
-// a slightly off-shape MiniMax response.
-func runBatchScoreStep(ctx context.Context, m *agents.MiniMax, title, script, platform string) (*qualityScoreResponse, error) {
+// a slightly off-shape provider response.
+func runBatchScoreStep(ctx context.Context, m agents.TextProvider, title, script, platform string) (*qualityScoreResponse, error) {
 	prompt := agents.ScoreContentPrompt(title, script, platform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	res, _, err := m.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, err
 	}
-	out, perr := parseQualityScore(res.Text)
+	out, perr := parseQualityScore(res)
 	if perr != nil {
 		fb, fbErr := qualityResponseFromMap(agents.RuleBasedScore(title, script, platform))
 		if fbErr != nil {
@@ -589,26 +596,27 @@ func runBatchScoreStep(ctx context.Context, m *agents.MiniMax, title, script, pl
 	return &out, nil
 }
 
-// runBatchAdaptStep asks MiniMax to produce per-platform
-// versions. The platforms slice is the per-batch target list
-// (e.g. 抖音/哔哩哔哩/小红书); the sourcePlatform is the
-// platform the topic + script steps used. The platforms list is
-// appended as an explicit "TARGETS" line so the model gets a
-// stable, machine-checkable list of which platforms to emit
-// versions for — defends against drift when the canonical
-// default changes and a caller passes a non-default set.
-func runBatchAdaptStep(ctx context.Context, m *agents.MiniMax, title, angle, sourcePlatform string, platforms []string) (*platformAdaptResponse, error) {
+// runBatchAdaptStep asks the text provider to produce
+// per-platform versions. The platforms slice is the per-batch
+// target list (e.g. 抖音/哔哩哔哩/小红书); the sourcePlatform
+// is the platform the topic + script steps used. The
+// platforms list is appended as an explicit "TARGETS" line so
+// the model gets a stable, machine-checkable list of which
+// platforms to emit versions for — defends against drift
+// when the canonical default changes and a caller passes a
+// non-default set.
+func runBatchAdaptStep(ctx context.Context, m agents.TextProvider, title, angle, sourcePlatform string, platforms []string) (*platformAdaptResponse, error) {
 	prompt := agents.PlatformAdaptPrompt(title, angle, sourcePlatform)
 	if len(platforms) > 0 {
 		prompt = prompt + "\n\n## TARGETS (per-batch override)\n" + strings.Join(platforms, " / ")
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	res, err := m.Text(cctx, prompt, agents.MiniMaxTextOptions{Model: "MiniMax-M2.7-highspeed"})
+	res, _, err := m.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, err
 	}
-	out, perr := parsePlatformAdapt(res.Text)
+	out, perr := parsePlatformAdapt(res)
 	if perr != nil {
 		return nil, perr
 	}

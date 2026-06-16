@@ -245,14 +245,22 @@ func main() {
 	authH.RegisterRoutes(r)
 
 	// Phase 2 AI batch + cover generation. The batch handler
-	// reuses the same *agents.MiniMax as /ai/pipeline, and the
+	// reuses the same text provider as /ai/pipeline, and the
 	// cover handler calls MiniMax.Image (with a deterministic
 	// SVG fallback when no API key is configured). Both live
 	// on the protected /api group so the response can be
 	// scoped to the caller's rows in a future iteration (the
 	// cover handler is also where the topic_id persistence
 	// seam will land).
-	batchH := handlers.NewBatchHandler(mmxClient, gormDB)
+	//
+	// The batch handler takes a per-tick factory so a future
+	// credentials rotation on disk lands on the next batch
+	// tick without restarting the process. Task 9 will swap
+	// the inner call to a resolver-aware factory that walks
+	// the ProviderResolver chain.
+	batchH := handlers.NewBatchHandler(func() agents.TextProvider {
+		return pipelineH.Text()
+	}, gormDB)
 	coverH := handlers.NewCoverHandler(mmxClient)
 
 	// Phase 4 media surface. SpeechHandler and VideoHandler
