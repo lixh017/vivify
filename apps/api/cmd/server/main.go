@@ -191,10 +191,15 @@ func main() {
 	// The 4 text-consuming handlers now resolve their provider
 	// through the resolver, so a logged-in user with a configured
 	// credential lands on AnthropicCompat / OpenAICompat instead
-	// of the legacy MiniMax default. mmxClient remains in scope
-	// below for the media surface (image/speech/video) and as the
-	// MCP server's default text provider.
-	aiH := handlers.NewAIHandler(resolver, gormDB)
+	// of the legacy MiniMax default. mmxClient is also passed as
+	// the WithDefault fallback so callers with no configured
+	// credential still get the legacy "demo mode when
+	// MINIMAX_API_KEY is empty" behavior preserved by Phase 4 —
+	// the resolver-only constructor leaves defaultText nil, which
+	// would route "no credential" requests to the deterministic
+	// Echo stub and skip shouldUseDemo's available-key short
+	// circuit (caught by api-smoke.sh on 2026-06-16).
+	aiH := handlers.NewAIHandlerWithDefault(mmxClient, gormDB)
 
 	// Sub-Spec D M1 — Task 3 + Task 5 fix: /api/ai/topics accepts
 	// EITHER a session cookie OR an X-API-Key. The original chain
@@ -211,9 +216,9 @@ func main() {
 		middleware.CallLog(middleware.CallLogConfig{DB: gormDB, Logger: slog.Default()}),
 		aiH.GenerateTopics,
 	)
-	qualityH := handlers.NewQualityHandler(resolver, gormDB)
-	deconstructH := handlers.NewDeconstructHandler(resolver)
-	pipelineH := handlers.NewPipelineHandler(resolver, gormDB)
+	qualityH := handlers.NewQualityHandlerWithDefault(mmxClient, gormDB)
+	deconstructH := handlers.NewDeconstructHandlerWithDefault(mmxClient)
+	pipelineH := handlers.NewPipelineHandlerWithDefault(mmxClient, gormDB)
 
 	// Construct the MCP server now that the resolver is available.
 	// The stdio transport blocks for the lifetime of the process, so

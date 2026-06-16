@@ -23,7 +23,15 @@ type textClientResolver interface {
 // show which protocol adapter served the call. The lookup chain is:
 //
 //  1. The resolver's per-request pick (uses user_id + scope from
-//     the caller's session cookie).
+//     the caller's session cookie). A resolver that returns the
+//     Echo fallback (the "no credential configured" sentinel)
+//     does NOT short-circuit the chain — Echo has Available()==true
+//     but cannot serve real text, so it would skip the demo
+//     short-circuit in shouldUseDemo and crash the live path on
+//     an unparseable response. Falling through to the configured
+//     default preserves the pre-Phase-4 demo semantics: a real
+//     provider with no API key reports Available()==false and
+//     triggers the canned demo pool.
 //  2. The handler's configured default (passed via the constructor
 //     — typically a NewXxxWithTextOverride shim during tests).
 //  3. The package-level Echo (always non-nil) — guarantees the
@@ -37,7 +45,7 @@ func resolveTextForRequest(c *gin.Context, r textClientResolver, def agents.Text
 	if r != nil {
 		userID := UserIDFromContext(c)
 		if userID != 0 {
-			if p, err := r.Text(c.Request.Context(), userID, "all"); err == nil && p != nil {
+			if p, err := r.Text(c.Request.Context(), userID, "all"); err == nil && p != nil && p != agents.Echo {
 				stampCallLogProvider(c, p.Name())
 				return p
 			}

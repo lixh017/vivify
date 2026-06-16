@@ -231,6 +231,13 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 	// adapt). The first error short-circuits with a 503; partial
 	// progress is not returned because the frontend's modal would
 	// be hard to render against an incomplete step chain.
+	//
+	// Resolve the text provider once at the top of the live path
+	// so every step uses the same per-request pick. The resolver
+	// branch handles user-configured credentials; the default +
+	// Echo fallbacks keep the call site free of nil-deref concerns
+	// when the handler was constructed without a default.
+	text := resolveTextForRequest(c, h.resolver, h.defaultText)
 	resp := pipelineResponse{}
 	if ragTitles != nil {
 		resp.KnowledgeUsed = ragTitles
@@ -244,7 +251,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 	for _, step := range steps {
 		switch step {
 		case "topics":
-			topics, usage, err := h.runTopicsStep(c.Request.Context(), req.Seed, req.Platform, ragContext)
+			topics, usage, err := h.runTopicsStep(c.Request.Context(), text, req.Seed, req.Platform, ragContext)
 			if err != nil {
 				h.surfaceStepError(c, "topics", err)
 				return
@@ -265,7 +272,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			script, usage, err := h.runScriptStep(c.Request.Context(), bestTopic, req.Platform, ragContext)
+			script, usage, err := h.runScriptStep(c.Request.Context(), text, bestTopic, req.Platform, ragContext)
 			if err != nil {
 				h.surfaceStepError(c, "script", err)
 				return
@@ -279,7 +286,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			score, usage, err := h.runScoreStep(c.Request.Context(), resp.Script.Title, resp.Script.Content, req.Platform)
+			score, usage, err := h.runScoreStep(c.Request.Context(), text, resp.Script.Title, resp.Script.Content, req.Platform)
 			if err != nil {
 				h.surfaceStepError(c, "score", err)
 				return
@@ -293,7 +300,7 @@ func (h *PipelineHandler) RunPipeline(c *gin.Context) {
 				})
 				return
 			}
-			adapt, usage, err := h.runAdaptStep(c.Request.Context(), resp.Script.Title, bestTopic.Angle, req.Platform)
+			adapt, usage, err := h.runAdaptStep(c.Request.Context(), text, resp.Script.Title, bestTopic.Angle, req.Platform)
 			if err != nil {
 				h.surfaceStepError(c, "adapt", err)
 				return
@@ -340,14 +347,23 @@ type textUsage struct {
 // The RAG context is injected under a "STYLE REFERENCE" banner
 // when present, BEFORE the rest of the prompt content, so MiniMax
 // sees it as authoritative style guidance.
-func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag string) ([]generatedTopic, textUsage, error) {
+//
+// The text parameter is the per-request resolved TextProvider
+// (resolver or default — never nil). Passing it explicitly instead
+// of reading h.Text() keeps the step methods free of an implicit
+// nil-deref when the handler was constructed with
+// NewPipelineHandler(resolver, db) (resolver branch, defaultText
+// left nil). It also matches the per-request semantics of
+// shouldUseDemo, which already consults the resolver via
+// resolveTextForRequest.
+func (h *PipelineHandler) runTopicsStep(ctx context.Context, text agents.TextProvider, seed, platform, rag string) ([]generatedTopic, textUsage, error) {
 	prompt := agents.GenerateTopicsPrompt(seed, platform, 5)
 	if rag != "" {
 		prompt = injectRAG(prompt, rag)
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
+	body, usage, err := text.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
@@ -363,7 +379,9 @@ func (h *PipelineHandler) runTopicsStep(ctx context.Context, seed, platform, rag
 // topic step; the script prompt is the same humanize prompt the
 // /ai/humanize endpoint uses, but with the topic's title and
 // angle prepended so the model knows what to expand.
-func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopic, platform, rag string) (*pipelineScript, textUsage, error) {
+//
+// See runTopicsStep for why text is passed explicitly.
+func (h *PipelineHandler) runScriptStep(ctx context.Context, text agents.TextProvider, topic generatedTopic, platform, rag string) (*pipelineScript, textUsage, error) {
 	seedScript := topic.Angle + "\n\n" + topic.Hook
 	prompt := agents.HumanizeScriptPrompt(seedScript)
 	if rag != "" {
@@ -371,7 +389,7 @@ func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopi
 	}
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
+	body, usage, err := text.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
@@ -390,11 +408,13 @@ func (h *PipelineHandler) runScriptStep(ctx context.Context, topic generatedTopi
 // the IP style reference. (RAG would mostly teach MiniMax to
 // prefer the style guide over the actual data; we keep scoring
 // evidence-driven.)
-func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platform string) (*qualityScoreResponse, textUsage, error) {
+//
+// See runTopicsStep for why text is passed explicitly.
+func (h *PipelineHandler) runScoreStep(ctx context.Context, text agents.TextProvider, title, script, platform string) (*qualityScoreResponse, textUsage, error) {
 	prompt := agents.ScoreContentPrompt(title, script, platform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	body, usageRaw, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
+	body, usageRaw, err := text.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
@@ -429,11 +449,13 @@ func (h *PipelineHandler) runScoreStep(ctx context.Context, title, script, platf
 // voice table is already in the prompt, and adding user-doc
 // style guidance tends to make the model hedge rather than
 // commit to a specific platform's voice.
-func (h *PipelineHandler) runAdaptStep(ctx context.Context, title, angle, sourcePlatform string) (*platformAdaptResponse, textUsage, error) {
+//
+// See runTopicsStep for why text is passed explicitly.
+func (h *PipelineHandler) runAdaptStep(ctx context.Context, text agents.TextProvider, title, angle, sourcePlatform string) (*platformAdaptResponse, textUsage, error) {
 	prompt := agents.PlatformAdaptPrompt(title, angle, sourcePlatform)
 	cctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
-	body, usage, err := h.Text().CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
+	body, usage, err := text.CompleteWithUsage(cctx, prompt, agents.CompleteOptions{})
 	if err != nil {
 		return nil, textUsage{}, err
 	}
