@@ -14,7 +14,7 @@ GO_TEST      := $(GO) test -race -tags $(FTS5_TAG)
 GO_BUILD     := $(GO) build -tags $(FTS5_TAG)
 PKG          := ./...
 
-.PHONY: help test test-integration test-plain build smoke-api lint fmt vet clean stop stop-8081 bench asset asset-build asset-check asset-generate-image
+.PHONY: help test test-integration test-plain build smoke-api lint fmt vet clean stop stop-8081 bench asset asset-build asset-check asset-generate-image mcp
 
 help:
 	@echo "OPC make targets:"
@@ -22,6 +22,7 @@ help:
 	@echo "  test-integration Run real Claude API integration tests (gated by ANTHROPIC_API_KEY)"
 	@echo "  test-plain       Run API tests WITHOUT -tags fts5 (smoke; FTS integration tests are skipped)"
 	@echo "  build            Build the API server binary (with fts5 tag)"
+	@echo "  mcp              Build the standalone opc-mcp stdio binary (Claude Code / Cursor use)"
 	@echo "  asset            Build the opc-asset CLI (brand-on asset generator, see apps/api/cmd/opc-asset)"
 	@echo "  asset-check      Score a prompt via the brand profile (PROMPT=...)"
 	@echo "  asset-generate-image  Generate one image with default scene+outfit"
@@ -59,6 +60,14 @@ test-integration:
 
 build:
 	cd $(API_DIR) && $(GO_BUILD) -trimpath -ldflags="-s -w" -o ../bin/opc-api ./cmd/server
+
+# opc-mcp — the standalone MCP stdio binary. Used by Claude Code
+# / Cursor / other MCP clients. Same deps as opc-api (DB +
+# MiniMax text provider) but no HTTP server, so it's 30MB
+# instead of 60MB and exits cleanly on SIGINT. See
+# apps/api/cmd/mcp-server/main.go for the wire shape rationale.
+mcp:
+	cd $(API_DIR) && $(GO_BUILD) -trimpath -ldflags="-s -w" -o ../bin/opc-mcp ./cmd/mcp-server
 
 # opc-asset — the brand-on asset CLI. Built with the FTS5 tag for
 # parity with the API server (the CLI doesn't use SQLite but
