@@ -21,6 +21,7 @@ func TestServerHasCoreTools(t *testing.T) {
 	tools := s.ListTools()
 
 	want := []string{
+		// Generic MCN tools (10)
 		"opc_list_topics",
 		"opc_create_topic",
 		"opc_get_script",
@@ -31,6 +32,11 @@ func TestServerHasCoreTools(t *testing.T) {
 		"opc_generate_topics",
 		"opc_humanize_script",
 		"opc_deconstruct_viral",
+		// Panda-tuned tools (4) — IP profile baked into the prompt
+		"panda_topic",
+		"panda_script",
+		"panda_voice",
+		"panda_storyboard",
 	}
 
 	toolSet := make(map[string]bool, len(tools))
@@ -45,11 +51,14 @@ func TestServerHasCoreTools(t *testing.T) {
 	}
 }
 
-func TestToolNamesHaveOpcPrefix(t *testing.T) {
+func TestToolNamesHaveAllowedPrefix(t *testing.T) {
+	// Two namespaces share the registry: opc_* for the MCN-flavored
+	// generic tools, panda_* for the IP-tuned variants. Anything
+	// else is a naming bug.
 	s := NewRegistryServer()
 	for _, name := range s.ListTools() {
-		if !strings.HasPrefix(name, "opc_") {
-			t.Errorf("tool %s missing opc_ prefix", name)
+		if !strings.HasPrefix(name, "opc_") && !strings.HasPrefix(name, "panda_") {
+			t.Errorf("tool %s missing opc_/panda_ prefix", name)
 		}
 	}
 }

@@ -102,6 +102,14 @@ func main() {
 		slog.Error("db connect failed", "error", err, "path", dbPath)
 		os.Exit(1)
 	}
+	// Run migrations on startup, same as opc-api (cmd/server/main.go).
+	// Without this, a fresh DB_PATH (e.g. /tmp/opc-content.db on a new
+	// install) has no tables and every opc_create_* call fails with
+	// "no such table: topics". Idempotent: safe on existing DBs.
+	if err := db.Migrate(gormDB); err != nil {
+		slog.Error("db migrate failed", "error", err)
+		os.Exit(1)
+	}
 	mmxClient := agents.NewMiniMax(apiKey)
 	srv, err := mcp.NewServer(gormDB, mmxClient, nil)
 	if err != nil {

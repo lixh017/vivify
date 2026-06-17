@@ -231,6 +231,63 @@ var toolSpecs = []toolSpec{
 			"opc_generate_topics or a new script via opc_create_script.",
 		handler: func(s *Server) toolHandler { return s.toolDeconstructViral },
 	},
+	// ---- panda-tuned tools -------------------------------------------
+	// The 4 panda_* tools are the MCN-flavored opc_* tools with
+	// the OPC panda IP profile (4 voice tones, 5 outfits, scene
+	// whitelist, voice rules) baked into the LLM prompt. Use
+	// them INSTEAD of the opc_* equivalents when producing panda
+	// content. The opc_* tools stay available for non-panda work.
+	{
+		name: "panda_topic",
+		description: "Generate 5 candidate topics for the panda IP, with the " +
+			"OPC panda IP profile (4 voice tones / 5 outfits / scene whitelist) " +
+			"baked into the prompt. voice is required (治愈/御宅/哲学/国潮); " +
+			"hook_angle is an optional concrete situation to anchor the topics " +
+			"(e.g. '凌晨 3 点独处', '陌生人善意'). platform tunes the output " +
+			"format. Does NOT persist — caller picks one and uses " +
+			"opc_create_topic. Prefer this over opc_generate_topics when " +
+			"producing panda content; opc_generate_topics is the MCN-flavored " +
+			"default that does not know about panda voices.",
+		handler: func(s *Server) toolHandler { return s.toolPandaTopic },
+	},
+	{
+		name: "panda_script",
+		description: "Write a script for an existing panda topic, with the " +
+			"OPC IP profile, voice tone, and duration budget baked in. " +
+			"Loads the topic by id, generates the script via the LLM, " +
+			"persists it, and returns the new script id. voice is " +
+			"required (治愈/御宅/哲学/国潮); duration_sec defaults to 60; " +
+			"platform defaults to the topic's platform. Use this INSTEAD " +
+			"of opc_create_script for panda content — the LLM is told " +
+			"about voice rules, anti-patterns, and 留白 endings so the " +
+			"first draft is already on-voice.",
+		handler: func(s *Server) toolHandler { return s.toolPandaScript },
+	},
+	{
+		name: "panda_voice",
+		description: "Read-only voice-tone audit of a script (by script_id) " +
+			"or raw text. Returns a structured VoiceReport: voice_mix, " +
+			"dominant_voice, scenes, outfit_references, prop_references, " +
+			"ai_tells, ip_compliance (with violations), and 2-4 " +
+			"recommendations. Does NOT modify the script — for rewriting, " +
+			"use opc_humanize_script. Use this AFTER panda_script or " +
+			"opc_create_script to verify a script is on-panda-IP before " +
+			"sending it to opc_humanize_script.",
+		handler: func(s *Server) toolHandler { return s.toolPandaVoice },
+	},
+	{
+		name: "panda_storyboard",
+		description: "Turn a script into a shot list with Kling / 即梦 " +
+			"prompts. Loads the script by id, asks the LLM to split it " +
+			"into shots, and returns the shot list (one shot per ~4s of " +
+			"narration, with scene/outfit/prop/action/voiceover/kling_prompt " +
+			"per shot). voice is required so the visual register matches " +
+			"the script. The kling_prompt field is the 4-line technical " +
+			"prompt the content lead pastes directly into the video model. " +
+			"Output is returned, not persisted — caller can render it as " +
+			"Markdown or save the JSON alongside the script.",
+		handler: func(s *Server) toolHandler { return s.toolPandaStoryboard },
+	},
 }
 
 // ListTools returns the names of every tool exposed by this server.
