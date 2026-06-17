@@ -110,25 +110,127 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 // toolSpec describes a single OPC tool. The slice is iterated by
 // ListTools, registerTools, and dispatch so adding a tool is a
 // one-line change.
+//
+// description is surfaced to MCP clients (Claude Code, Cursor)
+// as the tool's "what is this" hint — the model uses it to
+// decide which tool to call. Keep descriptions short, action-
+// oriented, and tell the model when NOT to use the tool (e.g.
+// "does not call the LLM — use opc_generate_topics for that"
+// saves a round-trip on misroutes). The 10 generic tools here
+// are MCN-flavored; the 4 panda-tuned tools (panda_topic etc.)
+// bake the OPC IP profile into the description so the model
+// knows to use them when the user is producing panda content.
 type toolSpec struct {
-	name    string
-	handler func(s *Server) toolHandler
+	name        string
+	description string
+	handler     func(s *Server) toolHandler
 }
 
 // toolSpecs is the canonical list of OPC tools, in the order they
 // are exposed. The handler is bound at registerTools time (it needs
-// a *Server receiver).
+// a *Server receiver). Description strings are what Claude Code
+// surfaces as the "what is this" tooltip; the model uses them
+// to decide which tool to call, so keep them concrete.
 var toolSpecs = []toolSpec{
-	{name: "opc_list_topics", handler: func(s *Server) toolHandler { return s.toolListTopics }},
-	{name: "opc_create_topic", handler: func(s *Server) toolHandler { return s.toolCreateTopic }},
-	{name: "opc_get_script", handler: func(s *Server) toolHandler { return s.toolGetScript }},
-	{name: "opc_create_script", handler: func(s *Server) toolHandler { return s.toolCreateScript }},
-	{name: "opc_update_script", handler: func(s *Server) toolHandler { return s.toolUpdateScript }},
-	{name: "opc_log_content", handler: func(s *Server) toolHandler { return s.toolLogContent }},
-	{name: "opc_get_performance", handler: func(s *Server) toolHandler { return s.toolGetPerformance }},
-	{name: "opc_generate_topics", handler: func(s *Server) toolHandler { return s.toolGenerateTopics }},
-	{name: "opc_humanize_script", handler: func(s *Server) toolHandler { return s.toolHumanizeScript }},
-	{name: "opc_deconstruct_viral", handler: func(s *Server) toolHandler { return s.toolDeconstructViral }},
+	{
+		name: "opc_list_topics",
+		description: "List all topics in the OPC database, newest first. " +
+			"Returns every topic regardless of platform or status. " +
+			"Use this to browse what the team has queued before generating " +
+			"new ones — duplicates are cheap to avoid at the prompt level " +
+			"and expensive to avoid at the LLM level.",
+		handler: func(s *Server) toolHandler { return s.toolListTopics },
+	},
+	{
+		name: "opc_create_topic",
+		description: "Create a new topic (a candidate content idea) with " +
+			"title, angle, and platform. Does NOT generate the topic — " +
+			"the caller supplies the values. For AI-generated topics, " +
+			"use opc_generate_topics first and then call this with the " +
+			"chosen result. Returns the created topic row including its " +
+			"assigned id, which is the input to opc_create_script.",
+		handler: func(s *Server) toolHandler { return s.toolCreateTopic },
+	},
+	{
+		name: "opc_get_script",
+		description: "Fetch a single script by id. Returns title, content, " +
+			"platform, and timestamps. Use after opc_create_script to " +
+			"verify a write, or to load a script for the " +
+			"opc_humanize_script / opc_update_script round-trip.",
+		handler: func(s *Server) toolHandler { return s.toolGetScript },
+	},
+	{
+		name: "opc_create_script",
+		description: "Create a script attached to a topic (the topic_id " +
+			"argument). The script is the long-form text the host will " +
+			"voice, animate, or post. Returns the new script id, which is " +
+			"the input to opc_log_content after publishing.",
+		handler: func(s *Server) toolHandler { return s.toolCreateScript },
+	},
+	{
+		name: "opc_update_script",
+		description: "Update an existing script's content (or title). " +
+			"Used to apply edits from opc_humanize_script, or to record " +
+			"manual review changes. Only the fields you pass are updated; " +
+			"absent fields are preserved.",
+		handler: func(s *Server) toolHandler { return s.toolUpdateScript },
+	},
+	{
+		name: "opc_log_content",
+		description: "Log a published content item — the script id, the " +
+			"platform (抖音 / B站 / 小红书), and the public URL. " +
+			"This is the bridge between 'I posted the video' and " +
+			"'I want to see its performance' — opc_get_performance reads " +
+			"from the rows this tool writes. Call once per actual publish, " +
+			"not on draft / scheduled posts.",
+		handler: func(s *Server) toolHandler { return s.toolLogContent },
+	},
+	{
+		name: "opc_get_performance",
+		description: "Fetch the performance record for a content item by " +
+			"id (NOT script id — the content item id from opc_log_content). " +
+			"Returns views, likes, comments, and engagement rate. " +
+			"Use this to feed the postmortem flow: when a piece " +
+			"performs notably (high OR low), call opc_deconstruct_viral " +
+			"to extract the pattern.",
+		handler: func(s *Server) toolHandler { return s.toolGetPerformance },
+	},
+	{
+		name: "opc_generate_topics",
+		description: "Generate 5 candidate topics for a given seed + " +
+			"platform via the LLM. The seed is the human-provided " +
+			"concept (e.g. 'panda IP, healing + edgeness, 抖音'); " +
+			"the platform tunes the output voice. Returns a JSON array " +
+			"of {title, angle, expected_performance, hook, pattern, " +
+			"voice_tags}. The caller is expected to pick 1 and " +
+			"follow up with opc_create_topic — this tool does NOT " +
+			"persist anything.",
+		handler: func(s *Server) toolHandler { return s.toolGenerateTopics },
+	},
+	{
+		name: "opc_humanize_script",
+		description: "Take a script id, return a rewritten version that " +
+			"sounds less AI-generated. The rewrite drops 'as an AI " +
+			"language model' / 'in conclusion' / bullet-list tells and " +
+			"adds the kind of micro-roughness a human writer leaves in. " +
+			"Returns the rewritten text — you call opc_update_script " +
+			"to persist it. Skip on first-draft scripts; this is most " +
+			"useful when the script is intended for a platform whose " +
+			"audience can detect AI tells (B站 especially).",
+		handler: func(s *Server) toolHandler { return s.toolHumanizeScript },
+	},
+	{
+		name: "opc_deconstruct_viral",
+		description: "Take a viral piece of content (by URL or raw text), " +
+			"return a structured analysis of why it worked: hook, structure, " +
+			"emotional mechanism, and a recommended adaptation for the " +
+			"OPC IP. Use this AFTER opc_get_performance surfaces a " +
+			"viral hit, or to study a competitor's video before writing " +
+			"the team's next piece. The output is meant to be read, not " +
+			"persisted — promote the takeaways into a new topic via " +
+			"opc_generate_topics or a new script via opc_create_script.",
+		handler: func(s *Server) toolHandler { return s.toolDeconstructViral },
+	},
 }
 
 // ListTools returns the names of every tool exposed by this server.
@@ -149,10 +251,18 @@ func (s *Server) ListTools() []string {
 var emptyObjectSchema = json.RawMessage(`{"type":"object","additionalProperties":true}`)
 
 // registerTools wires every entry in toolSpecs into the SDK. It is
-// the single place that decides which tools are exposed.
+// the single place that decides which tools are exposed. The
+// Description field is what Claude Code shows the model — it is
+// the tool's "what is this" hint and the model uses it to decide
+// which tool to call. Keep descriptions concrete (when to use,
+// when NOT to use) and short (1-3 sentences).
 func (s *Server) registerTools() {
 	for _, spec := range toolSpecs {
-		s.sdk.AddTool(&mcpsdk.Tool{Name: spec.name, InputSchema: emptyObjectSchema}, s.HandleTool)
+		s.sdk.AddTool(&mcpsdk.Tool{
+			Name:        spec.name,
+			Description: spec.description,
+			InputSchema: emptyObjectSchema,
+		}, s.HandleTool)
 	}
 }
 
