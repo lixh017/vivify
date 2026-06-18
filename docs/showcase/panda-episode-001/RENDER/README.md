@@ -1,56 +1,89 @@
-# Panda EP#001 — Render (L2 视频成品)
+# Panda EP#001 — Render (L2 + L3 视频成品)
 
-> **58 秒抖音版,Seedream 4.0 (图) + Seedance 1.5-pro (视频) + ffmpeg 拼接**
+> **58 秒抖音版**,完整 L2 渲染 + L3 后期(配音+BGM+评论区+字幕+合成)
 
 ## 文件
 
-- `panda-ep001-final.mp4` — **完整 58s 视频** (8.6 MB, 720p 9:16, 24fps, AAC audio)
-- `shot-01.jpg` ... `shot-09.jpg` — 6 张原图 (shot 1/6/8 是黑屏文字,没图)
+| 文件 | 大小 | 用途 |
+|---|---|---|
+| `panda-ep001-L2.mp4` | 8.6 MB | L2 渲染版(无配音BGM字幕) |
+| `panda-ep001-L3.mp4` | 9.3 MB | **完整 L3 版**(配音+BGM+评论区) |
+| `shot-01..09.jpg` | ~500KB ea | 6 张原图 |
 
-## 渲染时间
+## L2 (image → video) — 7 分钟
 
-- 6 张图 (Seedream 4.0): ~30s (并行)
-- 7 段视频 (Seedance 1.5-pro i2v): ~6 min (串行,每段 ~50s)
-- 拼接 (ffmpeg): ~30s
-- **总**: ~7 min (包括模型排队时间)
+- 6 张图 @ Seedream 4.0:¥0.10-0.30
+- 7 段 i2v @ Seedance 1.5-pro 720p:¥7-15
+- ffmpeg 黑屏文字卡 + 拼成 58s
+- **总**:**~¥10-18 / 7 分钟**
 
-## 成本 (估算)
+## L3 (post-production) — 全自动,5 分钟
 
-- 6 张图 @ Seedream 4.0: ¥0.10-0.30
-- 7 段 5-8s 视频 @ Seedance 1.5-pro 720p: ¥7-15
-- **单条总**: ~¥10-18
+不需要剪映/抖音 API,**全部用 ffmpeg + MiniMax 海螺 TTS**:
 
-对比 EP#001 STORYBOARD 估算 (¥15-32),落在下限,因为我们用 720p 不是 1080p,且 5-8s 镜头没拉满 12s。
+1. **TTS 配音** (海螺 speech-02-hd,慢速男声 0.82x):
+   - 7 段旁白对应 7 段镜头
+   - `male-qn-jingying` voice_id (沉稳男声)
+   - 注意: 海螺返回 **hex** 不是 base64(`bytes.fromhex()`,不是 `base64.b64decode()`)
+2. **BGM 合成** (纯 ffmpeg 合成):
+   - 110Hz 持续 drone (pedal tone)
+   - 60 BPM 五声音阶 arpeggio (A3/C4/D4/E4/G4)
+   - 棕噪音 + 2kHz lowpass 模拟雨声
+   - 三者混音 + 头尾各 3s fade
+3. **评论区叠加** (ffmpeg drawtext):
+   - 8s 抖音手机屏样式
+   - 5 条评论 + 顶部视频信息
+4. **最终合成**:
+   - 9 段视频 concat
+   - BGM + 7 段配音(adelay 按时间轴放置)
+   - 压制 AAC + mp4 faststart
 
-## 流程
+## 关键 ffmpeg 技巧 (这版 ffmpeg 是 2018 年的,语法有坑)
 
-1. **L1 (script + storyboard)** — `SCRIPT-douyin.md` + `STORYBOARD.md`
-2. **L2a (image)** — `panda IP bible` prompt (含毛色 RGB / outfit ID / 场景白名单 / panda_visual_anchor) → Seedream 4.0
-3. **L2b (image → video)** — Seedance 1.5-pro i2v, prompt = 镜头动作
-4. **L2c (post)** — ffmpeg 黑屏文字层 + 字幕 + 时长拉伸 (shot 7: 8s → 12s)
-5. **L3 (todo)** — 配 Suno 旁白 / 剪映 BGM / 抖音发布
+- 旧版 amix **不支持 `normalize=0`**(直接默认即可,只是音量小)
+- `drawtext` 多条文本要用逗号串联,不能分行
+- `tpad=stop_mode=clone:stop_duration=N` 末帧定格 N 秒
+- `adelay=X|X` 立体声两通道都得给
 
-## 与原 storyboard 差异
+## 业界做法 (参考 video-editing skill)
 
-| Shot | 原计划 | 实际渲染 | 差异 |
-|---|---|---|---|
-| 1 钩子 | 黑屏文字 3s | 黑屏文字 3s | ✅ |
-| 2 背影 | 5s 慢推 | 5s 慢推 | ✅ |
-| 3 侧脸 | 6s 静态 | 6s 静态 | ✅ |
-| 4 正面 | 6s 慢推 | 6s 慢推 | ✅ |
-| 5 抬头 | 8s 焦平面 | 8s 焦平面 | ✅ |
-| **6 评论区** | 手机抖音录屏 8s | **黑屏占位 8s** | ❌ 需剪映录屏 |
-| 7 拉镜 | 12s 拉镜 | **8s + 末帧定格 4s = 12s** | ⚠ 动作不够"拉" |
-| 8 共鸣 | 黑屏文字淡入 7s | 黑屏文字淡入 7s | ✅ |
-| 9 收尾 | 背影 3s | 背影 3s + 字幕 | ✅ |
+```
+Screen Studio / raw footage
+  → Claude / Codex
+  → FFmpeg
+  → Remotion
+  → ElevenLabs / fal.ai
+  → Descript or CapCut
+```
 
-**未做**: 配音 (Suno/海螺 TTS) + BGM (剪映钢琴) + 抖音发布。
+我们这版跳过 Remotion/Descript/CapCut(都不必要):
+- Remotion 是 React 程序化视频,适合 template-driven 大批量
+- Descript 是 transcript-based 编辑,适合播客 / 教程
+- 剪映/CapCut 是手工 UI 工具,无 API
 
-## 下一步
+**ffmpeg + 海螺 TTS 已经覆盖了"中长视频从脚本到成片"全流程**。
 
-1. **配音**: MiniMax 海螺 TTS (我有 key),慢速男声 ~30s 一段
-2. **BGM**: 剪映库"深夜钢琴" 60 BPM + 雨声白噪
-3. **Shot 6 评论区**: 剪映录屏模板 (无需 API)
-4. **抖音发布**: 需抖音开放平台 API key
+## 下一步 (L3.5)
 
-跑完这 4 步 = 完整 L3 episode,可发抖音。
+1. **抖音发布**: 抖音开放平台 API key(还没给)
+2. **配字幕**: 用 ffmpeg drawtext 把 7 段旁白当字幕烧进视频(目前只 3 段文字卡,7 段都没字幕)
+3. **可灵 1.6 fallback**: 火山 Ark 没 1.6 模型,Seedance 1.5-pro 已经是最佳 video 选择
+
+## 怎么复用
+
+把 `run_video_pipeline.py` + `tts_hex.py` + `final_mix.sh` 拼成 1 个 skill:
+**`panda-episode-pipeline`** — 输入 L1 script + storyboard,输出 L3 完整视频
+
+`SKILL.md` 大约 80 行,关键步骤 6-8 个 ffmpeg 命令,内容主导 1 键跑完整 episode。
+
+## 成本汇总
+
+| 项 | 成本 |
+|---|---|
+| L1 (script + storyboard,人工) | 0 |
+| L2 (Seedream + Seedance) | ¥10-18 |
+| L3 (海螺 TTS + ffmpeg) | ¥0.1-0.3 (海螺按字符计) |
+| **单条总** | **~¥11-19** |
+| **6 个月 500 万 views / 180 天** | **¥2000-3400** |
+
+对比外包(¥800-3000/条),panda 自做 1 条 = 外包 1/100。
