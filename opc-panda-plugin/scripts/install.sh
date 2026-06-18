@@ -58,16 +58,30 @@ log "Fetching $BINARY_NAME binary..."
 BIN_DEST="$HOME/.local/bin/$BINARY_NAME"
 mkdir -p "$(dirname "$BIN_DEST")"
 
-if [ -n "$LOCAL_BINARY" ] && [ -f "$LOCAL_BINARY" ]; then
-  log "  Using local binary: $LOCAL_BINARY"
+# Priority:
+#   1. Bundled binary (if install.sh is run from a git clone of the plugin)
+#   2. OPC_PANDA_LOCAL env var (override path)
+#   3. GitHub Releases (production one-line install)
+#   4. Build from source (last resort, requires Go)
+
+# Try bundled first (script is at scripts/install.sh, binary is at mcp-servers/opc-mcp/bin/opc-mcp)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUNDLED_BINARY="$SCRIPT_DIR/../mcp-servers/opc-mcp/bin/opc-mcp"
+
+if [ -f "$BUNDLED_BINARY" ]; then
+  log "  Using bundled binary: $BUNDLED_BINARY"
+  cp "$BUNDLED_BINARY" "$BIN_DEST"
+elif [ -n "$LOCAL_BINARY" ] && [ -f "$LOCAL_BINARY" ]; then
+  log "  Using OPC_PANDA_LOCAL: $LOCAL_BINARY"
   cp "$LOCAL_BINARY" "$BIN_DEST"
 elif curl -fsSL --max-time 30 -o "$BIN_DEST.tmp" "$GITHUB_BINARY_URL" 2>/dev/null; then
   log "  Downloaded from GitHub Releases"
   mv "$BIN_DEST.tmp" "$BIN_DEST"
 else
-  warn "Could not download from $GITHUB_BINARY_URL"
-  warn "Build from source: cd $BINARY_NAME-src && go build -o $BIN_DEST ./cmd/mcp-server"
-  err "No binary available. Set OPC_PANDA_LOCAL=/path/to/opc-mcp and re-run."
+  warn "Could not find a binary:"
+  warn "  - Bundled: $BUNDLED_BINARY (not found)"
+  warn "  - GitHub:  $GITHUB_BINARY_URL (download failed)"
+  err "Build from source: go build -o $BIN_DEST ./cmd/mcp-server  (with $BINARY_NAME source dir)"
 fi
 chmod +x "$BIN_DEST"
 log "  Installed at: $BIN_DEST"
