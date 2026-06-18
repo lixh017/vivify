@@ -1,0 +1,21 @@
+{
+  "topic_id": 1,
+  "script_id": 1,
+  "voice": "国潮",
+  "title": "立春这首诗,古人骗了我二十年",
+  "angle": "哲学+国潮:用质疑经典的方式解构传统节气认知,不是温习而是思辨",
+  "platform": "抖音",
+  "expected_voice_mix": {
+    "哲学": 0.5,
+    "国潮": 0.3,
+    "御宅": 0,
+    "治愈": 0.2
+  },
+  "ip_compliance": {
+    "passed": true,
+    "violations": [],
+    "notes": "场景均在白名单内（窗前→月下窗棂/茶室，卷轴展开→山水卷轴前）；卷轴作为场景背景出现非独立道具；无西装/攻击姿势/卖惨"
+  },
+  "shots_count": 8,
+  "storyboard_total_sec": 32
+}

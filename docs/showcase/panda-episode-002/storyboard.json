@@ -1,0 +1,85 @@
+{
+  "voice": "国潮",
+  "shots": [
+    {
+      "shot_id": 1,
+      "duration_sec": 4,
+      "scene": "月下窗棂",
+      "outfit": "outfit_hufu_red",
+      "prop": "折扇",
+      "action": "峰哥站在月下窗棂前,手持折扇缓缓展开,樱花从窗外飘入,目光凝视窗边卷轴",
+      "voiceover": "嘿,来了啊。",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_hufu_red,手持折扇,站在月下窗棂,月光映照窗棂投下竹影,樱花飘落窗边,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 2,
+      "duration_sec": 4,
+      "scene": "茶室",
+      "outfit": "outfit_changshan_blue",
+      "prop": "茶盏",
+      "action": "峰哥端坐茶案后,双手捧起茶盏,樱花瓣落入盏中,烛光映照茶烟袅袅",
+      "voiceover": "窗前卷轴展开,樱花落在茶盏边。",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_changshan_blue,手持茶盏,坐在茶室茶案后,烛光摇曳映照茶烟,樱花从窗外飘入盏中,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 3,
+      "duration_sec": 4,
+      "scene": "竹林小院",
+      "outfit": "outfit_workwear_orange",
+      "prop": "竹杖",
+      "action": "峰哥背对镜头立于竹林边,手持竹杖轻点地面,樱花随风飘落,暖阳斜照竹叶间",
+      "voiceover": "古人云'春风送暖入屠苏',但你看那日历,明明还冷着呢。",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_workwear_orange,手持竹杖,站在竹林小院边,暖阳斜照竹叶婆娑,樱花随风飘落,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 4,
+      "duration_sec": 4,
+      "scene": "茶室",
+      "outfit": "outfit_robe_green",
+      "prop": "古书",
+      "action": "峰哥坐于蒲团上,翻开古书,指尖轻触诗行,樱花从窗棂飘入,烛火轻摇",
+      "voiceover": "嘿,我翻了翻唐诗。",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_robe_green,手持古书,坐于茶室蒲团之上,烛光映照翻开的书页,樱花从窗棂飘入,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 5,
+      "duration_sec": 4,
+      "scene": "竹林小院",
+      "outfit": "outfit_jacket_redwhite",
+      "prop": "折扇",
+      "action": "峰哥立于竹林间,手持折扇半开,樱花落在扇面,望向远方若有所思",
+      "voiceover": "立春这首诗啊,二十年了,我一直信着。",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_jacket_redwhite,手持折扇,立于竹林小院之中,暖光斜照樱花飘落,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 6,
+      "duration_sec": 4,
+      "scene": "茶室",
+      "outfit": "outfit_hufu_red",
+      "prop": "茶盏",
+      "action": "峰哥端坐茶案旁,轻抿茶盏,茶烟袅袅升起,樱花瓣飘落案上,烛光温柔",
+      "voiceover": "但真的是这样吗?",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_hufu_red,手持茶盏,坐于茶室茶案旁,烛光映照茶烟袅袅,樱花瓣飘落,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 7,
+      "duration_sec": 4,
+      "scene": "山水卷轴前",
+      "outfit": "outfit_changshan_blue",
+      "prop": "折扇",
+      "action": "峰哥背对镜头站立于山水卷轴前,缓缓展开折扇,月光洒落在卷轴山水之上",
+      "voiceover": "你说,春风到底什么时候来的?",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_changshan_blue,手持折扇,立于山水卷轴前,月光洒落卷轴山水若隐若现,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    },
+    {
+      "shot_id": 8,
+      "duration_sec": 4,
+      "scene": "竹林小院",
+      "outfit": "outfit_workwear_orange",
+      "prop": "竹杖",
+      "action": "峰哥抬头望向竹林之上,手持竹杖拄地,樱花纷纷飘落,午后暖阳洒落",
+      "voiceover": "你说,春风到底什么时候来的?",
+      "kling_prompt": "一只成年熊猫(峰哥),头身比 1:1.2 圆胖身材,面部白 rgb(245,240,225) 眼周黑 rgb(26,26,26),眼神半阖带笑意不直视镜头,身穿 outfit_workwear_orange,手持竹杖,立于竹林小院抬头望向竹梢,樱花纷纷飘落午后暖阳洒落,**国潮 + 色彩靓丽** (朱红/暖橙/翠绿/宝蓝撞色,非暗色调、非水墨),不露爪,不攻击性姿势,无文字,9:16 构图,4s,panda_visual_anchor: fengge_v1"
+    }
+  ]
+}
