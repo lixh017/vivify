@@ -359,11 +359,18 @@ def gen_tts(env: dict, text: str, out_path: str) -> str:
 
 def ff_text_card(env: dict, text: str, dur: int, out_path: str,
                  fade_in: bool = False) -> str:
-    """Generate a black 720x1280 video with the given text centered."""
+    """Generate a black 720x1280 video with the given text centered.
+
+    Uses WenQuanYi Zen Hei (中文字体, wqy-zenhei.ttc) so Chinese
+    characters render correctly. Without `fontfile=`, ffmpeg falls
+    back to DejaVu Sans (no CJK glyphs) and Chinese shows as tofu
+    boxes (□□□).
+    """
     ff = env["FFMPEG"]
     fade = "fade=t=in:st=1:d=2," if fade_in else ""
+    font = "fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
     cmd = [ff, "-y", "-f", "lavfi", "-i", f"color=c=black:s=720x1280:d={dur}",
-           "-vf", f"drawtext=text='{text}':fontsize=64:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2,{fade}format=yuv420p",
+           "-vf", f"drawtext=text='{text}':{font}:fontsize=64:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2,{fade}format=yuv420p",
            "-c:v", "libx264", "-preset", "fast", "-crf", "26",
            "-pix_fmt", "yuv420p", "-r", "24", out_path]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -401,7 +408,9 @@ def ff_trim(env: dict, in_path: str, target_dur: int, out_path: str,
     ff = env["FFMPEG"]
     vf = f"format=yuv420p"
     if text_overlay:
-        vf = f"drawtext=text='{text_overlay}':fontsize=36:fontcolor=white:x=(w-text_w)/2:y=h-th-100,{vf}"
+        # Same CJK font as the text cards (WenQuanYi Zen Hei)
+        font = "fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+        vf = f"drawtext=text='{text_overlay}':{font}:fontsize=36:fontcolor=white:x=(w-text_w)/2:y=h-th-100,{vf}"
     cmd = [ff, "-y", "-i", in_path,
            "-vf", vf,
            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
@@ -413,76 +422,74 @@ def ff_trim(env: dict, in_path: str, target_dur: int, out_path: str,
     return out_path
 
 def ff_synth_bgm(env: dict, out_path: str, dur_sec: int) -> str:
-    """Synthesize contemplative BGM as a raw 44.1kHz stereo WAV:
-       - 110 Hz sine drone (A2 pedal tone) at -28 dB
-       - 60 BPM pentatonic arpeggio (A3 / C4 / D4 / E4 / G4) at -6 dB
-       - Brown noise (lowpassed to 2 kHz) at -15 dB as rain
-       - 3s fade in + fade out
+    """Synthesize contemplative BGM as a raw 44.1kHz stereo WAV.
+
+    Recipe (cleaner, less noisy than v1):
+      - 110 Hz sine drone (A2 pedal tone) at -30 dB
+      - 60 BPM pentatonic arpeggio (A3 / C4 / D4 / E4 / G4) at -8 dB,
+        with longer attack/release to avoid clicky transients
+      - Pink-ish rain (filtered white noise, 1 kHz LPF) at -22 dB
+        (was 0.12 amp → 0.04 amp to remove the 杂音)
+      - 4 s fade in + 4 s fade out (was 3 s)
     """
     import wave
     import struct
     import random
+    import math
 
     sr = 44100
     n_samples = sr * dur_sec
     rng = random.Random(42)  # deterministic noise
 
-    # Pre-compute the brown noise (random walk)
-    brown = [0.0] * n_samples
-    val = 0.0
-    for i in range(n_samples):
-        val += rng.uniform(-0.02, 0.02)
-        val = max(-1.0, min(1.0, val * 0.99))  # soft clamp
-        brown[i] = val
-
-    # Lowpass brown noise at 2 kHz via simple one-pole IIR
-    rc = 1.0 / (2 * 3.14159 * 2000)
+    # White noise → 1 kHz lowpass (pink-ish, much softer than brown noise)
+    white = [rng.uniform(-1.0, 1.0) for _ in range(n_samples)]
+    rain_lp = [0.0] * n_samples
+    rc = 1.0 / (2 * math.pi * 1000)
     dt = 1.0 / sr
     alpha = dt / (rc + dt)
-    rain_lp = [0.0] * n_samples
     prev = 0.0
     for i in range(n_samples):
-        prev = prev + alpha * (brown[i] - prev)
+        prev = prev + alpha * (white[i] - prev)
         rain_lp[i] = prev
 
-    # Build per-sample audio: drone + arpeggio + rain
+    # Build per-sample audio: drone + arpeggio + rain (much quieter rain)
     notes = [(0.0, 220.00), (1.0, 261.63), (2.0, 329.63), (3.0, 392.00), (4.0, 440.00)]
     audio_l = [0.0] * n_samples
     audio_r = [0.0] * n_samples
+    fade_dur = 4.0  # was 3, longer for smoothness
     for i in range(n_samples):
         t = i / sr
-        # 110 Hz drone
-        drone = 0.04 * (1 if int(t * 110) % 2 == 0 else -1) * ((t * 110) % 1 - 0.5) * 2
-        # Approximate square wave via sign of sin for richer drone
-        # (simpler: just sine)
-        import math
-        drone = 0.04 * math.sin(2 * math.pi * 110 * t)
-        # Arpeggio: 1 note per beat at 60 BPM (1 beat per second)
+        # 110 Hz drone (sine, very quiet)
+        drone = 0.025 * math.sin(2 * math.pi * 110 * t)
+        # Arpeggio: 1 note per beat at 60 BPM, with attack + release envelope
         arp = 0.0
         for start, freq in notes:
-            # 0.9s of note then 0.1s gap
             beat_t = t - start
-            if 0 <= beat_t < 0.9:
-                env = math.exp(-2 * beat_t)  # exponential decay
-                arp = max(arp, 0.18 * env * math.sin(2 * math.pi * freq * beat_t))
-        # Rain
-        rain = 0.12 * rain_lp[i]
+            if 0 <= beat_t < 0.95:
+                # ADSR: 50ms attack, 850ms release
+                if beat_t < 0.05:
+                    env = beat_t / 0.05  # attack
+                else:
+                    env = math.exp(-1.5 * (beat_t - 0.05))  # release
+                arp = max(arp, 0.12 * env * math.sin(2 * math.pi * freq * beat_t))
+        # Rain (much softer than v1: 0.04 vs 0.12)
+        rain = 0.04 * rain_lp[i]
         sample = drone + arp + rain
-        # 3s fade in / fade out
-        if t < 3:
-            sample *= t / 3
-        if t > dur_sec - 3:
-            sample *= (dur_sec - t) / 3
-        # Stereo (slight offset for rain in R)
-        audio_l[i] = max(-1.0, min(1.0, sample))
-        audio_r[i] = max(-1.0, min(1.0, sample + 0.03 * rain_lp[i]))
+        # Fade in / out
+        if t < fade_dur:
+            sample *= t / fade_dur
+        if t > dur_sec - fade_dur:
+            sample *= (dur_sec - t) / fade_dur
+        # Soft clip
+        sample = math.tanh(sample * 1.5) * 0.7
+        audio_l[i] = sample
+        audio_r[i] = math.tanh((sample + 0.02 * rain_lp[i]) * 1.5) * 0.7
 
     # Write 16-bit stereo WAV
     with wave.open(out_path, "wb") as wf:
         wf.setnchannels(2)
         wf.setsampwidth(2)
         wf.setframerate(sr)
-        # interleave L/R
         interleaved = b"".join(
             struct.pack("<hh", int(audio_l[i] * 32767), int(audio_r[i] * 32767))
             for i in range(n_samples)
@@ -493,16 +500,19 @@ def ff_synth_bgm(env: dict, out_path: str, dur_sec: int) -> str:
 def ff_phone_comments(env: dict, out_path: str, dur_sec: int) -> str:
     """Render a 抖音 phone-screen mockup with scrolling comments."""
     ff = env["FFMPEG"]
+    # All Chinese in the phone comments uses WenQuanYi Zen Hei for
+    # proper CJK rendering (see ff_text_card).
+    font = "fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
     texts = [
-        "drawtext=text='熊猫 OPC 凌晨 3 点':fontsize=36:fontcolor=white:x=60:y=80",
-        "drawtext=text='❤ 12.4w   💬 3,892':fontsize=24:fontcolor=0xaaaaaa:x=60:y=140",
-        "drawtext=text='—— 评论区 ——':fontsize=28:fontcolor=0x666666:x=60:y=220",
-        "drawtext=text='小熊软糖_66: 加油!':fontsize=30:fontcolor=white:x=80:y=300",
-        "drawtext=text='深夜发疯人: 太治愈了...':fontsize=30:fontcolor=white:x=80:y=400",
-        "drawtext=text='emo战士: emo了 emo了':fontsize=30:fontcolor=white:x=80:y=500",
-        "drawtext=text='失眠专业户: 凌晨3点不只我一个':fontsize=28:fontcolor=white:x=80:y=600",
-        "drawtext=text='猫头鹰本鹰: 打卡!':fontsize=30:fontcolor=white:x=80:y=700",
-        "drawtext=text='—— 熊猫轻轻划过,不点赞 ——':fontsize=24:fontcolor=0x666666:x=60:y=1200",
+        f"drawtext=text='熊猫 OPC 凌晨 3 点':{font}:fontsize=36:fontcolor=white:x=60:y=80",
+        f"drawtext=text='❤ 12.4w   💬 3,892':{font}:fontsize=24:fontcolor=0xaaaaaa:x=60:y=140",
+        f"drawtext=text='—— 评论区 ——':{font}:fontsize=28:fontcolor=0x666666:x=60:y=220",
+        f"drawtext=text='小熊软糖_66: 加油!':{font}:fontsize=30:fontcolor=white:x=80:y=300",
+        f"drawtext=text='深夜发疯人: 太治愈了...':{font}:fontsize=30:fontcolor=white:x=80:y=400",
+        f"drawtext=text='emo战士: emo了 emo了':{font}:fontsize=30:fontcolor=white:x=80:y=500",
+        f"drawtext=text='失眠专业户: 凌晨3点不只我一个':{font}:fontsize=28:fontcolor=white:x=80:y=600",
+        f"drawtext=text='猫头鹰本鹰: 打卡!':{font}:fontsize=30:fontcolor=white:x=80:y=700",
+        f"drawtext=text='—— 熊猫轻轻划过,不点赞 ——':{font}:fontsize=24:fontcolor=0x666666:x=60:y=1200",
     ]
     vf = ",".join([
         "drawbox=x=20:y=20:w=680:h=1240:color=0x1a1a1a@1:t=fill",
