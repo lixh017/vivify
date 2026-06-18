@@ -413,32 +413,81 @@ def ff_trim(env: dict, in_path: str, target_dur: int, out_path: str,
     return out_path
 
 def ff_synth_bgm(env: dict, out_path: str, dur_sec: int) -> str:
-    """Synthesize contemplative BGM: 110Hz drone + 60 BPM pentatonic + brown rain."""
-    ff = env["FFMPEG"]
-    # Three audio sources mixed
-    drone = "sine=frequency=110:duration={d}:sample_rate=44100".format(d=dur_sec)
-    # Pentatonic arpeggio (A3/C4/D4/E4/G4) at 60 BPM
-    arp = ("aevalsrc='if(lt(mod(t*60,60),1),sin(2*PI*220*t)*0.15,"
-           "if(lt(mod(t*60,60),2),sin(2*PI*261.63*t)*0.15,"
-           "if(lt(mod(t*60,60),3),sin(2*PI*329.63*t)*0.15,"
-           "if(lt(mod(t*60,60),4),sin(2*PI*392*t)*0.12,0))))':"
-           "duration={d}:sample_rate=44100").format(d=dur_sec)
-    rain = "anoisesrc=color=brown:duration={d}:sample_rate=44100:amplitude=0.4".format(d=dur_sec)
-    filter_complex = (
-        f"-f lavfi -i '{drone}' "
-        f"-f lavfi -i '{arp}' "
-        f"-f lavfi -i '{rain}' "
-        "-filter_complex "
-        f"\"[0:a]volume=0.04[d];[1:a]volume=0.5[a];[2:a]lowpass=f=2000,volume=0.18[r];"
-        f"[d][a][r]amix=inputs=3[mix];[mix]afade=t=in:st=0:d=3,afade=t=out:st={dur_sec-3}:d=3[out]\" "
-        "-map \"[out]\" -ar 44100 -ac 2 -c:a pcm_s16le "
-        f"{out_path}"
-    )
-    # Run as shell so single-quotes inside the filter don't escape
-    cmd = f"{ff} -y {filter_complex}"
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if r.returncode != 0:
-        fatal(f"ffmpeg bgm synth failed: {r.stderr[-500:]}")
+    """Synthesize contemplative BGM as a raw 44.1kHz stereo WAV:
+       - 110 Hz sine drone (A2 pedal tone) at -28 dB
+       - 60 BPM pentatonic arpeggio (A3 / C4 / D4 / E4 / G4) at -6 dB
+       - Brown noise (lowpassed to 2 kHz) at -15 dB as rain
+       - 3s fade in + fade out
+    """
+    import wave
+    import struct
+    import random
+
+    sr = 44100
+    n_samples = sr * dur_sec
+    rng = random.Random(42)  # deterministic noise
+
+    # Pre-compute the brown noise (random walk)
+    brown = [0.0] * n_samples
+    val = 0.0
+    for i in range(n_samples):
+        val += rng.uniform(-0.02, 0.02)
+        val = max(-1.0, min(1.0, val * 0.99))  # soft clamp
+        brown[i] = val
+
+    # Lowpass brown noise at 2 kHz via simple one-pole IIR
+    rc = 1.0 / (2 * 3.14159 * 2000)
+    dt = 1.0 / sr
+    alpha = dt / (rc + dt)
+    rain_lp = [0.0] * n_samples
+    prev = 0.0
+    for i in range(n_samples):
+        prev = prev + alpha * (brown[i] - prev)
+        rain_lp[i] = prev
+
+    # Build per-sample audio: drone + arpeggio + rain
+    notes = [(0.0, 220.00), (1.0, 261.63), (2.0, 329.63), (3.0, 392.00), (4.0, 440.00)]
+    audio_l = [0.0] * n_samples
+    audio_r = [0.0] * n_samples
+    for i in range(n_samples):
+        t = i / sr
+        # 110 Hz drone
+        drone = 0.04 * (1 if int(t * 110) % 2 == 0 else -1) * ((t * 110) % 1 - 0.5) * 2
+        # Approximate square wave via sign of sin for richer drone
+        # (simpler: just sine)
+        import math
+        drone = 0.04 * math.sin(2 * math.pi * 110 * t)
+        # Arpeggio: 1 note per beat at 60 BPM (1 beat per second)
+        arp = 0.0
+        for start, freq in notes:
+            # 0.9s of note then 0.1s gap
+            beat_t = t - start
+            if 0 <= beat_t < 0.9:
+                env = math.exp(-2 * beat_t)  # exponential decay
+                arp = max(arp, 0.18 * env * math.sin(2 * math.pi * freq * beat_t))
+        # Rain
+        rain = 0.12 * rain_lp[i]
+        sample = drone + arp + rain
+        # 3s fade in / fade out
+        if t < 3:
+            sample *= t / 3
+        if t > dur_sec - 3:
+            sample *= (dur_sec - t) / 3
+        # Stereo (slight offset for rain in R)
+        audio_l[i] = max(-1.0, min(1.0, sample))
+        audio_r[i] = max(-1.0, min(1.0, sample + 0.03 * rain_lp[i]))
+
+    # Write 16-bit stereo WAV
+    with wave.open(out_path, "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        # interleave L/R
+        interleaved = b"".join(
+            struct.pack("<hh", int(audio_l[i] * 32767), int(audio_r[i] * 32767))
+            for i in range(n_samples)
+        )
+        wf.writeframes(interleaved)
     return out_path
 
 def ff_phone_comments(env: dict, out_path: str, dur_sec: int) -> str:
