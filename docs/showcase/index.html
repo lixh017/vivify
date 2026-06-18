@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>panda IP showcase</title>
+<style>
+body { font-family: -apple-system, system-ui, sans-serif; max-width: 980px; margin: 40px auto; padding: 0 20px; color: #222; }
+h1 { border-bottom: 2px solid #c73e1d; padding-bottom: 8px; }
+.ep { background: #faf6ee; border-left: 4px solid #c73e1d; padding: 20px; margin: 24px 0; border-radius: 4px; }
+.ep h2 { margin-top: 0; color: #1a1a1a; }
+.video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin: 16px 0; }
+.video-grid video { width: 100%; height: auto; border-radius: 8px; }
+.stills { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0; }
+.stills img { width: 100%; height: auto; border-radius: 4px; }
+ul { padding-left: 22px; }
+a { color: #1f5fa8; }
+.tag { display: inline-block; background: #c73e1d; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.85em; margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1>🐼 panda IP showcase</h1>
+<p>panda IP 内容产出,所有 video / 截图 / script / storyboard 都在这里。</p>
+
+<div class="ep">
+  <h2>EP#001 — 凌晨 3 点,熊猫为什么不睡 <span class="tag">御宅+治愈</span></h2>
+  <p>抖音 58s,1.5-pro 高质量版 + 1.0-pro-fast 便宜版。两个对比。</p>
+  <div class="video-grid">
+    <div>
+      <video controls src="panda-episode-001/RENDER/panda-ep001-L3.mp4"></video>
+      <p><strong>L3 1.5-pro</strong> (9.3MB, 完整配音+BGM)</p>
+    </div>
+    <div>
+      <video controls src="panda-episode-001/RENDER/skill-output.mp4"></video>
+      <p><strong>L3 1.0-fast</strong> (7.8MB, 同上但便宜)</p>
+    </div>
+  </div>
+  <p><a href="panda-episode-001/RENDER/">→ 所有 EP#001 渲染文件</a> | <a href="panda-episode-001/SCRIPT-douyin.md">script</a> | <a href="panda-episode-001/STORYBOARD.md">storyboard</a></p>
+</div>
+
+<div class="ep">
+  <h2>EP#002 — 立春这首诗,古人骗了我二十年 <span class="tag">国潮+哲学</span></h2>
+  <p>抖音 32s,1.0-pro-fast,8 shot 全 5 套服饰轮转。</p>
+  <div class="video-grid">
+    <div>
+      <video controls src="panda-episode-002/RENDER/ep002-L3.mp4"></video>
+      <p><strong>L3 完整版</strong> (8.85MB)</p>
+    </div>
+  </div>
+  <p><a href="panda-episode-002/RENDER/">→ 所有 EP#002 渲染文件</a> | <a href="panda-episode-002/SCRIPT-douyin.md">script</a> | <a href="panda-episode-002/STORYBOARD.md">storyboard</a></p>
+</div>
+
+<h2>panda IP stills (6 套服饰 × 14 张)</h2>
+<p>EP#001 6 张: <a href="panda-episode-001/RENDER/">shot-01..09.jpg</a></p>
+<p>EP#002 8 张: <a href="panda-episode-002/RENDER/">shot-01..08.jpg</a></p>
+
+<h2>更多资源</h2>
+<ul>
+  <li><a href="panda-episode-pipeline/SKILL.md">panda-episode-pipeline skill (Claude 读)</a></li>
+  <li><a href="panda-episode-pipeline/INSTALL.md">INSTALL.md (人类读,5min setup)</a></li>
+  <li><a href="panda-episode-pipeline/render_episode.py">render_episode.py (920 行 pipeline)</a></li>
+  <li><a href="INSTALL-opc-mcp.md">INSTALL-opc-mcp.md (Claude Code + opc-mcp)</a></li>
+</ul>
+
+<hr>
+<p style="color: #888; font-size: 0.9em;">6 个月 500 万 views / 180 天目标 · panda IP 自做 ¥11-19/episode · 总预算 ¥2000-3400</p>
+</body>
+</html>
