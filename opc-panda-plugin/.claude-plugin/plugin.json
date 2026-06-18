@@ -1,0 +1,29 @@
+{
+  "name": "opc-panda",
+  "version": "0.1.0",
+  "description": "OPC panda IP content production — 14 MCP tools (panda_topic, panda_script, panda_voice, panda_storyboard, opc_*) for the panda 峰哥 IP + end-to-end L2+L3 video pipeline (Seedream 4.0 + Seedance 1.5-pro + 海螺 TTS + ffmpeg)",
+  "author": {
+    "name": "OPC Content Team"
+  },
+  "homepage": "https://github.com/opc-project/opc-panda-plugin",
+  "license": "MIT",
+  "keywords": [
+    "panda",
+    "content",
+    "video",
+    "tiktok",
+    "douyin",
+    "mcp",
+    "ai-content"
+  ],
+  "mcpServers": {
+    "opc-mcp": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp-servers/opc-mcp/bin/opc-mcp",
+      "env": {
+        "DB_PATH": "${HOME}/.opc/panda-content.db",
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
+        "ARK_API_KEY": "${ARK_API_KEY}"
+      }
+    }
+  }
+}
