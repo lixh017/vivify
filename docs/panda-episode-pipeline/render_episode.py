@@ -498,20 +498,27 @@ def ff_synth_bgm(env: dict, out_path: str, dur_sec: int) -> str:
     return out_path
 
 def ff_phone_comments(env: dict, out_path: str, dur_sec: int) -> str:
-    """Render a 抖音 phone-screen mockup with scrolling comments."""
+    """Render a 抖音 phone-screen mockup with scrolling comments.
+
+    Emoji (❤ 💬 😭 😢 💗) are not in the WQY Zen Hei font (and
+    NotoColorEmoji/CBDT is not supported by the 2018 ffmpeg in this
+    env), so we substitute WQY-supported symbols that read the same:
+      ❤ → ♥    (U+2665 BLACK HEART SUIT, in WQY)
+      💬 → ★   (U+2605 BLACK STAR, used as a "comment mark")
+      😭 😢 💗 → ★ (same, for emoji-laden comments)
+    Visually clean and stays on-抖音 phone-comment feel.
+    """
     ff = env["FFMPEG"]
-    # All Chinese in the phone comments uses WenQuanYi Zen Hei for
-    # proper CJK rendering (see ff_text_card).
     font = "fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
     texts = [
         f"drawtext=text='熊猫 OPC 凌晨 3 点':{font}:fontsize=36:fontcolor=white:x=60:y=80",
-        f"drawtext=text='❤ 12.4w   💬 3,892':{font}:fontsize=24:fontcolor=0xaaaaaa:x=60:y=140",
+        f"drawtext=text='♥ 12.4w   ★ 3,892':{font}:fontsize=24:fontcolor=0xaaaaaa:x=60:y=140",
         f"drawtext=text='—— 评论区 ——':{font}:fontsize=28:fontcolor=0x666666:x=60:y=220",
-        f"drawtext=text='小熊软糖_66: 加油!':{font}:fontsize=30:fontcolor=white:x=80:y=300",
-        f"drawtext=text='深夜发疯人: 太治愈了...':{font}:fontsize=30:fontcolor=white:x=80:y=400",
-        f"drawtext=text='emo战士: emo了 emo了':{font}:fontsize=30:fontcolor=white:x=80:y=500",
+        f"drawtext=text='小熊软糖_66: 加油! ★':{font}:fontsize=30:fontcolor=white:x=80:y=300",
+        f"drawtext=text='深夜发疯人: 太治愈了... ♥':{font}:fontsize=30:fontcolor=white:x=80:y=400",
+        f"drawtext=text='emo战士: emo了 emo了 ★':{font}:fontsize=30:fontcolor=white:x=80:y=500",
         f"drawtext=text='失眠专业户: 凌晨3点不只我一个':{font}:fontsize=28:fontcolor=white:x=80:y=600",
-        f"drawtext=text='猫头鹰本鹰: 打卡!':{font}:fontsize=30:fontcolor=white:x=80:y=700",
+        f"drawtext=text='猫头鹰本鹰: 打卡! ★':{font}:fontsize=30:fontcolor=white:x=80:y=700",
         f"drawtext=text='—— 熊猫轻轻划过,不点赞 ——':{font}:fontsize=24:fontcolor=0x666666:x=60:y=1200",
     ]
     vf = ",".join([
