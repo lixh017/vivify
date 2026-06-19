@@ -105,13 +105,26 @@ def curl(method: str, url: str, headers: dict, body: dict = None,
            "-w", "\n__HTTP_CODE__%{http_code}__"]
     for k, v in headers.items():
         cmd += ["-H", f"{k}: {v}"]
+    body_tmp = None
     if body is not None:
-        cmd += ["-H", "Content-Type: application/json"]
-        cmd += ["-d", json.dumps(body)]
+        body_str = json.dumps(body)
+        # If payload is large (e.g. base64 reference_image ≈1MB),
+        # pass via --data-binary @tmpfile to avoid E2BIG on argv.
+        if len(body_str) > 64_000:
+            body_tmp = Path("/tmp") / f"opc-render-body-{os.getpid()}-{id(body)}.json"
+            body_tmp.write_text(body_str, encoding="utf-8")
+            cmd += ["-H", "Content-Type: application/json",
+                    "--data-binary", f"@{body_tmp}"]
+        else:
+            cmd += ["-H", "Content-Type: application/json", "-d", body_str]
     if out_file:
         cmd += ["-o", out_file]
 
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    finally:
+        if body_tmp and body_tmp.exists():
+            body_tmp.unlink()
     if r.returncode != 0:
         # curl itself failed (network, DNS, etc.) — not an HTTP error
         return 0, r.stderr or "curl failed", b""
@@ -260,16 +273,44 @@ def find_voiceover_for_shot(shot: dict, voiceovers: list[dict]) -> dict | None:
 
 # ---- L2a: image generation -----------------------------------------------
 
+def _resolve_reference(ref: str) -> str:
+    """Resolve a reference_image argument to what Seedream wants.
+
+    Accepts:
+      - http(s)://...   → returned as-is (public URL)
+      - data:image/...;base64,...  → returned as-is
+      - local path to a .jpg/.png → base64-encoded inline data URI
+
+    Inline base64 is the preferred form: it eliminates the 24h signed-URL
+    TTL problem, works fully offline, and is reproducible (the jpg is
+    committed in the plugin repo, so renders are deterministic).
+    """
+    if ref.startswith(("http://", "https://", "data:")):
+        return ref
+    p = Path(ref)
+    if not p.exists():
+        return None
+    ext = p.suffix.lstrip(".").lower() or "jpeg"
+    if ext == "jpg":
+        ext = "jpeg"
+    mime = f"image/{ext}"
+    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
 def gen_image(env: dict, prompt: str, model: str, out_path: str,
               reference_image: str = None) -> tuple[str, str]:
     """Returns (local_path, public_url_with_signature). The public URL has
     a 24h X-Tos-Expires signature from 火山 Ark and can be fed directly to
     Seedance as the i2v image input. Don't keep the URL for >24h.
 
-    If reference_image is provided (URL), Seedream preserves the
-    panda's identity across renders. This is the panda IP's
-    "character anchor" — the same panda looks the same across
+    If reference_image is provided (URL, local path, or base64 data URI),
+    Seedream preserves the panda's identity across renders. This is the
+    panda IP's "character anchor" — the same panda looks the same across
     every episode.
+
+    Recommended form: local path to a committed canonical jpg. The pipeline
+    base64-encodes it inline so no upload, no signing, no expiry.
     """
     body = {
         "model": model,
@@ -278,10 +319,13 @@ def gen_image(env: dict, prompt: str, model: str, out_path: str,
         "response_format": "url",
         "watermark": False,
     }
+    resolved_ref = None
     if reference_image:
-        body["reference_image"] = reference_image
+        resolved_ref = _resolve_reference(reference_image)
+        if resolved_ref:
+            body["reference_image"] = resolved_ref
     info(f"image: generating ({len(prompt)} chars prompt"
-         f"{', ref=YES' if reference_image else ''})")
+         f"{', ref=YES' if resolved_ref else ''})")
     code, err, body_b = curl("POST", f"{env['ARK_BASE_URL']}/images/generations",
                               {"Authorization": f"Bearer {env['ARK_API_KEY']}"},
                               body=body)
@@ -296,24 +340,24 @@ def gen_image(env: dict, prompt: str, model: str, out_path: str,
     return out_path, url
 
 
-def get_canonical_reference_url(env: dict) -> str | None:
-    """Return the 24h signed URL for the canonical panda image, or None
-    if no canonical reference is set up. The URL is cached on disk in
-    a .url file next to the .jpg. If missing, attempt to upload the
-    local jpg to a freshly-issued Seedream-generated URL.
+def get_canonical_reference_path(env: dict) -> str | None:
+    """Return the local path to the canonical panda image (preferred form:
+    zh-red / 朱红汉服). Returns None if PLUGIN_DIR is unset or the
+    reference dir doesn't ship with the plugin.
+
+    The returned path is fed to gen_image which base64-encodes it inline.
+    No upload, no signed URL, no 24h TTL.
     """
-    import re
     ref_dir = Path(env["PLUGIN_DIR"]) / "reference" if env.get("PLUGIN_DIR") else None
     if not ref_dir or not ref_dir.exists():
         return None
-    # Look for any canonical .jpg + .url pair
+    # Prefer 朱红汉服 (zh-red) as the default anchor; fall back to whatever
+    # canonical image exists.
+    preferred = ref_dir / "panda-canonical-zh-red.jpg"
+    if preferred.exists():
+        return str(preferred)
     for jpg in ref_dir.glob("panda-canonical-*.jpg"):
-        url_file = jpg.with_suffix(".url")
-        if url_file.exists():
-            url = url_file.read_text().strip()
-            # Quick validity check: must contain X-Tos-Expires
-            if "X-Tos-Expires" in url:
-                return url
+        return str(jpg)
     return None
 
 # ---- L2b: image-to-video --------------------------------------------------
@@ -649,11 +693,11 @@ def main():
     # 2. L2a: image for each video shot (parallel-friendly, but serial for simplicity)
     image_urls = {}  # shot_n -> (local_path, public_url)
     # Resolve reference image for character consistency
-    ref_url = args.reference_image
-    if not ref_url:
-        ref_url = get_canonical_reference_url(env)
-        if ref_url:
-            info(f"using canonical reference for character consistency: {ref_url[:80]}...")
+    ref = args.reference_image
+    if not ref:
+        ref = get_canonical_reference_path(env)
+        if ref:
+            info(f"using canonical reference (inline base64): {Path(ref).name}")
     for shot in shots:
         if not shot["has_video"]:
             continue
@@ -669,7 +713,7 @@ def main():
             prompt = (shot["kling_prompt"]
                       + ", 9:16 vertical composition")
             local, url = gen_image(env, prompt, args.image_model, str(img_path),
-                                   reference_image=ref_url)
+                                   reference_image=ref)
             url_cache.write_text(url)
             image_urls[n] = (local, url)
 
