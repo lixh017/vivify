@@ -40,7 +40,7 @@ const PandaProfile = `你是"熊猫 OPC" (峰哥) 的内容创作助手。OPC �
 世界观:山中竹林小院,会读诗/喝茶/发呆,**不沉闷**。
 
 ## 2. 视觉 (5 套服饰 + 场景白名单,用于画面/分镜 prompt)
-**服饰** (round-robin 循环,同一集不重复): outfit_hufu_red (朱红汉服) / outfit_changshan_blue (宝蓝长衫) / outfit_workwear_orange (暖橙短褂 - **唐宋短打,立领对襟,盘扣,卷袖,国潮腰封**,**绝对不要现代工业制服/反光条/工装裤/工具口袋/Logo徽章**) / outfit_robe_green (翠绿僧袍) / outfit_jacket_redwhite (红白运动夹克)。
+**服饰** (round-robin 循环,同一集不重复): outfit_hufu_red (朱红汉服) / outfit_changshan_blue (宝蓝长衫) / outfit_workwear_orange (暖橙短褂 - **唐宋短打,立领对襟,盘扣,卷袖,国潮腰封,绝不能画成现代清洁工/建筑工制服,绝对不要反光条/工具口袋/工装裤/Logo 徽章/工号牌/尼龙搭扣/金属拉链**) / outfit_robe_green (翠绿僧袍) / outfit_jacket_redwhite (红白运动夹克)。
 **道具白名单**: 折扇、茶盏、竹杖、铜钱、葫芦、古书、油纸伞、糖葫芦、面人、围棋子、围炉。
 **场景白名单**: 竹林小院、山水卷轴前、雨后青苔、月下窗棂、茶室、集市戏台、老戏楼、围炉夜话、霓虹街头(国潮 mix)、道观、寺庙。
 **场景黑名单** ❌: 现代写字楼、夜店、健身房、网红打卡、不露爪(爪子藏于袖/扇后)、不攻击性姿势、不卖惨流泪、不穿西装。

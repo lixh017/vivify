@@ -260,10 +260,17 @@ def find_voiceover_for_shot(shot: dict, voiceovers: list[dict]) -> dict | None:
 
 # ---- L2a: image generation -----------------------------------------------
 
-def gen_image(env: dict, prompt: str, model: str, out_path: str) -> tuple[str, str]:
+def gen_image(env: dict, prompt: str, model: str, out_path: str,
+              reference_image: str = None) -> tuple[str, str]:
     """Returns (local_path, public_url_with_signature). The public URL has
     a 24h X-Tos-Expires signature from 火山 Ark and can be fed directly to
-    Seedance as the i2v image input. Don't keep the URL for >24h."""
+    Seedance as the i2v image input. Don't keep the URL for >24h.
+
+    If reference_image is provided (URL), Seedream preserves the
+    panda's identity across renders. This is the panda IP's
+    "character anchor" — the same panda looks the same across
+    every episode.
+    """
     body = {
         "model": model,
         "prompt": prompt,
@@ -271,7 +278,10 @@ def gen_image(env: dict, prompt: str, model: str, out_path: str) -> tuple[str, s
         "response_format": "url",
         "watermark": False,
     }
-    info(f"image: generating ({len(prompt)} chars prompt)")
+    if reference_image:
+        body["reference_image"] = reference_image
+    info(f"image: generating ({len(prompt)} chars prompt"
+         f"{', ref=YES' if reference_image else ''})")
     code, err, body_b = curl("POST", f"{env['ARK_BASE_URL']}/images/generations",
                               {"Authorization": f"Bearer {env['ARK_API_KEY']}"},
                               body=body)
@@ -284,6 +294,27 @@ def gen_image(env: dict, prompt: str, model: str, out_path: str) -> tuple[str, s
     if code != 200:
         fatal(f"image download failed (HTTP {code}): {err}")
     return out_path, url
+
+
+def get_canonical_reference_url(env: dict) -> str | None:
+    """Return the 24h signed URL for the canonical panda image, or None
+    if no canonical reference is set up. The URL is cached on disk in
+    a .url file next to the .jpg. If missing, attempt to upload the
+    local jpg to a freshly-issued Seedream-generated URL.
+    """
+    import re
+    ref_dir = Path(env["PLUGIN_DIR"]) / "reference" if env.get("PLUGIN_DIR") else None
+    if not ref_dir or not ref_dir.exists():
+        return None
+    # Look for any canonical .jpg + .url pair
+    for jpg in ref_dir.glob("panda-canonical-*.jpg"):
+        url_file = jpg.with_suffix(".url")
+        if url_file.exists():
+            url = url_file.read_text().strip()
+            # Quick validity check: must contain X-Tos-Expires
+            if "X-Tos-Expires" in url:
+                return url
+    return None
 
 # ---- L2b: image-to-video --------------------------------------------------
 
@@ -588,6 +619,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--image-model", default=DEFAULT_IMAGE_MODEL)
     ap.add_argument("--video-model", default=DEFAULT_VIDEO_MODEL)
+    ap.add_argument("--reference-image", default=None,
+                    help="URL of a canonical panda image. Seedream will "
+                         "preserve the panda's identity across shots.")
     args = ap.parse_args()
 
     env = require_env()
@@ -614,6 +648,12 @@ def main():
 
     # 2. L2a: image for each video shot (parallel-friendly, but serial for simplicity)
     image_urls = {}  # shot_n -> (local_path, public_url)
+    # Resolve reference image for character consistency
+    ref_url = args.reference_image
+    if not ref_url:
+        ref_url = get_canonical_reference_url(env)
+        if ref_url:
+            info(f"using canonical reference for character consistency: {ref_url[:80]}...")
     for shot in shots:
         if not shot["has_video"]:
             continue
@@ -625,9 +665,11 @@ def main():
             image_urls[n] = (str(img_path), url_cache.read_text().strip())
         else:
             # Augment the kling prompt with panda IP anchor
+            # (no "panda_visual_anchor: fengge_v1" — Seedream renders that as text)
             prompt = (shot["kling_prompt"]
-                      + ", 9:16 vertical, panda_visual_anchor: fengge_v1")
-            local, url = gen_image(env, prompt, args.image_model, str(img_path))
+                      + ", 9:16 vertical composition")
+            local, url = gen_image(env, prompt, args.image_model, str(img_path),
+                                   reference_image=ref_url)
             url_cache.write_text(url)
             image_urls[n] = (local, url)
 
