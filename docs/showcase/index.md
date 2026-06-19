@@ -142,3 +142,26 @@ random 种子 + base 数字,重跑就行。Demo 是**完全可复现**的。
 - Step 6: 跨平台 adapt (脚本 → 抖音/小红书/B 站)
 - Step 7: 真实 LLM provider 的端到端 (需要真 API key)
 - Step 8: 多租户视角切换 (admin 看到所有 creator 的数据)
+
+---
+
+## 短视频作品: Panda IP 短剧 (reference image system)
+
+> **峰哥 / Fengge** 是 OPC Phase 1 的核心 IP。同只熊猫在 3 集里穿着 5 套不同服饰、出现在 4 个不同场景,
+> 但**身份一致**(圆脸、黑眼位置、耳朵、圆胖身材、眼神)。Identity 一致性由 Seedream `reference_image` 机制保证。
+
+### Episode #001 — 治愈 + 凌晨独处
+
+[Storyboard](panda-episode-001/STORYBOARD.md) · [Script](panda-episode-001/SCRIPT-douyin.md)
+
+### Episode #002 — 国潮 + 立春 (1.5-pro 重渲染)
+
+[Storyboard](panda-episode-002/STORYBOARD.md) · [Script](panda-episode-002/SCRIPT-douyin.md) · [RENDER/](panda-episode-002/RENDER/ep002-L3.mp4)
+
+### Episode #003 — 国潮 + 立夏 (4 shots, 验证 reference image system)
+
+[Storyboard](panda-episode-003/STORYBOARD.md) · [Script](panda-episode-003/SCRIPT-douyin.md) · [RENDER/](panda-episode-003/RENDER/ep003-L3.mp4)
+
+**验证结果**: 4 个镜头、4 套服饰、4 个场景,**identity 一致**。同只峰哥在 16s 内换 4 套衣服走 4 个地方,
+**身份不漂移**。
+
