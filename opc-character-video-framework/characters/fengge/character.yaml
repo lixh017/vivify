@@ -1,0 +1,221 @@
+# Character profile — loaded by render_episode.py and make_episode.sh
+#
+# To define your own character, copy this file, replace values, and
+# point --character-dir at the directory containing it.
+#
+# See _template/character.yaml for a minimal starting point.
+# See docs/adding-new-character.md for the full onboarding guide.
+
+character:
+  # Display name (Chinese)
+  name: "峰哥"
+  # Display name (English / Pinyin)
+  english_name: "Fengge"
+  # Species
+  species: "成年熊猫"
+  # Build proportions: 头身比 = head:body ratio (1:1.2 means head = body/1.2)
+  head_body_ratio: "1:1.2"
+  # Fur colors (RGB hex without #) — face/torso and extremities
+  fur_face: "F5F0E1"   # cream
+  fur_extremity: "1A1A1A"  # near-black
+  # Signature expression register
+  expression: "半阖眼 + 微微笑意,不直视镜头"
+
+  # Canonical reference images (Seedream reference_image for identity)
+  # Must be clean, neutral-pose jpgs (front or 3/4 view, no props,
+  # plain background). These preserve the character's identity across
+  # all generated shots.
+  canonical:
+    # Default anchor — used as the reference_image for every shot
+    primary: "canonical/panda-canonical-zh-red.jpg"
+    # Alternates (different outfits, same neutral pose) — useful as
+    # outfit swatches when reviewing the IP bible
+    alternates:
+      - "canonical/panda-canonical-blue-changsan.jpg"
+      - "canonical/panda-canonical-warm-orange.jpg"
+
+  # Outfit whitelist (5 default, round-robin per episode)
+  outfits:
+    - id: outfit_hufu_red
+      name: "朱红汉服"
+      color: "朱红 #C73E1D"
+      description: "vermilion red hanfu, wide-sleeved round-collar robe, jade pendant"
+      best_for: ["国潮"]
+      anti_patterns: "no exposed modern elements; mandarin collar, jade accessories"
+
+    - id: outfit_changshan_blue
+      name: "宝蓝长衫"
+      color: "宝蓝 #1F5FA8"
+      description: "royal blue changshan, mandarin collar, silver buttons, folded fan"
+      best_for: ["国潮", "哲学"]
+      anti_patterns: "no business suit; mandarin collar, traditional cut"
+
+    - id: outfit_workwear_orange
+      name: "暖橙短褂"
+      color: "暖橙 #E89B45"
+      description: "warm orange Tang-Song short jacket, mandarin collar, side-fastening buttons, rolled sleeves, 国潮 sash at waist"
+      best_for: ["治愈", "御宅"]
+      anti_patterns: "**NOT a modern cleaner uniform** — no reflective stripes, no utility pockets, no logo badges, no work number tags, no nylon velcro, no metal zippers; only 盘扣 (Chinese frog buttons) + cotton/linen fabric + 国潮 patterns"
+
+    - id: outfit_robe_green
+      name: "翠绿僧袍"
+      color: "翠绿 #3B8C5A"
+      description: "jade-green monk robe, wide sleeves, prayer beads, straw sandals"
+      best_for: ["哲学", "治愈"]
+      anti_patterns: "no cosplay costumes; traditional cut, simple"
+
+    - id: outfit_jacket_redwhite
+      name: "红白运动夹克"
+      color: "朱红 + 米白"
+      description: "vermilion + cream sports jacket, white tee underneath, sneakers"
+      best_for: ["御宅"]
+      anti_patterns: "no brand logos; simple athletic style"
+
+  # Scene whitelist (12 default scenes from IP bible)
+  scenes:
+    - id: bamboo_courtyard
+      name: "竹林小院"
+      mood: "warm, intimate"
+    - id: scroll_painting
+      name: "山水卷轴前"
+      mood: "classical, contemplative"
+    - id: moss_after_rain
+      name: "雨后青苔"
+      mood: "fresh, quiet"
+    - id: moonlit_window
+      name: "月下窗棂"
+      mood: "nocturnal, intimate"
+    - id: tea_room
+      name: "茶室"
+      mood: "grounded, focused"
+    - id: market_stage
+      name: "集市戏台"
+      mood: "lively, festive"
+    - id: old_theater
+      name: "老戏楼"
+      mood: "ornate, nostalgic"
+    - id: fireside_chat
+      name: "围炉夜话"
+      mood: "cozy, intimate"
+    - id: neon_street
+      name: "霓虹街头"
+      mood: "modern + 国潮 mix"
+    - id: taoist_temple
+      name: "道观"
+      mood: "spiritual, austere"
+    - id: buddhist_temple
+      name: "寺庙"
+      mood: "spiritual, calm"
+    - id: stage
+      name: "戏台"
+      mood: "performative"
+
+  # Forbidden scenes / props / poses
+  forbidden:
+    scenes:
+      - "现代写字楼"
+      - "夜店"
+      - "健身房"
+      - "网红打卡点"
+    poses:
+      - "露爪"  # claws always hidden under sleeves or fan
+      - "攻击性姿势"
+      - "卖惨流泪"
+      - "穿西装"
+
+  # Prop whitelist (only from this list)
+  props:
+    - 折扇
+    - 茶盏
+    - 山竹杖
+    - 铜钱
+    - 葫芦
+    - 古书
+    - 围棋子
+    - 围炉
+    - 算盘
+    - 油纸伞
+    - 面人
+    - 糖葫芦
+    - 樱花
+    - 红叶
+    - 毛绒斗篷
+
+  # 4-tone voice matrix
+  # tone → TTS profile (海螺 MiniMax speech-02-hd)
+  # emotion values: neutral | happy | sad | angry | fearful | disgust | surprised
+  voice_profiles:
+    治愈:
+      voice_id: "male-qn-jingying"
+      speed: 0.78
+      pitch: -2
+      emotion: "neutral"
+      vol: 1.0
+      guide: "治愈调: 慢、暖、留白。句子要短,带'嘿'/'啊'/'嗯...'的停顿。画面给暖光 + 茶烟 + 雨声。结尾允许悬而未决,但要给观众一个可以'靠'着的具体物(茶盏/毛毯/雨声)。"
+    御宅:
+      voice_id: "male-qn-jingying"
+      speed: 0.85
+      pitch: -1
+      emotion: "neutral"
+      vol: 0.95
+      guide: "御宅调: 内向、独处、书斋感。'我也不爱出门'/'那就一起待着'。画面给室内小景 + 毛绒毯 + 深夜台灯。少修饰,多停顿。"
+    哲学:
+      voice_id: "male-qn-qingse"
+      speed: 0.82
+      pitch: -3
+      emotion: "sad"
+      vol: 1.0
+      guide: "哲学调: 反鸡汤、存在主义。'但真的是这样吗?' 提问不答。画面给月下 + 山水 + 远景。多用问句,少给结论。"
+    国潮:
+      voice_id: "male-qn-jingying"
+      speed: 0.92
+      pitch: 0
+      emotion: "neutral"
+      vol: 1.05
+      guide: "国潮调: 古诗、传统美学、节气时令。'古人云'/'你看那山'。画面给折扇 + 卷轴 + 红叶 + 樱花。可引《庄子》/《诗经》/唐诗,1 句即可。"
+
+  # Style anchor — appended to every kling_prompt to lock visual register
+  style_anchor: |
+    consistent 2D 国潮 illustration style,
+    soft watercolor wash + ink accents,
+    vibrant saturated palette (vermilion + cream + green + royal blue),
+    NOT photorealistic, NOT 3D rendered toy aesthetic,
+    NOT muted colors, NOT dark/gloomy tones
+
+  # 7 hook formulas for opening lines
+  hook_formulas:
+    - name: "三问开场"
+      formula: '"你有没有想过——X 到底是什么?Y 真的重要吗?凭什么 Z?"'
+    - name: "反常识开场"
+      formula: '"X 的人都错了,真正应该 Y"'
+    - name: "留白钩子"
+      formula: '"[pause 2s] 今天不聊 X,聊 Y"'
+    - name: "故事钩子"
+      formula: '"昨天发生了一件事,让我想了 3 天"'
+    - name: "画面钩子"
+      formula: "直接给一个具体画面,旁白 1 句话"
+    - name: "引用钩子"
+      formula: "用经典文本/古文开场,1 句即可"
+    - name: "数字钩子"
+      formula: '"我花了 N 天/M 块钱,发现 XX"'
+
+  # Voice rules (sentence style + banned words)
+  voice_rules:
+    sentence_style:
+      - "短句 ≤15 字"
+      - "多用反问('你说,这是不是有点奇怪?')"
+      - "大量留白(段间停顿 1-2 秒)"
+      - "自言自语感('嗯……我今天想了想……')"
+    signature_words:
+      - "嘿"
+      - "啊"
+      - "得"
+      - "呗"
+      - "走着"
+      - "来一口"
+    banned_words:
+      - "加油"
+      - "失败是成功之母"
+      - "你一定可以"
+      - "唉"  # 国潮不要叹气
+      - "愿你被世界温柔以待"  # 不要说教式结尾

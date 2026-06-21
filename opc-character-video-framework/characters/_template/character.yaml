@@ -1,0 +1,79 @@
+# character.yaml — minimal template
+#
+# Replace the values below with your own IP character.
+# Then point --character-dir at this directory and run the pipeline.
+#
+# See characters/fengge/character.yaml for a full reference
+# (5 outfits, 12 scenes, 4-tone voice profiles, etc.).
+# See docs/adding-new-character.md for the onboarding walkthrough.
+
+character:
+  name: "<Your character name (Chinese)>"
+  english_name: "<English / Pinyin>"
+  species: "<species>"
+  head_body_ratio: "1:1.2"
+  fur_face: "<hex without #>"          # face / torso color
+  fur_extremity: "<hex without #>"     # ears / eye patches / limbs
+  expression: "<default expression register>"
+
+  canonical:
+    # Drop your clean, neutral-pose reference image here as primary.jpg
+    primary: "canonical/primary.jpg"
+    alternates:
+      - "canonical/alternate-1.jpg"
+      - "canonical/alternate-2.jpg"
+
+  outfits:
+    - id: outfit_default_1
+      name: "<outfit name 1>"
+      color: "<color>"
+      description: "<brief description>"
+      best_for: ["<tone>"]
+      anti_patterns: "<what to avoid>"
+
+  scenes:
+    - id: scene_default_1
+      name: "<scene name 1>"
+      mood: "<mood>"
+    - id: scene_default_2
+      name: "<scene name 2>"
+      mood: "<mood>"
+
+  forbidden:
+    scenes: ["<forbidden scenes>"]
+    poses:  ["露爪", "攻击性姿势"]
+
+  props:
+    - <prop 1>
+    - <prop 2>
+
+  voice_profiles:
+    <your_tone_1>:
+      voice_id: "<TTS voice id>"
+      speed: 0.85
+      pitch: 0
+      emotion: "neutral"
+      vol: 1.0
+      guide: "<one-line voice guide>"
+    <your_tone_2>:
+      voice_id: "<TTS voice id>"
+      speed: 0.85
+      pitch: 0
+      emotion: "neutral"
+      vol: 1.0
+      guide: "<one-line voice guide>"
+
+  style_anchor: |
+    <your visual style — describe in 2-4 lines what every shot should look like>
+
+  hook_formulas:
+    - name: "your_hook_name"
+      formula: '<how to write this kind of opening>'
+
+  voice_rules:
+    sentence_style:
+      - "<rule 1>"
+    signature_words:
+      - "<signature word 1>"
+    banned_words:
+      - "<banned 1>"
