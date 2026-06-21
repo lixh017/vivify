@@ -606,81 +606,173 @@ def ff_trim(env: dict, in_path: str, target_dur: int, out_path: str,
         fatal(f"ffmpeg trim failed: {r.stderr[-500:]}")
     return out_path
 
-def ff_synth_bgm(env: dict, out_path: str, dur_sec: int) -> str:
-    """Synthesize contemplative BGM as a raw 44.1kHz stereo WAV.
+def ff_synth_bgm(env: dict, out_path: str, dur_sec: int, tone: str = None) -> str:
+    """Synthesize per-tone BGM as a 44.1kHz stereo WAV.
 
-    Recipe (cleaner, less noisy than v1):
-      - 110 Hz sine drone (A2 pedal tone) at -30 dB
-      - 60 BPM pentatonic arpeggio (A3 / C4 / D4 / E4 / G4) at -8 dB,
-        with longer attack/release to avoid clicky transients
-      - Pink-ish rain (filtered white noise, 1 kHz LPF) at -22 dB
-        (was 0.12 amp → 0.04 amp to remove the 杂音)
-      - 4 s fade in + 4 s fade out (was 3 s)
+    v2 BGM: per-tone profiles mimic Chinese instrument textures using
+    pure numpy synthesis. Each tone gets a distinct musical identity:
+
+      - 治愈: guqin-like plucking, low register, sparse, long release
+      - 御宅: single sustained drone + soft bell-like plucks
+      - 哲学: deep drone + sparse high sparse notes
+      - 国潮: dizi-like flute melody + plucked accompaniment
+
+    Recipe per tone:
+      - Drone: low sine (root + fifth), slight detuning for warmth
+      - Melody: pentatonic scale (do re mi sol la), ADSR with long release
+      - Texture: pink noise LPF (rain / breath), much softer than v1
     """
     import wave
-    import struct
-    import random
-    import math
+    import numpy as np
 
     sr = 44100
-    n_samples = sr * dur_sec
-    rng = random.Random(42)  # deterministic noise
+    if tone is None:
+        tone = env.get("TONE", "治愈")
 
-    # White noise → 1 kHz lowpass (pink-ish, much softer than brown noise)
-    white = [rng.uniform(-1.0, 1.0) for _ in range(n_samples)]
-    rain_lp = [0.0] * n_samples
-    rc = 1.0 / (2 * math.pi * 1000)
-    dt = 1.0 / sr
-    alpha = dt / (rc + dt)
+    rng = np.random.default_rng(42)
+    n = sr * dur_sec
+    t = np.arange(n) / sr
+
+    # Per-tone profile
+    PROFILES = {
+        "治愈": {
+            "drone": [(110.0, 0.05), (164.81, 0.03)],   # A2 + E3 (perfect fifth)
+            "bpm": 50,
+            "pluck_pattern": [(0.0, 220.00), (1.2, 261.63), (2.4, 293.66), (3.6, 329.63),
+                              (4.8, 392.00), (6.0, 329.63), (7.2, 293.66), (8.4, 261.63)],
+            "pluck_amp": 0.10,
+            "pluck_release_ms": 1800,
+            "pluck_harmonics": [1.0, 0.4, 0.15, 0.05],   # Plucked string harmonics
+            "texture_amp": 0.025,
+            "texture_lpf_hz": 600,
+            "bell_layer": False,
+        },
+        "御宅": {
+            "drone": [(98.0, 0.06), (130.81, 0.025)],    # G2 + C3
+            "bpm": 40,
+            "pluck_pattern": [(0.0, 196.00), (3.0, 220.00), (6.0, 261.63),
+                              (9.0, 196.00)],
+            "pluck_amp": 0.07,
+            "pluck_release_ms": 2500,
+            "pluck_harmonics": [1.0, 0.3, 0.1],
+            "texture_amp": 0.02,
+            "texture_lpf_hz": 400,
+            "bell_layer": True,
+            "bell_freqs": [880.0, 1108.7, 1318.5],        # High harmonics for bell
+        },
+        "哲学": {
+            "drone": [(73.42, 0.06), (110.0, 0.04)],     # D2 + A2 (low fifth)
+            "bpm": 30,
+            "pluck_pattern": [(0.0, 146.83), (4.0, 174.61), (8.0, 220.00),
+                              (12.0, 174.61), (16.0, 146.83)],
+            "pluck_amp": 0.05,
+            "pluck_release_ms": 3500,    # very long release
+            "pluck_harmonics": [1.0, 0.2, 0.05],
+            "texture_amp": 0.015,
+            "texture_lpf_hz": 300,
+            "bell_layer": False,
+        },
+        "国潮": {
+            "drone": [(146.83, 0.04), (220.00, 0.025)],  # D3 + A3
+            "bpm": 70,
+            "pluck_pattern": [(0.0, 293.66), (0.86, 329.63), (1.71, 392.00),
+                              (2.57, 440.00), (3.43, 392.00), (4.29, 329.63),
+                              (5.14, 293.66), (6.0, 329.63), (6.86, 261.63),
+                              (7.71, 293.66), (8.57, 329.63), (9.43, 392.00)],
+            "pluck_amp": 0.08,
+            "pluck_release_ms": 1200,
+            "pluck_harmonics": [1.0, 0.5, 0.2, 0.08, 0.03],   # flute-like richer harmonics
+            "texture_amp": 0.02,
+            "texture_lpf_hz": 800,
+            "bell_layer": False,
+        },
+    }
+    profile = PROFILES.get(tone, PROFILES["治愈"])
+
+    # === Drone ===
+    drone = np.zeros(n)
+    for freq, amp in profile["drone"]:
+        drone += amp * np.sin(2 * np.pi * freq * t)
+        # Slight detuning chorus for warmth
+        drone += amp * 0.15 * np.sin(2 * np.pi * freq * 1.003 * t)
+
+    # === Plucked melody (pentatonic) with harmonic stack ===
+    pluck = np.zeros(n)
+    beat_dur = 60.0 / profile["bpm"]
+    for cycle in range(int(dur_sec / beat_dur) + 2):
+        for offset, freq in profile["pluck_pattern"]:
+            t_start = cycle * beat_dur * len(profile["pluck_pattern"]) + offset
+            t_end = t_start + profile["pluck_release_ms"] / 1000.0
+            mask = (t >= t_start) & (t < t_end)
+            if not mask.any():
+                continue
+            t_note = t[mask] - t_start
+            # ADSR with long release
+            attack = 0.015  # 15ms attack (pluck)
+            release = profile["pluck_release_ms"] / 1000.0
+            env = np.where(t_note < attack,
+                           t_note / attack,
+                           np.exp(-3.5 * (t_note - attack) / release))
+            # Sum harmonics for plucked-string / flute-like timbre
+            sample = np.zeros_like(t_note)
+            for i, h_amp in enumerate(profile["pluck_harmonics"]):
+                sample += h_amp * np.sin(2 * np.pi * freq * (i + 1) * t_note)
+            pluck[mask] += profile["pluck_amp"] * env * sample
+
+    # === Bell layer (御宅 only) ===
+    bell = np.zeros(n)
+    if profile.get("bell_layer"):
+        # Random sparse high bell hits
+        bell_times = rng.choice(n, size=int(dur_sec / 3), replace=False)
+        for bt in bell_times:
+            for f in profile["bell_freqs"]:
+                t_bell_end = min(bt + sr * 2, n)
+                t_note = np.arange(t_bell_end - bt) / sr
+                env = np.exp(-1.5 * t_note)
+                bell[bt:t_bell_end] += 0.02 * env * np.sin(2 * np.pi * f * t_note)
+
+    # === Texture (filtered pink noise) ===
+    white = rng.uniform(-1.0, 1.0, n)
+    # Simple 1st-order LPF
+    rc = 1.0 / (2 * np.pi * profile["texture_lpf_hz"])
+    alpha = (1.0 / sr) / (rc + (1.0 / sr))
+    texture = np.zeros(n)
     prev = 0.0
-    for i in range(n_samples):
+    for i in range(n):
         prev = prev + alpha * (white[i] - prev)
-        rain_lp[i] = prev
+        texture[i] = prev
+    texture *= profile["texture_amp"]
 
-    # Build per-sample audio: drone + arpeggio + rain (much quieter rain)
-    notes = [(0.0, 220.00), (1.0, 261.63), (2.0, 329.63), (3.0, 392.00), (4.0, 440.00)]
-    audio_l = [0.0] * n_samples
-    audio_r = [0.0] * n_samples
-    fade_dur = 4.0  # was 3, longer for smoothness
-    for i in range(n_samples):
-        t = i / sr
-        # 110 Hz drone (sine, very quiet)
-        drone = 0.025 * math.sin(2 * math.pi * 110 * t)
-        # Arpeggio: 1 note per beat at 60 BPM, with attack + release envelope
-        arp = 0.0
-        for start, freq in notes:
-            beat_t = t - start
-            if 0 <= beat_t < 0.95:
-                # ADSR: 50ms attack, 850ms release
-                if beat_t < 0.05:
-                    env = beat_t / 0.05  # attack
-                else:
-                    env = math.exp(-1.5 * (beat_t - 0.05))  # release
-                arp = max(arp, 0.12 * env * math.sin(2 * math.pi * freq * beat_t))
-        # Rain (much softer than v1: 0.04 vs 0.12)
-        rain = 0.04 * rain_lp[i]
-        sample = drone + arp + rain
-        # Fade in / out
-        if t < fade_dur:
-            sample *= t / fade_dur
-        if t > dur_sec - fade_dur:
-            sample *= (dur_sec - t) / fade_dur
-        # Soft clip
-        sample = math.tanh(sample * 1.5) * 0.7
-        audio_l[i] = sample
-        audio_r[i] = math.tanh((sample + 0.02 * rain_lp[i]) * 1.5) * 0.7
+    # === Sum and fade ===
+    audio_l = drone + pluck + bell + texture
+    audio_r = drone * 0.95 + pluck * 0.95 + bell + texture  # slight stereo offset
 
-    # Write 16-bit stereo WAV
-    with wave.open(out_path, "wb") as wf:
-        wf.setnchannels(2)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        interleaved = b"".join(
-            struct.pack("<hh", int(audio_l[i] * 32767), int(audio_r[i] * 32767))
-            for i in range(n_samples)
-        )
-        wf.writeframes(interleaved)
+    # 4s fade in / out
+    fade = int(sr * 4)
+    audio_l[:fade] *= np.linspace(0, 1, fade)
+    audio_l[-fade:] *= np.linspace(1, 0, fade)
+    audio_r[:fade] *= np.linspace(0, 1, fade)
+    audio_r[-fade:] *= np.linspace(1, 0, fade)
+
+    # Normalize to -6 dBFS
+    peak = max(np.abs(audio_l).max(), np.abs(audio_r).max())
+    if peak > 0:
+        audio_l *= 0.5 / peak
+        audio_r *= 0.5 / peak
+
+    # Write WAV (16-bit PCM stereo)
+    with wave.open(out_path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        # interleave L/R as int16
+        interleaved = np.empty(n * 2, dtype=np.int16)
+        interleaved[0::2] = (audio_l * 32767).astype(np.int16)
+        interleaved[1::2] = (audio_r * 32767).astype(np.int16)
+        w.writeframes(interleaved.tobytes())
+    info(f"BGM: {tone} profile, {dur_sec}s, 16-bit stereo")
     return out_path
+
 
 def ff_phone_comments(env: dict, out_path: str, dur_sec: int) -> str:
     """Render a 抖音 phone-screen mockup with scrolling comments.
@@ -785,6 +877,8 @@ def main():
                          "Defaults to the slug.")
     ap.add_argument("--next-episode", default="下集预告",
                     help="End-card text shown at the closing (e.g. '下集:冬至')")
+    ap.add_argument("--qa-skip", action="store_true",
+                    help="Skip QA gate even if shots fail checks")
     args = ap.parse_args()
     if not args.title:
         slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
@@ -939,10 +1033,11 @@ def main():
                            check=True, capture_output=True)
         voiceover_delays.append((vo["start_sec"] * 1000, str(wav_path)))
 
-    # 6. L3b: BGM
-    info("synthesizing BGM")
+    # 6. L3b: BGM (per-tone)
+    info(f"synthesizing BGM (tone={args.voice})")
     bgm_path = str(final_dir / "bgm.wav")
-    ff_synth_bgm(env, bgm_path, args.target_dur)
+    env["TONE"] = args.voice
+    ff_synth_bgm(env, bgm_path, args.target_dur, tone=args.voice)
 
     # 7. L3c: phone comments overlay (replace any 'phone' shot)
     # Find the shot whose title contains '评论'
@@ -1000,6 +1095,28 @@ def main():
     sub_video = str(final_dir / "video-sub.mp4")
     info(f"applying {len(subtitle_specs)} subtitle overlays")
     ff_apply_subtitles(env, full_concat_video, sub_video, subtitle_specs)
+
+    # 9.5. QA gate — heuristic checks on each generated shot image
+    info("QA gate: checking generated shots")
+    try:
+        from qa_gate import check_image
+        qa_passed = 0
+        qa_failed = 0
+        for shot in shots:
+            n = shot["n"]
+            shot_img = img_dir / f"shot-{n:02d}.jpg"
+            if shot_img.exists():
+                ok, msg = check_image(str(shot_img))
+                if ok:
+                    qa_passed += 1
+                else:
+                    qa_failed += 1
+                    warn(f"QA: {msg}")
+        info(f"QA: {qa_passed} passed, {qa_failed} failed")
+        if qa_failed > 0 and not args.qa_skip:
+            warn(f"{qa_failed} shot(s) failed QA — review before publishing")
+    except ImportError:
+        warn("qa_gate module not available, skipping")
 
     # 10. L3f: mux final video + audio
     out_arg = Path(args.out)

@@ -174,13 +174,20 @@ character:
       vol: 1.05
       guide: "国潮调: 古诗、传统美学、节气时令。'古人云'/'你看那山'。画面给折扇 + 卷轴 + 红叶 + 樱花。可引《庄子》/《诗经》/唐诗,1 句即可。"
 
-  # Style anchor — appended to every kling_prompt to lock visual register
+  # Style anchor — appended to every kling_prompt to lock visual register.
+  # Strong positive anchors FIRST (so Seedream picks them up), then strong
+  # negative anchors at the end (Seedream weights later tokens less, so
+  # the negative anchors need to be unambiguous and aggressive).
   style_anchor: |
-    consistent 2D 国潮 illustration style,
-    soft watercolor wash + ink accents,
-    vibrant saturated palette (vermilion + cream + green + royal blue),
-    NOT photorealistic, NOT 3D rendered toy aesthetic,
-    NOT muted colors, NOT dark/gloomy tones
+    2D flat illustration, gouache paint, paper texture,
+    cel-shaded (no gradient lighting, no soft 3D shadows),
+    simplified shapes, anime-influenced lineart,
+    brush stroke ink outlines, children's book illustration style,
+    watercolor wash + ink accents,
+    vibrant saturated palette (vermilion + cream + jade green + royal blue),
+    ALWAYS 2D FLAT NEVER 3D NEVER PHOTOREALISTIC,
+    NEVER PIXAR NEVER DISNEY NEVER CG RENDERED TOY,
+    NEVER BLURRY NEVER DARK NEVER MUTED DESATURATED
 
   # 7 hook formulas for opening lines
   hook_formulas:
