@@ -235,6 +235,13 @@ def parse_script(path: str) -> list[dict]:
         start = int(sm) * 60 + int(ss)
         end = int(em) * 60 + int(es)
         block = m.group(0)
+        # Strip everything from "---" onward (meta / footer sections
+        # that come after the voiceover blocks). The footer mentions
+        # "旁白" again in summary stats, which would otherwise pollute
+        # the count filter below.
+        footer_idx = block.find("\n---\n")
+        if footer_idx >= 0:
+            block = block[:footer_idx]
         # Skip meta / reference blocks (the "## 关键情绪锚点" section uses
         # bold **旁白**: as a column header, not a real voiceover line).
         # Real voiceover lines are inside a [mm:ss-mm:ss] block in the
@@ -265,7 +272,7 @@ def parse_script(path: str) -> list[dict]:
                     break
         # Strip trailing punctuation/whitespace and outer quotes
         vo = re.sub(r"[，,。.\s]+$", "", vo)
-        vo = vo.strip("\"'「」『』")
+        vo = vo.strip("\"'「」『`````").strip()
         if vo:
             out.append({
                 "start_sec": start,
@@ -275,11 +282,25 @@ def parse_script(path: str) -> list[dict]:
     return out
 
 def find_voiceover_for_shot(shot: dict, voiceovers: list[dict]) -> dict | None:
-    """Return the voiceover that overlaps the shot's start_sec, or None."""
+    """Return the voiceover that best matches the shot.
+
+    A shot's voiceover is the one whose start_sec is closest to the
+    shot's start_sec. Earlier versions returned the first overlap,
+    which gave wrong matches when multiple voiceovers overlapped (e.g.
+    shot 3 at start=8 wrongly picked vo at start=3 instead of vo at
+    start=8 because both overlapped shot 3's window).
+    """
+    if not voiceovers:
+        return None
+    # Closest start_sec within a 1s tolerance
+    best = None
+    best_delta = 999.0
     for vo in voiceovers:
-        if vo["start_sec"] <= shot["start_sec"] + 0.5 and vo["end_sec"] >= shot["start_sec"] - 0.5:
-            return vo
-    return None
+        delta = abs(vo["start_sec"] - shot["start_sec"])
+        if delta <= 1.0 and delta < best_delta:
+            best = vo
+            best_delta = delta
+    return best
 
 # ---- L2a: image generation -----------------------------------------------
 
@@ -479,6 +500,62 @@ def ff_concat(env: dict, list_file: str, out_path: str) -> str:
     cmd = [ff, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
            "-pix_fmt", "yuv420p", "-r", "24", "-an", out_path]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        fatal(f"ffmpeg concat failed: {r.stderr[-500:]}")
+    return out_path
+
+
+def ff_apply_subtitles(env: dict, in_path: str, out_path: str,
+                       subtitle_specs: list[tuple[float, float, str]]) -> str:
+    """Overlay CJK subtitles on a video using ffmpeg drawtext.
+
+    Each spec is (start_sec, end_sec, text). The text is shown only
+    between start and end. Multiple drawtext filters are chained.
+
+    Uses WQY Zen Hei (the only CJK font available in the openclaw ffmpeg
+    environment) — without it ffmpeg falls back to DejaVu Sans and
+    Chinese shows as tofu boxes (□□□).
+    """
+    if not subtitle_specs:
+        # No subtitles, just re-encode in place to keep format consistent
+        ff = env["FFMPEG"]
+        subprocess.run([ff, "-y", "-i", in_path, "-c:v", "libx264",
+                        "-preset", "medium", "-crf", "23",
+                        "-pix_fmt", "yuv420p", "-r", "24", "-an", out_path],
+                       capture_output=True, text=True)
+        return out_path
+
+    ff = env["FFMPEG"]
+    font = "fontfile=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+    vf_parts = []
+    for start, end, text in subtitle_specs:
+        # Escape single quotes, colons, percent signs for ffmpeg drawtext
+        safe = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
+        # Wrap to 2 lines by inserting a newline at the midpoint if long
+        if len(safe) > 14:
+            mid = len(safe) // 2
+            # Find a natural break (space, comma)
+            for j in range(mid - 2, mid + 4):
+                if j < len(safe) and safe[j] in " ,。":
+                    safe = safe[:j + 1] + "\\n" + safe[j + 1:]
+                    break
+            else:
+                safe = safe[:mid] + "\\n" + safe[mid:]
+        vf_parts.append(
+            f"drawtext=text='{safe}':{font}:"
+            f"fontsize=44:fontcolor=white:borderw=4:bordercolor=black:"
+            f"x=(w-text_w)/2:y=h-th-180:"
+            f"enable='between(t,{start:.2f},{end:.2f})'"
+        )
+    vf = ",".join(vf_parts)
+    cmd = [ff, "-y", "-i", in_path, "-vf", vf,
+           "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+           "-pix_fmt", "yuv420p", "-r", "24", "-an", out_path]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        fatal(f"subtitle overlay failed: {r.stderr[-500:]}")
+    return out_path
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         fatal(f"ffmpeg concat failed: {r.stderr[-500:]}")
@@ -687,7 +764,14 @@ def main():
     ap.add_argument("--reference-image", default=None,
                     help="URL of a canonical panda image. Seedream will "
                          "preserve the panda's identity across shots.")
+    ap.add_argument("--title", default=None,
+                    help="Episode title shown on the opening card. "
+                         "Defaults to the slug.")
+    ap.add_argument("--next-episode", default="下集预告",
+                    help="End-card text shown at the closing (e.g. '下集:冬至')")
     args = ap.parse_args()
+    if not args.title:
+        args.title = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "峰哥短剧"
 
     env = require_env()
     info(f"voice={args.voice} platform={args.platform} target={args.target_dur}s")
@@ -840,17 +924,48 @@ def main():
         ff_mix_audio(env, bgm_path, voiceover_delays, mixed_audio, args.target_dur)
     else:
         mixed_audio = bgm_path  # BGM only
-    # If --out is a directory (or doesn't end in .mp4), write the final
-    # mp4 inside it as epXXX-L3.mp4. Otherwise treat --out as a file path.
+
+    # 9. L3e: content craft layer — title card + subtitle overlay + end card
+    # This is what turns a "render" into a "usable 抖音 short video".
+    title_dur = 1.5
+    end_dur = 1.5
+    title_text = f"{args.title}\n\n峰哥 · 短剧"
+    end_text = f"{args.next_episode}\n\n关注峰哥 看下一集"
+
+    title_seg = seg_dir / "00-title.mp4"
+    ff_text_card(env, title_text, title_dur, str(title_seg))
+    end_seg = seg_dir / "99-end.mp4"
+    ff_text_card(env, end_text, end_dur, str(end_seg))
+
+    # Re-concat with title + end wrapping the shots
+    full_segments = [str(title_seg)] + segment_paths + [str(end_seg)]
+    full_concat_list = render_dir / "concat-full.txt"
+    full_concat_list.write_text("\n".join(f"file '{p}'" for p in full_segments) + "\n")
+    full_concat_video = str(final_dir / "video-full.mp4")
+    ff_concat(env, str(full_concat_list), full_concat_video)
+
+    # Apply subtitle overlay synced to each voiceover (offset by title card)
+    subtitle_specs = []
+    for shot in shots:
+        vo = find_voiceover_for_shot(shot, voiceovers)
+        if not vo:
+            continue
+        sub_start = title_dur + shot["start_sec"]
+        sub_end = title_dur + shot["end_sec"]
+        subtitle_specs.append((sub_start, sub_end, vo["text"]))
+    sub_video = str(final_dir / "video-sub.mp4")
+    info(f"applying {len(subtitle_specs)} subtitle overlays")
+    ff_apply_subtitles(env, full_concat_video, sub_video, subtitle_specs)
+
+    # 10. L3f: mux final video + audio
     out_arg = Path(args.out)
     if out_arg.suffix.lower() != ".mp4":
         out_arg.mkdir(parents=True, exist_ok=True)
-        # Use the storyboard file name as the slug, fallback to ep-L3
         slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
         out_path = str(out_arg / f"{slug}-L3.mp4")
     else:
         out_path = str(out_arg)
-    ff_mux_final(env, concat_video, mixed_audio, out_path)
+    ff_mux_final(env, sub_video, mixed_audio, out_path)
 
     info(f"✅ DONE: {out_path}")
 
