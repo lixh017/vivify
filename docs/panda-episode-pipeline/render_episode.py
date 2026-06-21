@@ -47,6 +47,16 @@ DEFAULT_TTS_VOICE = "male-qn-jingying"
 DEFAULT_TTS_SPEED = 0.82
 DEFAULT_TTS_PITCH = -1
 
+# Per-tone TTS voice profile. Each tone gets a distinct audible register so
+# the audio matches the visual register. See docs/panda-episode-pipeline/README.md.
+# emotion values per MiniMax speech-02-hd: neutral | happy | sad | angry | fearful | disgust | surprised
+TONE_VOICE_PROFILE = {
+    "治愈": {"voice_id": "male-qn-jingying", "speed": 0.78, "pitch": -2, "emotion": "neutral", "vol": 1.0},
+    "御宅": {"voice_id": "male-qn-jingying", "speed": 0.85, "pitch": -1, "emotion": "neutral", "vol": 0.95},
+    "哲学": {"voice_id": "male-qn-qingse",   "speed": 0.82, "pitch": -3, "emotion": "sad",     "vol": 1.0},
+    "国潮": {"voice_id": "male-qn-jingying", "speed": 0.92, "pitch": 0,  "emotion": "neutral", "vol": 1.05},
+}
+
 # ---- tiny logger ----------------------------------------------------------
 
 def info(msg: str) -> None:
@@ -403,15 +413,26 @@ def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
 
 # ---- L3a: TTS voiceover ---------------------------------------------------
 
-def gen_tts(env: dict, text: str, out_path: str) -> str:
+def gen_tts(env: dict, text: str, out_path: str, tone: str = None) -> str:
+    """Generate TTS audio. If tone is provided, use the per-tone voice
+    profile (different voice_id / speed / pitch / emotion per 4-tone
+    matrix) so the audio matches the visual register."""
+    profile = TONE_VOICE_PROFILE.get(tone or "", {
+        "voice_id": DEFAULT_TTS_VOICE,
+        "speed": DEFAULT_TTS_SPEED,
+        "pitch": DEFAULT_TTS_PITCH,
+        "emotion": "neutral",
+        "vol": 1.0,
+    })
     body = {
         "model": DEFAULT_TTS_MODEL,
         "text": text,
         "voice_setting": {
-            "voice_id": DEFAULT_TTS_VOICE,
-            "speed": DEFAULT_TTS_SPEED,
-            "vol": 1.0,
-            "pitch": DEFAULT_TTS_PITCH,
+            "voice_id": profile["voice_id"],
+            "speed": profile["speed"],
+            "vol": profile["vol"],
+            "pitch": profile["pitch"],
+            "emotion": profile["emotion"],
         },
         "audio_setting": {
             "sample_rate": 24000,
@@ -708,10 +729,17 @@ def main():
             info(f"image {n}: cached at {img_path}")
             image_urls[n] = (str(img_path), url_cache.read_text().strip())
         else:
-            # Augment the kling prompt with panda IP anchor
+            # Augment the kling prompt with panda IP anchor + locked visual style.
             # (no "panda_visual_anchor: fengge_v1" — Seedream renders that as text)
+            # Style anchor keeps shots in the same register (2D 国潮 illustration,
+            # not 3D render / not photoreal) across all 4 episodes.
             prompt = (shot["kling_prompt"]
-                      + ", 9:16 vertical composition")
+                      + ", 9:16 vertical composition"
+                      + ", consistent 2D 国潮 illustration style"
+                      + ", soft watercolor wash + ink accents"
+                      + ", vibrant saturated palette (vermilion + cream + green + royal blue)"
+                      + ", NOT photorealistic, NOT 3D rendered toy aesthetic"
+                      + ", NOT muted colors, NOT dark/gloomy tones")
             local, url = gen_image(env, prompt, args.image_model, str(img_path),
                                    reference_image=ref)
             url_cache.write_text(url)
@@ -773,7 +801,7 @@ def main():
         n = shot["n"]
         mp3_path = vo_dir / f"vo-{n:02d}.mp3"
         if not mp3_path.exists():
-            gen_tts(env, vo["text"], str(mp3_path))
+            gen_tts(env, vo["text"], str(mp3_path), tone=args.voice)
         # Convert to WAV for cleaner mixing
         wav_path = vo_dir / f"vo-{n:02d}.wav"
         if not wav_path.exists():
