@@ -812,9 +812,19 @@ def main():
         ff_mix_audio(env, bgm_path, voiceover_delays, mixed_audio, args.target_dur)
     else:
         mixed_audio = bgm_path  # BGM only
-    ff_mux_final(env, concat_video, mixed_audio, args.out)
+    # If --out is a directory (or doesn't end in .mp4), write the final
+    # mp4 inside it as epXXX-L3.mp4. Otherwise treat --out as a file path.
+    out_arg = Path(args.out)
+    if out_arg.suffix.lower() != ".mp4":
+        out_arg.mkdir(parents=True, exist_ok=True)
+        # Use the storyboard file name as the slug, fallback to ep-L3
+        slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
+        out_path = str(out_arg / f"{slug}-L3.mp4")
+    else:
+        out_path = str(out_arg)
+    ff_mux_final(env, concat_video, mixed_audio, out_path)
 
-    info(f"✅ DONE: {args.out}")
+    info(f"✅ DONE: {out_path}")
 
 
 if __name__ == "__main__":

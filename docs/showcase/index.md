@@ -147,8 +147,9 @@ random 种子 + base 数字,重跑就行。Demo 是**完全可复现**的。
 
 ## 短视频作品: Panda IP 短剧 (reference image system)
 
-> **峰哥 / Fengge** 是 OPC Phase 1 的核心 IP。同只熊猫在 3 集里穿着 5 套不同服饰、出现在 4 个不同场景,
-> 但**身份一致**(圆脸、黑眼位置、耳朵、圆胖身材、眼神)。Identity 一致性由 Seedream `reference_image` 机制保证。
+> **峰哥 / Fengge** 是 OPC Phase 1 的核心 IP。同只熊猫在多集里穿着不同服饰、出现在不同场景,
+> 但**身份一致**(圆脸、黑眼位置、耳朵、圆胖身材、眼神)。Identity 一致性由 Seedream `reference_image`
+> (inline base64,见 `opc-panda-plugin/reference/panda-canonical-zh-red.jpg`) 机制保证。
 
 ### Episode #001 — 治愈 + 凌晨独处
 
@@ -164,4 +165,16 @@ random 种子 + base 数字,重跑就行。Demo 是**完全可复现**的。
 
 **验证结果**: 4 个镜头、4 套服饰、4 个场景,**identity 一致**。同只峰哥在 16s 内换 4 套衣服走 4 个地方,
 **身份不漂移**。
+
+### Episode #004 — 治愈 + 立秋 (4-tone 矩阵:从国潮切到治愈)
+
+[Storyboard](panda-episode-004/STORYBOARD.md) · [Script](panda-episode-004/SCRIPT-douyin.md) · [RENDER/](panda-episode-004/RENDER/ep-L3.mp4)
+
+**4-tone 矩阵第一维度验证**:同只峰哥 + 不同 tone + 不同季节 = 不同情绪。
+- 调性: 国潮 → 治愈
+- 节气: 立夏 → 立秋
+- 场景: 远景为主 → 近景/中景 (围炉 / 雨夜窗 / 茶室小景)
+- 服饰: 4 套全展示 → 2 套循环 (暖橙短褂 + 翠绿僧袍)
+
+**identity 仍然一致**: 4 个镜头的圆脸/耳朵/身材完全相同,只是情绪/光线/姿势随 tone 调整。
 
