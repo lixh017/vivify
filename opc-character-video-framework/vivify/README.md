@@ -1,33 +1,38 @@
-# 铸角 / ZhuJiao — Character Video Engineering CLI
+# 点睛 / Vivify — Character Video Engineering CLI
 
-> 铸角 (zhù jiǎo, "casting characters") is the engineering platform CLI
-> for the OPC character video framework. It replaces loose scripts +
-> markdown files with a proper CLI backed by a SQLite state database.
+> 点睛 (Diǎn Jīng, "dot the eyes of the dragon") is the engineering
+> platform CLI for the OPC character video framework. It replaces
+> loose scripts + markdown files with a proper CLI backed by a SQLite
+> state database.
+>
+> Vivify = Latin "to make alive" — the international form of the
+> same idea. The framework takes a static IP character design and
+> "dots its eyes" into a living video short drama.
 
 ## Quick start
 
 ```bash
 # Register the showcase character (peak哥)
-./scripts/zhujiao character add fengge characters/fengge
+./scripts/vivify character add fengge characters/fengge
 
 # Browse
-./scripts/zhujiao character list
-./scripts/zhujiao character show fengge
+./scripts/vivify character list
+./scripts/vivify character show fengge
 
 # Validate
-./scripts/zhujiao character validate fengge
+./scripts/vivify character validate fengge
 
 # Asset library
-./scripts/zhujiao asset register-canonical fengge
-./scripts/zhujiao asset list --character fengge --type image
+./scripts/vivify asset register-canonical fengge
+./scripts/vivify asset list --character fengge --type image
 
 # Lessons (replaces memory/ + characters/<ip>/lessons.md)
-./scripts/zhujiao lesson add \
+./scripts/vivify lesson add \
   --title "3D drift fix" \
   --body "Add NEVER 3D NEVER PIXAR to style_anchor..." \
   --character fengge --status validated --source EP003
-./scripts/zhujiao lesson list
-./scripts/zhujiao lesson search "3D"
+./scripts/vivify lesson list
+./scripts/vivify lesson search "3D"
 ```
 
 ## Why this exists
@@ -41,42 +46,42 @@ scattered /tmp renders — worked for demo, but couldn't scale. There was:
 - ❌ No state tracking (every render was isolated)
 - ❌ Skills had IP data mixed in (architecture anti-pattern)
 
-铸角 fixes all of these with a CLI + SQLite.
+点睛 fixes all of these with a CLI + SQLite.
 
 ## Architecture
 
 ```
-zhujiao/
+vivify/                    ← Python package (Click-based CLI)
 ├── __init__.py
-├── __main__.py              # python -m zhujiao
-├── cli.py                   # Click entry point
-├── db.py                    # SQLite schema + connection
+├── __main__.py            ← python -m vivify
+├── cli.py                 ← Click entry point
+├── db.py                  ← SQLite schema + connection
 └── commands/
-    ├── character.py         # IP character management
-    ├── lesson.py            # lessons registry (replaces memory/ + md files)
-    └── asset.py             # asset library (replaces scattered files)
+    ├── character.py       ← IP character management
+    ├── lesson.py          ← lessons registry (replaces memory/ + md files)
+    └── asset.py           ← asset library (replaces scattered files)
 
-data/
-└── zhujiao.db               # SQLite state (auto-created)
+scripts/vivify             ← shell entry point
+.tmp/data/vivify.db        ← SQLite DB (gitignored)
 ```
 
 ## Commands
 
 ```
-zhujiao character
+vivify character
 ├── list                    List all registered IPs
 ├── add <id> <dir>          Register IP from directory
 ├── show <id>               Show IP details + counts
 ├── validate <id>           Run all validators
 └── refresh <id>            Re-read character.yaml
 
-zhujiao asset
+vivify asset
 ├── list [--type image|video|audio]
 ├── show <id>
 ├── register <path> --type <t>
 └── register-canonical <character-id>
 
-zhujiao lesson
+vivify lesson
 ├── list [--character X]
 ├── show <id>
 ├── add --title --body [--character X]
@@ -94,15 +99,15 @@ zhujiao lesson
 | `/tmp/opc-render/work/` (rendition intermediates) | DB records on each `episode.render_*` |
 | `docs/showcase/<episode>/` (final outputs) | DB record + filesystem |
 | git commit messages ("Render EP004 with X model") | DB row: `model_used`, `cost_yuan`, etc. |
-| `validators/*.py` (separate scripts) | `zhujiao character validate` wrapper |
-| `make_episode.sh` | future: `zhujiao episode scaffold` |
+| `validators/*.py` (separate scripts) | `vivify character validate` wrapper |
+| `make_episode.sh` | future: `vivify episode scaffold` |
 
 ## Coming soon (not yet implemented)
 
-- `zhujiao episode` group (list, show, shots, diff, status, render)
-- `zhujiao publish` (post to 抖音/小红书, fetch analytics)
-- `zhujiao workflow` (job queue, retry, parallel)
-- `zhujiao compare <ep-a> <ep-b>` (visual diff between 2 versions)
+- `vivify episode` group (list, show, shots, diff, status, render)
+- `vivify publish` (post to 抖音/小红书, fetch analytics)
+- `vivify workflow` (job queue, retry, parallel)
+- `vivify compare <ep-a> <ep-b>` (visual diff between 2 versions)
 - HTTP API (FastAPI) for external integration
 - Web UI
 
@@ -142,7 +147,7 @@ or `memory/prompt-engineering/`, you can migrate them:
 
 ```bash
 # Manual one-by-one
-./scripts/zhujiao lesson add \
+./scripts/vivify lesson add \
   --title "$(head -1 /path/to/lesson.md)" \
   --body "$(cat /path/to/lesson.md | tail -n +3)" \
   --character fengge --status validated

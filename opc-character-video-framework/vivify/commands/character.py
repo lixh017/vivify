@@ -1,8 +1,8 @@
-"""zhujiao.commands.character — manage IP characters.
+"""vivify.commands.character — manage IP characters.
 
 Migrates existing characters/<id>/ character.yaml configs into the
-zhujiao state DB. Each character is registered once and becomes
-queryable via `zhujiao character list` / `show`.
+vivify state DB. Each character is registered once and becomes
+queryable via `vivify character list` / `show`.
 """
 
 import click
@@ -88,7 +88,7 @@ def list_cmd(as_json: bool):
         click.echo(json.dumps([dict(r) for r in rows], indent=2, ensure_ascii=False))
         return
     if not rows:
-        click.echo("(no characters registered yet — use 'zhujiao character add <id>')")
+        click.echo("(no characters registered yet — use 'vivify character add <id>')")
         return
     click.echo(f"{'ID':<14} {'NAME':<10} {'EN':<10} {'SPECIES':<14} {'UPDATED':<20}")
     click.echo("─" * 70)

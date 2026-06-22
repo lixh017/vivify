@@ -1,4 +1,4 @@
-"""zhujiao.commands.asset — manage asset library.
+"""vivify.commands.asset — manage asset library.
 
 The asset library is a queryable index of all generated artifacts:
 images, videos, audio, reference files. Each asset has metadata and

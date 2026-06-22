@@ -1,5 +1,5 @@
 __pycache__/
 *.pyc
-.tmp/data/zhujiao.db
-data/zhujiao.db-journal
+.tmp/data/vivify.db
+data/vivify.db-journal
 data/assets/recorded/

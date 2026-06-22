@@ -1,4 +1,4 @@
-"""zhujiao.commands.lesson — manage IP/cross-IP lessons.
+"""vivify.commands.lesson — manage IP/cross-IP lessons.
 
 Lessons are first-class database records. The CLI replaces the
 previous approach of scattered markdown files in memory/ and

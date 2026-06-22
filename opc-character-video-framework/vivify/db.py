@@ -1,4 +1,4 @@
-"""zhujiao.db — SQLite state database.
+"""vivify.db — SQLite state database.
 
 The single source of truth for characters, episodes, assets, lessons,
 publishes, and render jobs. All CLI commands read/write through this layer.
@@ -9,7 +9,7 @@ from pathlib import Path
 from contextlib import contextmanager
 from typing import Iterator
 
-DEFAULT_DB_PATH = ".tmp/data/zhujiao.db"
+DEFAULT_DB_PATH = ".tmp/data/vivify.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS characters (
@@ -133,7 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_lessons_character ON lessons(character_id);
 
 
 def get_db_path(db_path: str = None) -> Path:
-    """Resolve DB path. Defaults to .tmp/data/zhujiao.db in cwd (gitignored)."""
+    """Resolve DB path. Defaults to .tmp/data/vivify.db in cwd (gitignored)."""
     if db_path:
         return Path(db_path)
     return Path.cwd() / DEFAULT_DB_PATH
