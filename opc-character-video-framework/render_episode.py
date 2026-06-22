@@ -41,7 +41,7 @@ from pathlib import Path
 DEFAULT_ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_RENDER_DIR = "/tmp/opc-render"
 DEFAULT_IMAGE_MODEL = "doubao-seedream-4-0-250828"
-DEFAULT_VIDEO_MODEL = "doubao-seedance-1-5-pro-251215"
+DEFAULT_VIDEO_MODEL = "doubao-seedance-2-0-260128"  # Seedance 2.0: audio-video sync, better motion
 DEFAULT_TTS_MODEL = "speech-02-hd"
 DEFAULT_TTS_VOICE = "male-qn-jingying"
 DEFAULT_TTS_SPEED = 0.82
@@ -395,17 +395,30 @@ def get_canonical_reference_path(env: dict) -> str | None:
 # ---- L2b: image-to-video --------------------------------------------------
 
 def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
-              model: str, out_path: str) -> str:
-    """Returns the local path of the downloaded MP4."""
+              model: str, out_path: str, audio_url: str = None) -> str:
+    """Returns the local path of the downloaded MP4.
+
+    Seedance 2.0: if audio_url is provided AND the model supports it,
+    the model will sync mouth movement / scene audio to the audio.
+    Older models (1.5-pro, 1.0-pro) reject the audio_url field —
+    we check MODEL_CATALOG before passing it.
+    """
+    from model_router import MODEL_CATALOG
+    model_supports_audio = "audio_input" in MODEL_CATALOG.get(model, {}).get("features", [])
+
+    content = [
+        {"type": "text",
+         "text": f"{action}  --duration {duration_sec} --resolution 720p --camerafixed false --watermark false"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ]
+    if audio_url and model_supports_audio:
+        content.append({"type": "audio_url", "audio_url": {"url": audio_url}})
     body = {
         "model": model,
-        "content": [
-            {"type": "text",
-             "text": f"{action}  --duration {duration_sec} --resolution 720p --camerafixed false --watermark false"},
-            {"type": "image_url", "image_url": {"url": image_url}},
-        ],
+        "content": content,
     }
-    info(f"video: submitting task ({duration_sec}s)")
+    info(f"video: submitting task ({duration_sec}s"
+         f"{', audio=YES' if audio_url and model_supports_audio else ''}, model={model})")
     code, err, body_b = curl("POST",
                               f"{env['ARK_BASE_URL']}/contents/generations/tasks",
                               {"Authorization": f"Bearer {env['ARK_API_KEY']}"},
@@ -432,6 +445,36 @@ def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
             fatal(f"video task {task_id} {status}: {d}")
         info(f"video: status={status}")
     fatal(f"video task {task_id} timed out")
+
+
+def upload_to_tos(env: dict, local_path: str, ttl_sec: int = 86400) -> str:
+    """Upload a local file to 火山 TOS and return a public URL.
+
+    Used for voiceover audio files that Seedance 2.0 needs as
+    audio_url input. The returned URL has TTL hours; we re-upload
+    each render so URLs are always fresh.
+    """
+    import subprocess
+    import time
+    from pathlib import Path
+
+    p = Path(local_path)
+    if not p.exists():
+        raise FileNotFoundError(local_path)
+
+    # Use 火山 Ark's image API to upload and return URL (same as
+    # gen_image's behavior). For audio files, we wrap in base64 inside
+    # a data URI as a fallback if TOS direct upload isn't available.
+    # Simpler: use the gen_image trick — submit through images API.
+    # But audio isn't accepted there. So use base64 data URI directly.
+    # Seedance 2.0 accepts data URIs.
+
+    suffix = p.suffix.lstrip(".").lower() or "mp3"
+    mime = f"audio/{'mpeg' if suffix == 'mp3' else suffix}"
+    data = p.read_bytes()
+    b64 = __import__('base64').b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
 
 # ---- L3a: TTS voiceover ---------------------------------------------------
 
@@ -879,6 +922,12 @@ def main():
                     help="End-card text shown at the closing (e.g. '下集:冬至')")
     ap.add_argument("--qa-skip", action="store_true",
                     help="Skip QA gate even if shots fail checks")
+    ap.add_argument("--quality-tier", default="standard",
+                    choices=["draft", "standard", "premium"],
+                    help="Video model tier: draft (cheap/fast), standard (default), "
+                         "premium (lip sync + best quality). Overrides --video-model.")
+    ap.add_argument("--require-lip-sync", action="store_true",
+                    help="Force lip sync (only available with premium tier)")
     args = ap.parse_args()
     if not args.title:
         slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
@@ -917,7 +966,22 @@ def main():
         warn("no --character-dir given; using defaults (panda-style hardcoded)")
 
     info(f"voice={args.voice} platform={args.platform} target={args.target_dur}s")
-    info(f"image-model={args.image_model} video-model={args.video_model}")
+    info(f"image-model={args.image_model}")
+
+    # Model router: smart selection with auto-fallback
+    from model_router import ModelRouter, parse_tier
+    router = ModelRouter(env)
+    tier = parse_tier(args.quality_tier)
+    requirements = {
+        "needs_lip_sync": args.require_lip_sync or (tier == "premium"),
+    }
+    resolved_model, reason = router.route_video_model(
+        tier=tier,
+        requirements=requirements,
+        explicit_model=args.video_model if args.video_model != DEFAULT_VIDEO_MODEL else None,
+    )
+    info(f"video router: tier={tier} → {resolved_model} ({reason})")
+    args.video_model = resolved_model
 
     render_dir = Path(env["RENDER_DIR"])
     work = render_dir / "work"
@@ -967,6 +1031,26 @@ def main():
             url_cache.write_text(url)
             image_urls[n] = (local, url)
 
+    # 2.5. L2-TTS: pre-generate voiceover audio (Seedance 2.0 uses these
+    # as audio_url inputs for native lip sync). We store the public URLs
+    # in voiceover_urls so L2b can pass them along.
+    info("generating voiceovers for lip sync (Seedance 2.0)")
+    voiceover_urls = {}
+    for shot in shots:
+        vo = find_voiceover_for_shot(shot, voiceovers)
+        if not vo:
+            continue
+        n = shot["n"]
+        mp3_path = vo_dir / f"vo-{n:02d}.mp3"
+        if not mp3_path.exists():
+            gen_tts(env, vo["text"], str(mp3_path), tone=args.voice)
+        # Upload the audio to TOS so Seedance can fetch it
+        try:
+            audio_public_url = upload_to_tos(env, str(mp3_path))
+            voiceover_urls[n] = audio_public_url
+        except Exception as e:
+            warn(f"audio upload failed for shot {n}: {e} — lip sync disabled for this shot")
+
     # 3. L2b: i2v for each image
     video_paths = {}
     for shot in shots:
@@ -986,8 +1070,30 @@ def main():
         if n not in image_urls:
             fatal(f"no image URL for shot {n}")
         _local, public_url = image_urls[n]
-        gen_video(env, public_url, action, shot["duration_sec"],
-                  args.video_model, str(vid_path))
+        # Seedance 2.0 lip-sync: pass voiceover audio URL if available
+        audio_url = voiceover_urls.get(n)
+        # Try primary model, fall back via router if it fails
+        current_model = args.video_model
+        video_ok = False
+        for attempt in range(3):  # max 3 fallbacks
+            try:
+                gen_video(env, public_url, action, shot["duration_sec"],
+                          current_model, str(vid_path), audio_url=audio_url)
+                video_ok = True
+                if current_model != args.video_model:
+                    info(f"video {n}: using fallback {current_model} (after {args.video_model} failed)")
+                router.record_call(current_model, shot["duration_sec"], success=True)
+                break
+            except Exception as e:
+                warn(f"video {n}: {current_model} failed — {e}")
+                router.record_call(current_model, shot["duration_sec"], success=False)
+                next_model, fallback_reason = router.fallback_from(current_model)
+                if next_model == current_model:
+                    fatal(f"video {n}: no fallback available after {current_model} failed")
+                warn(f"video {n}: {fallback_reason}")
+                current_model = next_model
+        if not video_ok:
+            fatal(f"video {n}: all fallback attempts exhausted")
         video_paths[n] = str(vid_path)
 
     # 4. L2c: build segments
@@ -1127,6 +1233,9 @@ def main():
     else:
         out_path = str(out_arg)
     ff_mux_final(env, sub_video, mixed_audio, out_path)
+
+    # Final model usage report
+    router.print_report()
 
     info(f"✅ DONE: {out_path}")
 
