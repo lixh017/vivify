@@ -35,20 +35,32 @@ character:
       - "canonical/panda-canonical-warm-orange.jpg"
 
   # Outfit whitelist (5 default, round-robin per episode)
+  # Each anti_patterns MUST contain ≥2 negative tokens. Validated by
+  # validators/lint_constraints.py. Inspired by the official_seedance
+  # worker uniform disaster — explicit NEVERs prevent Seedream from
+  # leaking modern elements.
   outfits:
     - id: outfit_hufu_red
       name: "朱红汉服"
       color: "朱红 #C73E1D"
       description: "vermilion red hanfu, wide-sleeved round-collar robe, jade pendant"
       best_for: ["国潮"]
-      anti_patterns: "no exposed modern elements; mandarin collar, jade accessories"
+      anti_patterns: |
+        no modern elements (no plastic, no synthetic fabric, no zipper);
+        no Western cut (no lapel, no collar stay, no shoulder pads);
+        no movie-cosplay exaggeration (no anime hair, no armor plates);
+        traditional mandarin collar, jade accessories, wide sleeves only
 
     - id: outfit_changshan_blue
       name: "宝蓝长衫"
       color: "宝蓝 #1F5FA8"
       description: "royal blue changshan, mandarin collar, silver buttons, folded fan"
       best_for: ["国潮", "哲学"]
-      anti_patterns: "no business suit; mandarin collar, traditional cut"
+      anti_patterns: |
+        no business suit (no lapel, no tie, no shoulder pads);
+        no Western cut (no buttons-down front, no belt loops);
+        no modern accessories (no watch, no phone, no glasses);
+        traditional mandarin collar, silver buttons, folded fan only
 
     - id: outfit_workwear_orange
       name: "暖橙短褂"
@@ -62,14 +74,22 @@ character:
       color: "翠绿 #3B8C5A"
       description: "jade-green monk robe, wide sleeves, prayer beads, straw sandals"
       best_for: ["哲学", "治愈"]
-      anti_patterns: "no cosplay costumes; traditional cut, simple"
+      anti_patterns: |
+        no cosplay costumes (no anime armor, no leather armor, no fantasy gear);
+        no modern religion (no Western cross, no Christian robe);
+        no decorative overload (no gold embroidery, no sequins);
+        traditional monk cut, simple cotton/linen, prayer beads only
 
     - id: outfit_jacket_redwhite
       name: "红白运动夹克"
       color: "朱红 + 米白"
       description: "vermilion + cream sports jacket, white tee underneath, sneakers"
       best_for: ["御宅"]
-      anti_patterns: "no brand logos; simple athletic style"
+      anti_patterns: |
+        no brand logos (no Nike swoosh, no Adidas stripes, no text);
+        no sportswear details (no zipper pulls, no mesh panels, no compression fit);
+        no modern athletic gear (no compression shorts, no smart watch);
+        plain color blocks, simple collar, minimal seam only
 
   # Scene whitelist (12 default scenes from IP bible)
   scenes:
