@@ -83,7 +83,8 @@ def _ensure_episode_row(conn, character_id: str, episode_id: str,
         if updates:
             sets = ", ".join(f"{k} = ?" for k in updates)
             conn.execute(
-                f"UPDATE episodes SET {sets} WHERE id = ?",
+                f"UPDATE episodes SET {sets}, updated_at = datetime('now') "
+                f"WHERE id = ?",
                 list(updates.values()) + [existing["id"]],
             )
         return existing["id"]
@@ -91,8 +92,8 @@ def _ensure_episode_row(conn, character_id: str, episode_id: str,
         """INSERT INTO episodes (
             character_id, episode_id, tone, platform,
             storyboard_path, script_path, quality_tier, model_used,
-            target_dur_sec, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            target_dur_sec, status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
         (character_id, episode_id, voice, platform, storyboard, script,
          quality_tier, model_used, target_dur, status),
     )

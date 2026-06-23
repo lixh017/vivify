@@ -24,6 +24,7 @@ from .commands import cost as cost_cmd
 from .commands import memory as memory_cmd
 from .commands import publish as publish_cmd
 from .commands import workflow as workflow_cmd
+from .commands import db as db_cmd
 
 
 @click.group()
@@ -52,6 +53,7 @@ main.add_command(cost_cmd.cli)
 main.add_command(memory_cmd.cli)
 main.add_command(publish_cmd.cli)
 main.add_command(workflow_cmd.cli)
+main.add_command(db_cmd.cli)
 
 
 if __name__ == "__main__":

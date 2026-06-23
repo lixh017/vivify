@@ -1,165 +1,335 @@
-# OPC Character Video Framework
+# 点睛 / Vivify — Character Video Engineering Platform
 
-> **End-to-end AI short-drama pipeline for any custom IP character.**
-> Drop in 3 reference images + a character profile → get a 抖音-ready MP4.
+> **画龙点睛，把静态 IP 角色点活成短剧。**
+> *Vivify* — Latin "to make alive": the international form of the same idea.
 
-This is the framework that produced **峰哥 / Fengge** (the panda IP).
-It's been refactored to be character-agnostic — add your own IP by
-dropping reference images in `characters/<your-name>/canonical/` and
-filling in `character.yaml`.
+An engineering platform for producing AI character short-drama videos.
+**点睛 (Diǎn Jīng)** — "dot the eyes of the dragon" — is the final touch that brings
+a static painting to life. The framework does the same for IP characters:
+takes a static character design and animates it into a living short video.
 
-## What it does
+The showcase IP is **峰哥 / Fengge** (a 治愈系 panda). The framework is
+**character-agnostic** — drop in 3 reference images + a profile, get a
+抖音-ready MP4, audit-trail in SQLite.
 
-For any character with:
-- A clean, neutral-pose reference image (3 jpgs recommended)
-- A character profile (5 outfits, scenes, voice tones, etc.)
+---
 
-The pipeline produces:
-- 4-tone voice matrix (治愈 / 御宅 / 哲学 / 国潮, or define your own)
-- 16-21s MP4 with title card, subtitles, end-card CTA
-- Cross-shot identity consistency (Seedream `reference_image`)
-- Per-tone TTS voice (海螺 MiniMax speech-02-hd with emotion)
-- Locked visual style (style anchor from character.yaml)
+## What you get
+
+```
+characters/fengge/canonical/*.jpg     ──┐
+characters/fengge/character.yaml       ──┤
+                                       ├──►  vivify episode render ──►  MP4
+examples/.../STORYBOARD.md             ──┤                          │
+examples/.../SCRIPT-douyin.md          ──┘                          ▼
+                                                         .tmp/data/vivify.db
+                                                         (audit trail)
+```
+
+For any character:
+- 4-tone voice matrix (治愈 / 御宅 / 哲学 / 国潮, configurable)
+- 9:16 vertical MP4 with title card, subtitles, end-card CTA
+- Cross-shot identity consistency (`mmx video generate --subject-image`
+  for character lock, or Seedream `reference_image` for the lighter path)
+- Per-tone TTS voice (`mmx speech synthesize` with emotion)
+- Cost tracking per shot + per episode, with hard monthly cap
+- Auto-retry on transient failures, smart-skip on permanent ones (quota / 403)
+
+---
 
 ## Quick start
 
+### 1. Install
+
 ```bash
-# Install deps
-pip install pyyaml
-export ARK_API_KEY="..."        # 火山方舟 (Seedream + Seedance)
-export MINIMAX_API_KEY="..."    # 海螺 TTS
+# System deps
+pip install pyyaml click
 
-# Render with the bundled 峰哥 panda character (showcase)
-python3 render_episode.py \
-  --character-dir characters/fengge \
-  --storyboard examples/panda-episode-004/STORYBOARD.md \
-  --script    examples/panda-episode-004/SCRIPT-douyin.md \
-  --voice     治愈 --platform 抖音 \
-  --out       /tmp/out
-# Output: /tmp/out/panda-episode-004-L3.mp4
-
-# Use the scaffold tool
-./make_episode.sh \
-  --character fengge \
-  --slug panda-episode-007 \
-  --tone 治愈 --season 立冬 \
-  --outfits "outfit_workwear_orange,outfit_robe_green,outfit_changshan_blue,outfit_workwear_orange" \
-  --scenes "围炉夜话,雨后青苔,月下窗棂,茶室"
+# API keys (already in ~/.bashrc on dev machines)
+export ARK_API_KEY="..."          # 火山方舟 (Seedream image gen)
+export MINIMAX_API_KEY="..."      # 海螺 TTS + mmx CLI video gen
 ```
 
-## Add your own character
+### 2. Bring up the DB
 
-See **[docs/adding-new-character.md](docs/adding-new-character.md)** for
-the step-by-step onboarding. TL;DR:
-
-1. Prepare 3 jpgs of your character in clean, neutral poses (front or
-   3/4 view, no props, plain background). Drop them in
-   `characters/<your-name>/canonical/`.
-2. Copy `characters/_template/character.yaml` to
-   `characters/<your-name>/character.yaml`. Fill in:
-   - `name`, `species`, `head_body_ratio`, fur colors
-   - 5+ outfits with anti-patterns (what to avoid)
-   - 5+ scenes
-   - Voice profiles for each tone you want
-   - `style_anchor` — the visual register you want locked across shots
-   - Hook formulas + voice rules
-3. Run the pipeline:
-   ```bash
-   python3 render_episode.py --character-dir characters/<your-name> ...
-   ```
-
-That's it. No code changes needed.
-
-## Repository layout
-
-```
-opc-character-video-framework/
-├── README.md                      (this file)
-├── render_episode.py              (character-agnostic pipeline)
-├── make_episode.sh                (scaffold tool)
-├── character_loader.py            (loads character.yaml)
-├── characters/
-│   ├── fengge/                    (showcase — panda 峰哥)
-│   │   ├── character.yaml         (5 outfits, 12 scenes, 4-tone voice)
-│   │   ├── canonical/             (3 reference jpgs)
-│   │   └── examples/              (4 demo episodes)
-│   └── _template/                 (drop-in for new characters)
-│       ├── character.yaml         (minimal schema)
-│       └── canonical/             (drop your jpgs here)
-└── docs/
-    ├── adding-new-character.md    (onboarding guide)
-    └── architecture.md            (how the pipeline works)
+```bash
+./scripts/vivify db migrate         # apply pending migrations (idempotent)
+./scripts/vivify db inspect         # see table list + row counts
 ```
 
-## How the pipeline works
+### 3. Register a character
 
-```
-make_episode.sh                  ← scaffold STORYBOARD.md + SCRIPT-douyin.md
-       ↓
-   (human edit)
-       ↓
-render_episode.py
-   ├─ L1: parse storyboard + script (character.yaml: outfits/scenes/voice)
-   ├─ L2a: Seedream 4.0 image gen
-   │     ├─ canonical reference_image (inline base64, identity preserved)
-   │     └─ style_anchor suffix (visual register locked)
-   ├─ L2b: Seedance 1.5-pro image→video
-   ├─ L3a: 海螺 TTS voiceover (per-tone voice_id + emotion + speed)
-   ├─ L3b: BGM synth (Python wave module, character-agnostic)
-   ├─ L3e: title card + subtitle overlay + end card (content craft)
-   └─ L3f: ffmpeg mux → epXXX-L3.mp4
+```bash
+./scripts/vivify character add fengge characters/fengge
+./scripts/vivify character list
+./scripts/vivify character validate fengge
 ```
 
-The character.yaml is loaded once at startup. The pipeline references it for:
-- Canonical reference image (`canonical.primary`)
-- Outfit descriptions (for kling_prompt augmentation)
-- Scene whitelists (validated against character config)
-- Voice profiles (one per tone)
-- Style anchor (locked across all shots)
+### 4. Render an episode
 
-## Why this design
+```bash
+./scripts/vivify episode render fengge EP005 \
+  --storyboard characters/fengge/examples/panda-episode-005/STORYBOARD.md \
+  --script     characters/fengge/examples/panda-episode-005/SCRIPT-douyin.md \
+  --voice 治愈 --platform 抖音 --target-dur 58 \
+  --video-provider minimax --video-model MiniMax-Hailuo-2.3 \
+  --parallel 4
+```
 
-**Inline base64 reference images** — no TOS uploads, no signed URLs, no 24h TTL.
-The jpgs are committed in the repo and sent directly to Seedream.
+Output: `.tmp/renders/fengge-EP005.mp4` plus a full audit trail in the DB.
 
-**One canonical pose, multiple outfits** — instead of generating many
-identity-bleeding creative compositions, we use one neutral pose per
-outfit. The reference preserves identity, the prompt controls scene/props.
+### 5. Publish + track
 
-**Style anchor in every prompt** — prevents Seedream from drifting
-between 3D-rendered toy aesthetic / photoreal / watercolor across shots.
-Every shot gets the same style suffix from character.yaml.
+```bash
+./scripts/vivify publish publish fengge EP005 --platform 抖音 --title "..."
+./scripts/vivify publish refresh <id>             # updates view/like/comment
+./scripts/vivify publish analytics fengge EP005    # aggregated across platforms
+```
 
-**Per-tone voice profiles** —治愈 / 御宅 / 哲学 / 国潮 each get a
-distinct audible register (different voice_id / speed / pitch / emotion)
-so the audio matches the visual register.
+> **Note**: publish is a stub today (no real 抖音 API key). See
+> [`vivify/commands/publish.py`](vivify/commands/publish.py) — swap
+> `_upload_to_platform()` with real API calls when credentials are
+> available.
 
-## Known limitations
+---
 
-- **Cross-episode identity drift**: Seedream `reference_image` is
-  best-effort. For pixel-perfect identity across many episodes, train a
-  custom LoRA.
-- **BGM is synthesized**: Python wave module generates rain + envelope.
-  Replace with Suno/Udio API for production.
-- **No QA gate**: shots are accepted as Seedream returns them. Add a
-  visual audit step (using the IP bible) before mux for production.
-- **Pacing is uniform within an episode unless overridden**: each shot
-  defaults to the same duration. Override via storyboard `[mm:ss-mm:ss]`
-  for variable pacing.
+## CLI commands
+
+```
+vivify
+├── character   Register/list/show/validate/refresh IP characters
+├── lesson      Manage lessons (cross-IP + per-IP)
+├── asset       Manage asset library (canonical images, generated stills)
+├── episode     Render lifecycle: add / render / show / shots / status / delete
+├── cost        Cost tracking + per-video ¥50/¥100 + monthly ¥60k cap
+├── memory      Migrate memory/*.md to DB, list/show cross-IP lessons
+├── publish     Publish to 抖音/小红书/B站 (stub), track analytics
+├── workflow    Parallel rendering + smart retry (classifier)
+└── db          Migrations: status / migrate / inspect / schema-version
+```
+
+Full reference: each command has `--help`. Example:
+
+```bash
+./scripts/vivify episode render --help
+```
+
+---
+
+## Architecture
+
+```
+vivify/                          Click-based CLI (this package)
+├── __init__.py                  Branding + version
+├── cli.py                       Main entry — registers all subcommands
+├── db.py                        SQLite schema (source of truth for fresh DBs)
+├── migrator.py                  Lightweight migration runner
+├── migrations/                  Numbered SQL files (001, 002, ...)
+├── pricing.py                   Cost estimator (¥/sec by model)
+├── retry.py                     Error classifier (permanent vs transient)
+├── cost_cap.py                  Per-video + monthly hard caps
+└── commands/
+    ├── character.py             IP registry
+    ├── lesson.py                Knowledge base
+    ├── asset.py                 Asset library
+    ├── episode.py               Render lifecycle
+    ├── cost.py                  Cost status / history / estimate
+    ├── memory.py                Migrate memory/*.md → DB
+    ├── publish.py               Publish + analytics (stub)
+    ├── workflow.py              Parallel + retry surface
+    └── db.py                    Migrations CLI
+
+scripts/vivify                   Shell entry (no `pip install` needed)
+
+characters/<ip>/                 Per-IP data layer (mutable)
+├── character.yaml              IP profile
+├── canonical/                  3 reference jpgs (must include close-up face)
+├── lessons.md                  IP-specific lessons
+├── gotchas.md                  IP-specific pitfalls
+├── overrides/                  Per-shot/per-episode overrides
+├── experiments/                A/B test data
+├── analytics/                  Performance data
+└── examples/                   Rendered episode dirs
+
+memory/                          Cross-IP knowledge (legacy, migrated to DB)
+├── prompt-engineering/         Seedance/Hailuo prompt patterns
+└── model-capabilities/         Seedream/Seedance/MiniMax gotchas
+
+render_episode.py                Standalone rendering pipeline (also called by CLI)
+model_router.py                  Model routing + provider filter
+character_loader.py              YAML loader
+qa_gate.py                       Heuristic image QA
+```
+
+### Skills vs Data
+
+**Skills** (general, reusable, stateless): `CLAUDE.md`, `~/.claude/skills/*`,
+`prompt_library/`, `validators/`, `memory/`, `examples/`.
+
+**Data** (per-IP, mutable, stateful): `characters/<ip>/`.
+
+**Never** put IP-specific knowledge into skills — keep the framework
+general so other IPs can opt in.
+
+### DB schema
+
+8 tables (see `vivify/db.py`):
+
+| Table | Purpose |
+|---|---|
+| `characters` | IP registry (one row per IP) |
+| `episodes` | Render jobs (cost, duration, status, output path) |
+| `shots` | Per-storyboard-shot rows (image/video path, QA, cost) |
+| `assets` | Asset library (images, videos, audio) with metadata |
+| `publishes` | Per-platform publish records + analytics |
+| `render_jobs` | Job queue rows (start/end, retries, error) |
+| `lessons` | Cross-IP + per-IP knowledge (replaces scattered md files) |
+| `migrations` | Migration tracking (added in 002) |
+
+---
+
+## Per-IP data layer (adding a new character)
+
+See `CLAUDE.md` for the full workflow. TL;DR:
+
+1. Read `memory/INDEX.md` for cross-IP lessons
+2. Read `prompt_library/INDEX.md` for prompt templates
+3. Use `characters/fengge/` as a worked example
+4. Generate `character.yaml` using `prompt_library/characters/format.md`
+5. Generate 3 canonical reference jpgs (close-up face + full-body × 3 outfits)
+   — **close-up face shot must be SEPARATE from full-body** (avoids ID drift)
+6. Register: `vivify character add <id> characters/<id>`
+
+---
+
+## Multi-provider video gen (user picks, no fallback)
+
+```bash
+# ark (Seedance) — original
+./scripts/vivify episode render fengge EP005 \
+  --video-provider ark --video-model doubao-seedance-1-5-pro-251215
+
+# minimax (Hailuo via mmx CLI) — character-locked S2V mode
+./scripts/vivify episode render fengge EP005 \
+  --video-provider minimax --video-model MiniMax-S2V-01
+
+# auto (router decides by tier — DEFAULT)
+./scripts/vivify episode render fengge EP005 --quality-tier standard
+```
+
+The provider filter is explicit and visible in the command. No silent
+fallback chains. Cost cap enforces total spend even if user picks
+expensive provider.
+
+---
+
+## Cost cap
+
+| Cap | Value | Override |
+|---|---|---|
+| Per-video soft warn | ¥50 | `--per-video-cap` |
+| Per-video hard block | ¥100 | `--force` |
+| Monthly hard block | ¥60,000 | `--force` |
+
+```bash
+$ vivify cost status
+  spent:    ¥0.00 / ¥60000.00
+  headroom: ¥60000.00
+
+$ vivify cost estimate --model MiniMax-S2V-01 --shots 50 --video-sec 300
+  total: ¥370.50
+  ⚠ ABOVE per_video_hard (¥100) — episode render will be blocked without --force
+```
+
+Source of truth: `SUM(cost_yuan) FROM episodes WHERE render_completed_at LIKE 'YYYY-MM%'`.
+
+---
+
+## Parallel + smart retry
+
+```bash
+# Render with 4 shots in parallel + 3 retries each
+./scripts/vivify episode render fengge EP005 --parallel 4 --max-retries 3
+
+# After a partial failure, requeue and re-run only failed shots
+./scripts/vivify workflow status
+./scripts/vivify workflow retry-failed fengge EP005 -y
+./scripts/vivify episode render fengge EP005 --retry-only
+```
+
+The retry classifier (`vivify/retry.py`) distinguishes:
+
+- **Permanent** failures (don't retry): quota_exceeded, HTTP 403,
+  HTTP 401, HTTP 400, content_policy
+- **Transient** failures (retry with backoff 5s → 15s → 45s → 135s):
+  timeout, 5xx, 429, network (DNS / reset / refused)
+- **Unknown**: retry once
+
+---
+
+## DB migrations
+
+Schema changes don't require manual `ALTER TABLE` — write a numbered
+SQL file in `vivify/migrations/`:
+
+```bash
+# 1. Add the SQL file
+$EDITOR vivify/migrations/003_add_new_column.sql
+
+# 2. Apply (idempotent — only pending migrations are applied)
+./scripts/vivify db migrate
+
+# 3. Verify
+./scripts/vivify db status
+./scripts/vivify db schema-version
+```
+
+Convention: `NNN_short_description.sql`. Each migration runs in a
+single transaction. Forward-only — to undo, write a corrective migration.
+
+---
+
+## What's NOT here yet
+
+Honest gaps:
+
+- ⚠️ **Real visual QA** — `qa_gate.py` is heuristic (file size,
+  aspect ratio, color stats). No vision-model check for "is the
+  panda's face the same across shots?"
+- ⚠️ **Real publish** — `vivify publish publish` writes a stub URL.
+  Need 抖音开放平台 credentials to swap `_upload_to_platform()`.
+- ⚠️ **No team/remote DB** — SQLite is local. For team use, swap to
+  PostgreSQL (the schema is mostly portable).
+- ⚠️ **No HTTP API / Web UI** — CLI only. A FastAPI layer exposing
+  the same operations would make this a real platform.
+- ⚠️ **No auth** — anyone with shell access owns the DB.
+
+---
+
+## Environment
+
+Required:
+- `ARK_API_KEY` (火山方舟) — image gen
+- `MINIMAX_API_KEY` (海螺) — TTS, optionally video gen via `mmx`
+- `FFMPEG` — auto-detected via `/root/.openclaw/.../ffmpeg-installer/`
+
+Optional:
+- `OPC_RENDER_DIR` — where intermediate frames go (default `/tmp/opc-render`)
+- `FFPROBE` — for actual duration detection (auto-detected too)
+
+---
 
 ## License
 
-MIT. Use it for whatever.
+MIT (same as parent framework).
 
-## Credits
+---
 
-Built on:
-- 火山方舟 Seedream 4.0 (image gen) + Seedance 1.5-pro (image→video)
-- 海螺 MiniMax speech-02-hd (TTS)
-- WQY Zen Hei font (Chinese rendering)
-- ffmpeg (mux / drawtext)
-- Python 3 (orchestration)
+## See also
 
-Showcase character 峰哥 / Fengge is OPC's flagship IP (panda, 国潮).
-
-Contributions welcome — fork, send PRs, add your own characters.
+- `CLAUDE.md` — agent-facing instructions (add IP, fix quality, etc.)
+- `vivify/README.md` — detailed vivify CLI architecture
+- `~/.claude/skills/mmx-video-gen/SKILL.md` — mmx CLI wrapper patterns
+- `~/.claude/skills/opc-cost-cap/SKILL.md` — cost cap rules
+- `memory/prompt-engineering/seedance-formula.md` — Seedance 2.0 prompt formula
+- `memory/prompt-engineering/id-drift-prevention.md` — character consistency
