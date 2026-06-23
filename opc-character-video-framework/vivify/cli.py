@@ -19,6 +19,7 @@ from .db import init_db
 from .commands import character as character_cmd
 from .commands import lesson as lesson_cmd
 from .commands import asset as asset_cmd
+from .commands import episode as episode_cmd
 
 
 @click.group()
@@ -26,7 +27,8 @@ from .commands import asset as asset_cmd
                      message="%(version)s 点睛 / Vivify")
 @click.option("--db", "db_path", default=None,
               help="Path to SQLite DB (default: .tmp/data/vivify.db).")
-def main(db_path):
+@click.pass_context
+def main(ctx, db_path):
     """点睛 / Vivify — character video platform CLI.
 
     画龙点睛,把静态 IP 角色点活成短剧。
@@ -34,11 +36,14 @@ def main(db_path):
     Run `vivify <command> --help` for command-specific help.
     """
     init_db(db_path)
+    ctx.ensure_object(dict)
+    ctx.obj["db_path"] = db_path
 
 
 main.add_command(character_cmd.cli)
 main.add_command(lesson_cmd.cli)
 main.add_command(asset_cmd.cli)
+main.add_command(episode_cmd.cli)
 
 
 if __name__ == "__main__":
