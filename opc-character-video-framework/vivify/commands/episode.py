@@ -21,6 +21,7 @@ Commands:
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -174,19 +175,34 @@ def _update_shot_after_render(conn, shot_pk: int, *, image_path: str = None,
 
 
 def _ffprobe_duration(path: str) -> float | None:
-    """Best-effort: read duration from final MP4. Returns None on failure."""
+    """Best-effort: read duration from final MP4. Returns None on failure.
+
+    Tries (in order): $FFMPEG_DIR/ffprobe, the ffmpeg installer's sibling
+    ffprobe, /usr/bin/ffprobe, then PATH. The ffmpeg-installer at
+    /root/.openclaw/.../ffmpeg/ bundles ffprobe next to ffmpeg.
+    """
     if not path or not Path(path).exists():
         return None
-    try:
-        r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return float(r.stdout.strip())
-    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
-        pass
+    ffprobe_candidates = [
+        os.environ.get("FFPROBE"),
+        "/root/.openclaw/extensions/dingtalk-connector/node_modules/@ffmpeg-installer/linux-x64/ffprobe",
+        "/usr/bin/ffprobe",
+        "/usr/local/bin/ffprobe",
+        "ffprobe",
+    ]
+    for c in ffprobe_candidates:
+        if not c:
+            continue
+        try:
+            r = subprocess.run(
+                [c, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", path],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return float(r.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError, OSError):
+            continue
     return None
 
 
@@ -620,11 +636,11 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     file_size = _file_size(out_path)
 
     # Update shot rows with computed file paths (best-effort)
+    # render_episode.py writes to $OPC_RENDER_DIR/work/ (default /tmp/opc-render/work/).
     with connect(db_path) as conn:
         shots = _get_shots(conn, ep_pk)
+        render_work = Path(os.environ.get("OPC_RENDER_DIR", "/tmp/opc-render")) / "work"
         for shot in shots:
-            # The render_episode.py layout: image at 01-image/shot-NN.jpg, video at 02-video/shot-NN.mp4
-            render_work = Path(".tmp/renders/work")
             img_p = render_work / "01-image" / f"shot-{shot['shot_number']:02d}.jpg"
             vid_p = render_work / "02-video" / f"shot-{shot['shot_number']:02d}.mp4"
             _update_shot_after_render(
@@ -672,6 +688,7 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                    WHERE id = ?""",
                 (err_msg, job_pk),
             )
+            conn.commit()  # explicit commit before sys.exit (SystemExit skips the with-block's auto-commit)
             click.echo(f"\n❌ render FAILED (rc={rc}) — episode marked failed in DB",
                        err=True)
             sys.exit(rc)
