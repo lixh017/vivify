@@ -479,11 +479,19 @@ def add_cmd(obj, character_id, episode_id, storyboard, script, voice,
                    "Use only when intentional.")
 @click.option("--per-video-cap", type=float, default=None,
               help="Override per-video hard cap in ¥ (default 100).")
+@click.option("--parallel", "-j", type=int, default=1,
+              help="Number of shots to render in parallel (default 1 = serial).")
+@click.option("--max-retries", type=int, default=3,
+              help="Max retries per shot before marking failed (default 3).")
+@click.option("--retry-only", is_flag=True,
+              help="Only re-run failed/queued jobs for this episode "
+                   "(use after `workflow retry` requeues).")
 @click.pass_obj
 def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                platform, quality_tier, video_provider, video_model, image_model,
                reference_image, target_dur, out_dir, require_lip_sync,
-               qa_skip, title, next_episode, dry_run, force, per_video_cap):
+               qa_skip, title, next_episode, dry_run, force, per_video_cap,
+               parallel, max_retries, retry_only):
     """Render an episode via render_episode.py, recording the full run in DB."""
     db_path = obj.get("db_path")
     init_db(db_path)
@@ -573,6 +581,8 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     click.echo(f"│ platform:     {platform}")
     click.echo(f"│ quality_tier: {quality_tier}")
     click.echo(f"│ video_model:  {video_model or '(router default)'}")
+    click.echo(f"│ parallel:     {parallel}")
+    click.echo(f"│ max-retries:  {max_retries}")
     click.echo(f"│ output:       {out_path}")
     click.echo(f"│ est cost:     {format_yuan(est['total'])} "
                f"(img {format_yuan(est['images'])} + "
@@ -658,6 +668,12 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     if title:
         cmd += ["--title", title]
     cmd += ["--next-episode", next_episode]
+    if parallel and parallel > 1:
+        cmd += ["--parallel", str(parallel)]
+    if max_retries and max_retries != 3:
+        cmd += ["--max-retries", str(max_retries)]
+    if retry_only:
+        cmd += ["--retry-only"]
 
     click.echo(f"\n[vivify] spawning: {' '.join(cmd)}\n")
     t0 = time.time()

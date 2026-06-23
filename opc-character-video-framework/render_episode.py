@@ -1017,6 +1017,16 @@ def main():
                     help="Which provider to use for video gen: "
                          "auto (router decides), ark (Seedance), minimax (Hailuo). "
                          "When set, model_router only considers that provider's models.")
+    ap.add_argument("--parallel", "-j", type=int, default=1,
+                    help="Number of shots to render in parallel using a thread pool "
+                         "(default 1 = serial). Backed by vivify.retry for "
+                         "smart transient/permanent error classification.")
+    ap.add_argument("--max-retries", type=int, default=3,
+                    help="Max retries per shot on transient failures "
+                         "(default 3). Permanent failures are not retried.")
+    ap.add_argument("--retry-only", action="store_true",
+                    help="Only re-run shots that failed in a previous render. "
+                         "Used by `vivify workflow retry` → `vivify episode render --retry-only`.")
     args = ap.parse_args()
     if not args.title:
         slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
