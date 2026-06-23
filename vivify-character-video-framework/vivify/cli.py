@@ -16,6 +16,7 @@ import click
 import sys
 
 from .db import init_db
+from .migrator import apply_pending, schema_version
 from .commands import character as character_cmd
 from .commands import lesson as lesson_cmd
 from .commands import asset as asset_cmd
@@ -32,8 +33,10 @@ from .commands import db as db_cmd
                      message="%(version)s 点睛 / Vivify")
 @click.option("--db", "db_path", default=None,
               help="Path to SQLite DB (default: .tmp/data/vivify.db).")
+@click.option("--quiet-init", is_flag=True, default=False,
+              help="Suppress auto-migration messages on first run.")
 @click.pass_context
-def main(ctx, db_path):
+def main(ctx, db_path, quiet_init):
     """点睛 / Vivify — character video platform CLI.
 
     画龙点睛,把静态 IP 角色点活成短剧。
@@ -41,6 +44,16 @@ def main(ctx, db_path):
     Run `vivify <command> --help` for command-specific help.
     """
     init_db(db_path)
+    # Auto-apply pending migrations on every invocation. This keeps the DB
+    # schema up to date without requiring a separate `vivify db migrate`
+    # step on first install. apply_pending() is idempotent.
+    applied = apply_pending(db_path, verbose=not quiet_init)
+    if applied and not quiet_init:
+        click.echo(
+            f"[vivify] auto-applied {len(applied)} migration(s); "
+            f"schema now v{schema_version(db_path)}",
+            err=True,
+        )
     ctx.ensure_object(dict)
     ctx.obj["db_path"] = db_path
 

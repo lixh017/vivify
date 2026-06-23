@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     status          TEXT,                       -- 'pending', 'rendering', 'completed', 'failed'
     error_message   TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT,
+    -- updated_at added in migration 002
     render_started_at  TEXT,
     render_completed_at TEXT,
     UNIQUE(character_id, episode_id),
