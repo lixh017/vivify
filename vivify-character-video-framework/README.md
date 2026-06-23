@@ -52,10 +52,17 @@ export MINIMAX_API_KEY="..."      # 海螺 TTS + mmx CLI video gen
 
 ### 2. Bring up the DB
 
+The DB is auto-initialized on first `vivify` invocation — `init_db()`
+creates all tables and any pending migrations are applied automatically.
+On subsequent runs the migration step is a silent no-op.
+
 ```bash
-./scripts/vivify db migrate         # apply pending migrations (idempotent)
 ./scripts/vivify db inspect         # see table list + row counts
+./scripts/vivify db status          # applied + pending migrations
 ```
+
+> Use `--quiet-init` to suppress the `[vivify] auto-applied N migration(s)`
+> notice (useful for scripts that capture stdout).
 
 ### 3. Register a character
 
@@ -270,13 +277,16 @@ The retry classifier (`vivify/retry.py`) distinguishes:
 ## DB migrations
 
 Schema changes don't require manual `ALTER TABLE` — write a numbered
-SQL file in `vivify/migrations/`:
+SQL file in `vivify/migrations/`. Pending migrations are auto-applied
+on every `vivify` invocation, so a manual `db migrate` is only needed
+when you want to see the verbose progress output without running a
+real command:
 
 ```bash
 # 1. Add the SQL file
 $EDITOR vivify/migrations/003_add_new_column.sql
 
-# 2. Apply (idempotent — only pending migrations are applied)
+# 2. (Optional) Apply now and watch progress
 ./scripts/vivify db migrate
 
 # 3. Verify
