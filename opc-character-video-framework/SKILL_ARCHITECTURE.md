@@ -18,12 +18,12 @@ work belongs in the CLI.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ L4  INTENT — "user wants X"                                  │
-│     → opc-character-video  (orchestrator, 30 lines)          │
+│     → vivify-character-video  (orchestrator, 30 lines)          │
 │     → Asks 5 questions, decides which L3 skill to dispatch   │
 ├─────────────────────────────────────────────────────────────┤
 │ L3  SCENARIO — "user wants X, here's the recipe"            │
-│     → opc-panda-new-ip, opc-panda-episode-build,             │
-│       opc-panda-episode-publish                             │
+│     → vivify-panda-new-ip, vivify-panda-episode-build,             │
+│       vivify-panda-episode-publish                             │
 │     → Each scenario: input contract + sequence of vivify     │
 │       CLI commands + how to read results + recovery          │
 ├─────────────────────────────────────────────────────────────┤
@@ -63,33 +63,33 @@ Then: **"Does it produce one or many outcomes?"**
 
 | Skill | Status | Layer |
 |---|---|---|
-| `opc-panda-character` | Reference (read-only). IP bible. | L3 (read-only) |
-| `opc-script-generation` | Could be folded into `opc-panda-episode-build`. Keep as long as scripts are still useful standalone. | L3 |
-| `opc-scene-decomposition` | Same — fold into episode-build if needed. | L3 |
-| `opc-asset-orchestrator` | **Repurpose** to call `vivify asset` instead of duplicating. | L3 |
-| `opc-asset-router` | Could call `vivify cost estimate` + provider picker. | L3 |
-| `opc-provider-volcengine` | Direct curl provider skill. Keep — agents can fall back to it when L1 CLI doesn't suffice. | L0 transport (legacy, kept) |
-| `opc-platform-adaptation` | Pure reference (format rules per platform). | L3 reference |
-| `opc-cost-cap` | Policy reference. Cited by episode-build, render, etc. | L3 |
-| `panda-episode-pipeline` | **Old** end-to-end skill. **Deprecate** in favor of `opc-panda-episode-build` + `vivify episode render`. | (deprecated) |
+| `vivify-panda-character` | Reference (read-only). IP bible. | L3 (read-only) |
+| `vivify-script-generation` | Could be folded into `vivify-panda-episode-build`. Keep as long as scripts are still useful standalone. | L3 |
+| `vivify-scene-decomposition` | Same — fold into episode-build if needed. | L3 |
+| `vivify-asset-orchestrator` | **Repurpose** to call `vivify asset` instead of duplicating. | L3 |
+| `vivify-asset-router` | Could call `vivify cost estimate` + provider picker. | L3 |
+| `vivify-provider-volcengine` | Direct curl provider skill. Keep — agents can fall back to it when L1 CLI doesn't suffice. | L0 transport (legacy, kept) |
+| `vivify-platform-adaptation` | Pure reference (format rules per platform). | L3 reference |
+| `vivify-cost-cap` | Policy reference. Cited by episode-build, render, etc. | L3 |
+| `panda-episode-pipeline` | **Old** end-to-end skill. **Deprecate** in favor of `vivify-panda-episode-build` + `vivify episode render`. | (deprecated) |
 | `mmx-video-gen` | L0 transport for MiniMax. Cited by episode-build. | L0 transport |
 
 ## Skills we just added (this session)
 
 | Skill | Layer | Purpose |
 |---|---|---|
-| `opc-character-video` | **L4** | Top-level entry. Asks 5 questions, dispatches. |
-| `opc-panda-new-ip` | L3 | Create new IP + canonical images via `vivify character add`. |
-| `opc-panda-episode-build` | L3 | Generate storyboard/script + `vivify episode add` + `vivify episode render`. |
-| `opc-panda-episode-publish` | L3 | `vivify publish publish` + analytics. |
+| `vivify-character-video` | **L4** | Top-level entry. Asks 5 questions, dispatches. |
+| `vivify-panda-new-ip` | L3 | Create new IP + canonical images via `vivify character add`. |
+| `vivify-panda-episode-build` | L3 | Generate storyboard/script + `vivify episode add` + `vivify episode render`. |
+| `vivify-panda-episode-publish` | L3 | `vivify publish publish` + analytics. |
 
 ## Naming convention
 
-- All skills start with `opc-` (consistency)
-- L4 orchestrators: `opc-character-<verb>` (e.g., `opc-character-video`)
-- L3 domain: `opc-<domain>-<scenario>` (e.g., `opc-panda-episode-build`)
-- L2 capability: `opc-gen-<thing>` (e.g., `opc-gen-image`) — **reserved for future**
-- L1 transport / direct API: `opc-provider-<vendor>-<capability>` (e.g., `opc-provider-volcengine`)
+- All skills start with `vivify-` (matches platform brand: 点睛 / Vivify)
+- L4 orchestrators: `vivify-character-<verb>` (e.g., `vivify-character-video`)
+- L3 domain: `vivify-<domain>-<scenario>` (e.g., `vivify-panda-episode-build`)
+- L2 capability: `vivify-gen-<thing>` (e.g., `vivify-gen-image`) — **reserved for future**
+- L1 transport / direct API: `vivify-provider-<vendor>-<capability>` (e.g., `vivify-provider-volcengine`)
 - L0 transport (HTTP helpers): no naming convention yet, just descriptive
 
 ## Anti-patterns (don't do this)

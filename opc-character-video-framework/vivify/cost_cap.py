@@ -1,9 +1,9 @@
 """vivify.cost_cap — enforce per-video + monthly cost limits.
 
-Wraps the opc-cost-cap skill (which defines the rules) into a runtime
+Wraps the vivify-cost-cap skill (which defines the rules) into a runtime
 check that vivify episode render calls BEFORE submitting API requests.
 
-Default caps (from opc-cost-cap skill, Phase 1):
+Default caps (from vivify-cost-cap skill, Phase 1):
   - per_video_soft: ¥50  (warn, ask to confirm)
   - per_video_hard: ¥100 (abort)
   - monthly_hard:   ¥60,000 (Phase 1 budget ¥40-70k; abort at 60k for headroom)
@@ -21,7 +21,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Caps (in ¥). These mirror ~/.claude/skills/opc-cost-cap/SKILL.md.
+# Caps (in ¥). These mirror ~/.claude/skills/vivify-cost-cap/SKILL.md.
 DEFAULT_PER_VIDEO_SOFT = 50.0
 DEFAULT_PER_VIDEO_HARD = 100.0
 DEFAULT_MONTHLY_HARD = 60_000.0

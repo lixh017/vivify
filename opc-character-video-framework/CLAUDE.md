@@ -67,7 +67,7 @@ Add at end:
 ## File layout
 
 ```
-opc-character-video-framework/
+vivify-character-video-framework/
 ├── CLAUDE.md                    ← you are here (agent instructions)
 ├── render_episode.py            ← main pipeline
 ├── make_episode.sh              ← scaffold tool

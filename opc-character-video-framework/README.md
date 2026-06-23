@@ -314,7 +314,7 @@ Required:
 - `FFMPEG` — auto-detected via `/root/.openclaw/.../ffmpeg-installer/`
 
 Optional:
-- `OPC_RENDER_DIR` — where intermediate frames go (default `/tmp/opc-render`)
+- `OPC_RENDER_DIR` — where intermediate frames go (default `/tmp/vivify-render`)
 - `FFPROBE` — for actual duration detection (auto-detected too)
 
 ---
@@ -330,6 +330,6 @@ MIT (same as parent framework).
 - `CLAUDE.md` — agent-facing instructions (add IP, fix quality, etc.)
 - `vivify/README.md` — detailed vivify CLI architecture
 - `~/.claude/skills/mmx-video-gen/SKILL.md` — mmx CLI wrapper patterns
-- `~/.claude/skills/opc-cost-cap/SKILL.md` — cost cap rules
+- `~/.claude/skills/vivify-cost-cap/SKILL.md` — cost cap rules
 - `memory/prompt-engineering/seedance-formula.md` — Seedance 2.0 prompt formula
 - `memory/prompt-engineering/id-drift-prevention.md` — character consistency
