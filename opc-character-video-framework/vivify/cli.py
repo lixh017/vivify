@@ -20,6 +20,9 @@ from .commands import character as character_cmd
 from .commands import lesson as lesson_cmd
 from .commands import asset as asset_cmd
 from .commands import episode as episode_cmd
+from .commands import cost as cost_cmd
+from .commands import memory as memory_cmd
+from .commands import publish as publish_cmd
 
 
 @click.group()
@@ -44,6 +47,9 @@ main.add_command(character_cmd.cli)
 main.add_command(lesson_cmd.cli)
 main.add_command(asset_cmd.cli)
 main.add_command(episode_cmd.cli)
+main.add_command(cost_cmd.cli)
+main.add_command(memory_cmd.cli)
+main.add_command(publish_cmd.cli)
 
 
 if __name__ == "__main__":

@@ -474,11 +474,16 @@ def add_cmd(obj, character_id, episode_id, storyboard, script, voice,
 @click.option("--dry-run", is_flag=True,
               help="Write DB rows + estimate cost, but DO NOT call render_episode.py. "
                    "Useful for testing the pipeline without burning API quota.")
+@click.option("--force", is_flag=True,
+              help="Bypass cost-cap enforcement (per-video + monthly hard limits). "
+                   "Use only when intentional.")
+@click.option("--per-video-cap", type=float, default=None,
+              help="Override per-video hard cap in ¥ (default 100).")
 @click.pass_obj
 def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                platform, quality_tier, video_provider, video_model, image_model,
                reference_image, target_dur, out_dir, require_lip_sync,
-               qa_skip, title, next_episode, dry_run):
+               qa_skip, title, next_episode, dry_run, force, per_video_cap):
     """Render an episode via render_episode.py, recording the full run in DB."""
     db_path = obj.get("db_path")
     init_db(db_path)
@@ -574,6 +579,26 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                f"vid {format_yuan(est['videos'])} + "
                f"tts {format_yuan(est['tts'])})")
     click.echo("╰──────────────────────────────────────╯")
+
+    # Cost-cap gate (skipped for dry-run — nothing to spend)
+    if not dry_run:
+        from ..cost_cap import (
+            DEFAULT_MONTHLY_HARD, DEFAULT_PER_VIDEO_HARD,
+            check_cost_caps, render_cost_summary,
+        )
+        with connect(db_path) as conn:
+            cap_check = check_cost_caps(
+                conn,
+                estimate_yuan=est["total"],
+                per_video_hard=per_video_cap or DEFAULT_PER_VIDEO_HARD,
+                monthly_hard=DEFAULT_MONTHLY_HARD,
+                force=force,
+            )
+        click.echo(render_cost_summary(cap_check))
+        if not cap_check["allowed"]:
+            # Should have raised, but defensive
+            raise click.ClickException(
+                f"cost cap blocked this render (use --force to override)")
 
     if dry_run:
         # Mark as completed (dry-run), with estimated cost
