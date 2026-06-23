@@ -455,7 +455,13 @@ def add_cmd(obj, character_id, episode_id, storyboard, script, voice,
 @click.option("--platform", default=None, type=click.Choice(["抖音", "哔哩哔哩", "小红书"]))
 @click.option("--quality-tier", default=None,
               type=click.Choice(["draft", "standard", "premium"]))
-@click.option("--video-model", default=None)
+@click.option("--video-provider", default=None,
+              type=click.Choice(["auto", "ark", "minimax"]),
+              help="Which video gen provider: auto (router), ark (Seedance), "
+                   "minimax (Hailuo via mmx CLI). Default: auto.")
+@click.option("--video-model", default=None,
+              help="Force a specific model id (e.g. 'doubao-seedance-1-5-pro-251215' "
+                   "or 'MiniMax-S2V-01'). Provider filter still applies.")
 @click.option("--image-model", default="doubao-seedream-4-0-250828")
 @click.option("--reference-image", default=None)
 @click.option("--target-dur", type=int, default=None)
@@ -470,7 +476,7 @@ def add_cmd(obj, character_id, episode_id, storyboard, script, voice,
                    "Useful for testing the pipeline without burning API quota.")
 @click.pass_obj
 def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
-               platform, quality_tier, video_model, image_model,
+               platform, quality_tier, video_provider, video_model, image_model,
                reference_image, target_dur, out_dir, require_lip_sync,
                qa_skip, title, next_episode, dry_run):
     """Render an episode via render_episode.py, recording the full run in DB."""
@@ -612,6 +618,8 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
         "--quality-tier", quality_tier,
         "--character-dir", char["dir_path"],
     ]
+    if video_provider:
+        cmd += ["--video-provider", video_provider]
     if script:
         cmd += ["--script", str(script)]
     if video_model:

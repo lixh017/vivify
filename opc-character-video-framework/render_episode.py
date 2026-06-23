@@ -395,16 +395,35 @@ def get_canonical_reference_path(env: dict) -> str | None:
 # ---- L2b: image-to-video --------------------------------------------------
 
 def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
-              model: str, out_path: str, audio_url: str = None) -> str:
+              model: str, out_path: str, audio_url: str = None,
+              character_ref: str = None) -> str:
     """Returns the local path of the downloaded MP4.
+
+    Provider dispatch (per MODEL_CATALOG[model]['provider']):
+      - "minimax" → shells out to `mmx video generate` (T2V/I2V/SEF/S2V modes)
+      - "火山方舟" (ark) → curl POST to /contents/generations/tasks
 
     Seedance 2.0: if audio_url is provided AND the model supports it,
     the model will sync mouth movement / scene audio to the audio.
     Older models (1.5-pro, 1.0-pro) reject the audio_url field —
     we check MODEL_CATALOG before passing it.
+
+    MiniMax (Hailuo) does NOT support audio_url — voice is generated
+    separately via TTS and muxed in ffmpeg, not lip-synced in-video.
+
+    `character_ref` (optional local path): the canonical panda reference
+    image. Only used by MiniMax S2V (--subject-image). Ignored by ark.
     """
     from model_router import MODEL_CATALOG
-    model_supports_audio = "audio_input" in MODEL_CATALOG.get(model, {}).get("features", [])
+    catalog = MODEL_CATALOG.get(model, {})
+    provider = catalog.get("provider", "火山方舟")
+
+    if provider == "minimax":
+        return _gen_video_minimax(env, model, catalog, image_url, action,
+                                   duration_sec, out_path, character_ref)
+
+    # === Ark / Seedance path (unchanged) ===
+    model_supports_audio = "audio_input" in catalog.get("features", [])
 
     content = [
         {"type": "text",
@@ -417,7 +436,7 @@ def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
         "model": model,
         "content": content,
     }
-    info(f"video: submitting task ({duration_sec}s"
+    info(f"video[ark]: submitting task ({duration_sec}s"
          f"{', audio=YES' if audio_url and model_supports_audio else ''}, model={model})")
     code, err, body_b = curl("POST",
                               f"{env['ARK_BASE_URL']}/contents/generations/tasks",
@@ -426,7 +445,7 @@ def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
     if code != 200:
         fatal(f"video gen curl failed (HTTP {code}): {err}")
     task_id = json.loads(body_b)["id"]
-    info(f"video: task_id = {task_id}, polling...")
+    info(f"video[ark]: task_id = {task_id}, polling...")
     # Poll
     start = time.time()
     while time.time() - start < 600:
@@ -438,13 +457,78 @@ def gen_video(env: dict, image_url: str, action: str, duration_sec: int,
         status = d.get("status", "?")
         if status == "succeeded":
             url = d["content"]["video_url"]
-            info(f"video: succeeded, downloading")
+            info(f"video[ark]: succeeded, downloading")
             curl("GET", url, {}, out_file=out_path)
             return out_path
         if status in ("failed", "cancelled"):
-            fatal(f"video task {task_id} {status}: {d}")
-        info(f"video: status={status}")
-    fatal(f"video task {task_id} timed out")
+            fatal(f"video[ark] task {task_id} {status}: {d}")
+        info(f"video[ark]: status={status}")
+    fatal(f"video[ark] task {task_id} timed out")
+
+
+def _gen_video_minimax(env: dict, model: str, catalog: dict,
+                       image_url: str, action: str, duration_sec: int,
+                       out_path: str, character_ref: str = None) -> str:
+    """Video gen via `mmx video generate`. Dispatches by mmx_mode:
+
+      - i2v:  --first-frame (most common, image → video motion)
+      - sef:  --first-frame + --last-frame (start-end interpolation)
+      - s2v:  --subject-image (character-locked via canonical ref)
+    """
+    import subprocess
+    mmx_mode = catalog.get("mmx_mode", "i2v")
+
+    # image_url may be:
+    #   - http(s)://...           (passed through)
+    #   - data:image/...;base64,... (extract + write temp file, mmx wants a path)
+    #   - local path              (passed through)
+    from pathlib import Path
+    first_frame_path = None
+    if image_url.startswith(("http://", "https://")):
+        # mmx CLI accepts URLs directly for --first-frame
+        first_frame_path = image_url
+    elif image_url.startswith("data:image"):
+        # data URI — extract base64 and write to temp file
+        import base64
+        m = re.match(r"data:image/(\w+);base64,(.+)", image_url)
+        if not m:
+            fatal(f"video[minimax]: unparseable data URI for first frame")
+        ext = m.group(1)
+        b64 = m.group(2)
+        tmp = Path("/tmp/opc-render") / f"mmx-first-frame-{os.getpid()}.{ext}"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(base64.b64decode(b64))
+        first_frame_path = str(tmp)
+    else:
+        first_frame_path = image_url  # local path
+
+    cmd = ["mmx", "video", "generate",
+           "--model", model,
+           "--prompt", action,
+           "--download", out_path,
+           "--timeout", "900"]  # mmx default 300s is too short for back-to-back calls
+
+    if mmx_mode == "s2v" and character_ref:
+        # S2V: character-locked video
+        cmd += ["--subject-image", character_ref,
+                "--first-frame", first_frame_path]
+    elif mmx_mode in ("i2v", "sef"):
+        cmd += ["--first-frame", first_frame_path]
+        # SEF: last frame = first frame of next shot (best-effort default to first)
+        if mmx_mode == "sef":
+            cmd += ["--last-frame", first_frame_path]
+    else:
+        # Plain T2V — no first frame
+        pass
+
+    info(f"video[minimax/{mmx_mode}]: {model} → {Path(out_path).name}")
+    # mmx downloads to out_path when --download is given (waits for completion)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    if r.returncode != 0:
+        fatal(f"video[minimax] mmx failed (rc={r.returncode}): {r.stderr or r.stdout}")
+    if not Path(out_path).exists():
+        fatal(f"video[minimax] mmx returned 0 but {out_path} not found")
+    return out_path
 
 
 def upload_to_tos(env: dict, local_path: str, ttl_sec: int = 86400) -> str:
@@ -928,6 +1012,11 @@ def main():
                          "premium (lip sync + best quality). Overrides --video-model.")
     ap.add_argument("--require-lip-sync", action="store_true",
                     help="Force lip sync (only available with premium tier)")
+    ap.add_argument("--video-provider", default="auto",
+                    choices=["auto", "ark", "minimax"],
+                    help="Which provider to use for video gen: "
+                         "auto (router decides), ark (Seedance), minimax (Hailuo). "
+                         "When set, model_router only considers that provider's models.")
     args = ap.parse_args()
     if not args.title:
         slug = Path(args.storyboard).stem.replace("STORYBOARD", "").strip("-_") or "ep"
@@ -979,8 +1068,9 @@ def main():
         tier=tier,
         requirements=requirements,
         explicit_model=args.video_model if args.video_model != DEFAULT_VIDEO_MODEL else None,
+        provider=args.video_provider if args.video_provider != "auto" else None,
     )
-    info(f"video router: tier={tier} → {resolved_model} ({reason})")
+    info(f"video router: tier={tier} provider={args.video_provider} → {resolved_model} ({reason})")
     args.video_model = resolved_model
 
     render_dir = Path(env["RENDER_DIR"])
@@ -1072,13 +1162,19 @@ def main():
         _local, public_url = image_urls[n]
         # Seedance 2.0 lip-sync: pass voiceover audio URL if available
         audio_url = voiceover_urls.get(n)
+        # Character ref (only for MiniMax S2V — passed via character_ref arg)
+        char_ref = None
+        from model_router import MODEL_CATALOG as _MC
+        if _MC.get(args.video_model, {}).get("provider") == "minimax":
+            char_ref = ref  # the canonical reference image path
         # Try primary model, fall back via router if it fails
         current_model = args.video_model
         video_ok = False
         for attempt in range(3):  # max 3 fallbacks
             try:
                 gen_video(env, public_url, action, shot["duration_sec"],
-                          current_model, str(vid_path), audio_url=audio_url)
+                          current_model, str(vid_path), audio_url=audio_url,
+                          character_ref=char_ref)
                 video_ok = True
                 if current_model != args.video_model:
                     info(f"video {n}: using fallback {current_model} (after {args.video_model} failed)")

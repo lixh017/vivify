@@ -127,6 +127,65 @@ MODEL_CATALOG = {
         "best_for": ["chinese_aesthetic", "open_source_alt"],
         "notes": "阿里开源,可自部署",
     },
+    # === MiniMax 海螺 (mmx CLI) ===
+    # These models route through `mmx video generate`, NOT the ark curl
+    # path. Mark with provider="minimax" so gen_video() dispatches correctly.
+    "MiniMax-Hailuo-2.3": {
+        "name": "Hailuo 2.3 (I2V)",
+        "provider": "minimax",
+        "tier": "premium",
+        "cost_per_sec_yuan": 1.0,
+        "quality": 9.0,
+        "features": ["character_ref", "chinese_aesthetic"],
+        "max_duration_sec": 6,
+        "best_for": ["minimax_provider", "premium_alt"],
+        "notes": "MiniMax 旗舰,默认 I2V 模式 (--first-frame)。质量稳定,无嘴型同步。",
+        "mmx_mode": "i2v",
+    },
+    "MiniMax-Hailuo-2.3-Fast": {
+        "name": "Hailuo 2.3 Fast (I2V)",
+        "provider": "minimax",
+        "tier": "standard",
+        "cost_per_sec_yuan": 0.6,
+        "quality": 8.5,
+        "features": ["character_ref", "chinese_aesthetic"],
+        "max_duration_sec": 6,
+        "best_for": ["minimax_provider", "fast_iteration"],
+        "notes": "海螺 Fast 版,出片更快、便宜 40%。",
+        "mmx_mode": "i2v",
+    },
+    "MiniMax-Hailuo-02": {
+        "name": "Hailuo 02 (SEF: start-end frame)",
+        "provider": "minimax",
+        "tier": "premium",
+        "cost_per_sec_yuan": 0.8,
+        "quality": 8.5,
+        "features": ["character_ref"],
+        "max_duration_sec": 6,
+        "best_for": ["minimax_provider", "transition_shots"],
+        "notes": "起始+结束帧插值 (SEF),自动选 --first-frame + --last-frame 模式。",
+        "mmx_mode": "sef",
+    },
+    "MiniMax-S2V-01": {
+        "name": "S2V-01 (Subject Reference — character-locked)",
+        "provider": "minimax",
+        "tier": "premium",
+        "cost_per_sec_yuan": 1.2,
+        "quality": 9.5,
+        "features": ["lip_sync", "character_ref", "subject_lock"],
+        "max_duration_sec": 6,
+        "best_for": ["character_consistency", "id_drift_fix"],
+        "notes": "角色锁定 — 用 --subject-image 传 canonical ref,跨镜头脸不漂移。解决 Seedance ID drift 问题。",
+        "mmx_mode": "s2v",
+    },
+}
+
+
+# Provider identifiers — used by vivify episode render --video-provider
+PROVIDERS = {
+    "ark": "火山方舟 (Seedance)",
+    "minimax": "MiniMax 海螺 (Hailuo)",
+    "auto": "auto-pick (model router decides)",
 }
 
 
@@ -184,51 +243,104 @@ class ModelRouter:
 
     def route_video_model(self, tier: str = "standard",
                           requirements: dict = None,
-                          explicit_model: str = None) -> tuple[str, str]:
+                          explicit_model: str = None,
+                          provider: str = None) -> tuple[str, str]:
         """Pick the best video model. Returns (model_id, reasoning).
 
+        Args:
+            tier: "draft" | "standard" | "premium"
+            requirements: e.g. {"needs_lip_sync": True}
+            explicit_model: force a specific model id (skips routing)
+            provider: "ark" | "minimax" | None (auto)
+                - "ark" → only consider Seedance models
+                - "minimax" → only consider Hailuo models
+                - None → all models (current behavior)
+
         Priority:
-          1. explicit_model (if user forced one)
+          1. explicit_model (if user forced one) — provider filter still applies
           2. If requirements["needs_lip_sync"], prefer models with lip_sync feature
-          3. Use the tier's first activated model
-          4. Fall back to any activated model
+          3. Use the tier's first activated model (within provider filter)
+          4. Fall back to any activated model (within provider filter)
         """
         requirements = requirements or {}
+        provider_filter = (provider or "").lower() or None
 
-        # 1. Explicit override
+        def _match(mid: str) -> bool:
+            m = MODEL_CATALOG.get(mid, {})
+            if provider_filter and provider_filter != "auto":
+                p = m.get("provider", "")
+                # Normalize: "minimax" provider OR "MiniMax" provider OR "火山方舟"
+                if provider_filter == "ark":
+                    return p == "火山方舟"
+                if provider_filter == "minimax":
+                    return p == "minimax"
+                return False
+            return True
+
+        # 1. Explicit override (with provider guard)
         if explicit_model:
-            return explicit_model, f"explicit override ({explicit_model})"
+            if not _match(explicit_model):
+                raise ValueError(
+                    f"explicit_model={explicit_model} doesn't match provider={provider_filter}. "
+                    f"Use --video-provider auto/ark/minimax to match the model."
+                )
+            return explicit_model, f"explicit override ({explicit_model}, provider={provider_filter or 'any'})"
 
         # 2. Special: lip sync requirement
         if requirements.get("needs_lip_sync"):
             lip_sync_models = [
                 mid for mid, m in MODEL_CATALOG.items()
-                if "lip_sync" in m.get("features", []) and mid in self.get_activated_models()
+                if "lip_sync" in m.get("features", [])
+                and mid in self.get_activated_models()
+                and _match(mid)
             ]
             if lip_sync_models:
                 # pick the cheapest premium tier that has lip sync
                 lip_sync_models.sort(key=lambda mid: MODEL_CATALOG[mid]["cost_per_sec_yuan"])
                 chosen = lip_sync_models[0]
-                return chosen, f"lip_sync required, picked cheapest lip-sync model ({chosen})"
+                return chosen, f"lip_sync required, picked cheapest lip-sync model ({chosen}, provider={MODEL_CATALOG[chosen]['provider']})"
             else:
-                # No lip sync model available — fall back to standard
+                # No lip sync model in this provider — fall back to standard
                 return self.route_video_model(
                     tier="standard",
                     requirements={k: v for k, v in requirements.items() if k != "needs_lip_sync"},
-                )[0], "lip_sync requested but no model available — fell back to standard (no lip sync)"
+                    provider=provider,
+                )[0], f"lip_sync requested but no model in provider={provider_filter or 'any'} — fell back to standard (no lip sync)"
 
         # 3. Tier-based selection
         chain = FALLBACK_CHAINS.get(tier, FALLBACK_CHAINS["standard"])
         activated = self.get_activated_models()
         for mid in chain:
-            if mid in activated:
+            if mid in activated and _match(mid):
                 m = MODEL_CATALOG[mid]
-                return mid, f"tier={tier}, picked {mid} (¥{m['cost_per_sec_yuan']}/s)"
+                return mid, f"tier={tier}, picked {mid} (¥{m['cost_per_sec_yuan']}/s, provider={m['provider']})"
 
-        # 4. Last resort: any activated model
+        # 3b. Provider-scoped chain (for minimax etc., where FALLBACK_CHAINS
+        # doesn't have entries). Build a tier-aware list from MODEL_CATALOG.
+        if provider_filter:
+            tier_rank = {"draft": 0, "standard": 1, "premium": 2}
+            target_rank = tier_rank.get(tier, 1)
+            in_provider = [
+                mid for mid, m in MODEL_CATALOG.items()
+                if _match(mid) and mid in activated
+            ]
+            # Pick the model with tier closest to the target
+            in_provider.sort(key=lambda mid: (
+                abs(tier_rank.get(MODEL_CATALOG[mid].get("tier", "standard"), 1) - target_rank),
+                MODEL_CATALOG[mid]["cost_per_sec_yuan"],
+            ))
+            if in_provider:
+                mid = in_provider[0]
+                m = MODEL_CATALOG[mid]
+                return mid, (f"tier={tier}, no chain match in provider={provider_filter}, "
+                             f"picked closest-tier {mid} (¥{m['cost_per_sec_yuan']}/s)")
+
+        # 4. Last resort: any activated model in this provider
         available = activated & set(MODEL_CATALOG.keys())
-        if available:
-            mid = sorted(available, key=lambda m: MODEL_CATALOG[m]["cost_per_sec_yuan"])[0]
+        available_filtered = [mid for mid in available if _match(mid)]
+        if available_filtered:
+            mid = sorted(available_filtered,
+                         key=lambda m: MODEL_CATALOG[m]["cost_per_sec_yuan"])[0]
             return mid, f"no tier match, picked cheapest available ({mid})"
 
         # 5. Nothing activated — fallback to known standard
