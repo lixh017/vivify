@@ -183,16 +183,30 @@ def _model_cost_yuan(model: str, duration_sec: int = 0) -> float:
 # (e.g. "ark"), but cost catalog is keyed by model name (e.g.
 # "doubao-seedance-2-0-260128"). Without this mapping, every cost
 # lookup returns 0 and the cap gate is a silent no-op.
+#
+# Hardcoded prefix map: provider_id -> catalog key prefix. The catalog
+# uses vendor-internal naming ("doubao-seedance-*", "MiniMax-Hailuo-*")
+# that has no overlap with our router's provider_ids ("ark", "minimax").
+# Substring matching alone fails (catalog has no "ark" or "minimax"
+# substring in any key) — we map explicitly here.
+_PROVIDER_ID_TO_CATALOG_PREFIX: dict[str, str] = {
+    "ark": "doubao-",      # 火山方舟: Seedance (video) + Seedream (image)
+    "minimax": "MiniMax-",  # 海螺: Hailuo / S2V
+    "kling": "kling-",      # 可灵 (planned, not in catalog yet)
+    "jimeng": "jimeng-",    # 即梦 (planned, not in catalog yet)
+    "suno": "suno-",
+    "udio": "udio-",
+}
+
+
 def _default_model_for(provider_id: str, config: "RouterConfig") -> str:
     """Resolve a provider_id to a model name via config.default_models.
 
     Resolution order:
       1. config.default_models.get(provider_id) — explicit config override
-      2. Fall back to scanning MODEL_CATALOG for keys containing the
-         provider_id as substring; pick the cheapest (lowest
-         cost_per_sec_yuan, defaulting to 0)
-      3. If still unresolved, return provider_id itself (cost lookup
-         will return 0, but at least we don't crash)
+      2. Catalog scan using _PROVIDER_ID_TO_CATALOG_PREFIX; pick the cheapest
+      3. Last resort: return provider_id itself (cost lookup will be 0,
+         but at least we don't crash — surfaces a config bug visibly)
 
     Never raises — always returns a non-empty string.
     """
@@ -200,13 +214,12 @@ def _default_model_for(provider_id: str, config: "RouterConfig") -> str:
     explicit = (config.default_models or {}).get(provider_id)
     if explicit:
         return str(explicit)
-    # 2. Catalog scan — pick the cheapest model for this provider
+    # 2. Catalog scan using hardcoded prefix map
+    prefix = _PROVIDER_ID_TO_CATALOG_PREFIX.get(provider_id, provider_id)
     try:
         from model_router import MODEL_CATALOG
-        # Catalog keys look like 'doubao-seedance-...', 'wan2-1-14b-i2v-...',
-        # 'minimax-...'. We match by substring so a provider_id 'ark' picks
-        # up the doubao-seedance family (the real ark provider).
-        candidates = [k for k in MODEL_CATALOG if provider_id in k]
+        candidates = [k for k in MODEL_CATALOG
+                      if k.lower().startswith(prefix.lower())]
         if candidates:
             cheapest = min(
                 candidates,

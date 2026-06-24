@@ -103,11 +103,19 @@ def test_generate_asset_budget_exceeded_writes_ledger(cfg_path, env, isolated_le
             cost_caps={"per_video_cny": 0.001, "per_asset_cny": 0.001, "monthly_cny": 0.001},
         )
     monkeypatch.setattr("vivify.asset_orchestrator.load_config", fake_load_config)
-    # Also mock _model_cost_yuan to return huge cost
+    # Mock _default_model_for to return provider_id verbatim (so the mock
+    # _model_cost_yuan is consistent). Then mock _model_cost_yuan to huge.
+    monkeypatch.setattr("vivify.asset_orchestrator._default_model_for",
+                        lambda pid, cfg: pid)
     monkeypatch.setattr("vivify.asset_orchestrator._model_cost_yuan",
                         lambda *a, **k: 999.0)
 
-    # The adapter should NEVER be called
+    # The adapter should NEVER be called. Mock pick() to return 'ark'
+    # directly (bypassing the chain walk, which would short-circuit to
+    # 'manual-pending' if the chain ends in that sentinel — that's a
+    # different code path). This test specifically exercises the
+    # orchestrator's per-asset cap gate, not pick()'s chain logic.
+    monkeypatch.setattr("vivify.asset_orchestrator.pick", lambda *a, **k: "ark")
     with patch("vivify.asset_orchestrator._build_adapter") as mock_build:
         result = generate_asset(req, env=env, config_path=cfg_path)
         mock_build.assert_not_called()

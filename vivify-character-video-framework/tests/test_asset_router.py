@@ -167,10 +167,16 @@ cost_caps:
 """)
     cfg = load_config()
 
+    # Mock _default_model_for to return provider_id verbatim (bypass the
+    # real catalog resolution so the legacy mock _model_cost_yuan can match
+    # on provider_id strings like 'ark' / 'kling').
+    def fake_resolve(provider_id, config):
+        return provider_id
     # Mock _model_cost_yuan: ark=10 (over cap), kling=2 (under cap)
     def fake_cost(model, duration_sec=0):
         return {"ark": 10.0, "kling": 2.0}.get(model, 0.0)
-    with patch("vivify.asset_router._model_cost_yuan", side_effect=fake_cost):
+    with patch("vivify.asset_router._default_model_for", side_effect=fake_resolve), \
+         patch("vivify.asset_router._model_cost_yuan", side_effect=fake_cost):
         p = pick(cfg, "video", requirements={"duration_sec": 1})
     # ark would cost 10 > 5 cap, so we walk to kling (2 ≤ 5)
     assert p == "kling"
@@ -244,3 +250,30 @@ class TestCostGateNotSilent:
         # 5 seconds x ¥/sec should be > 0
         assert cost > 0, (f"_model_cost_yuan returned 0 even with model_name={model_name!r}; "
                           f"the cost gate is still broken")
+
+    def test_live_config_resolver_produces_nonzero_cost(self, project_yaml):
+        """End-to-end: load the (project-local) config, resolve 'ark' and
+        'minimax' to model names, and assert cost > 0. This is the
+        regression test that catches the 'substring match returns provider_id
+        itself' bug — without the hardcoded prefix map, this returns 0.0."""
+        from vivify.asset_router import _default_model_for, _model_cost_yuan, save_default_config
+        # Ensure the project-local yaml is the default config (with default_models)
+        save_default_config(project_yaml)
+        cfg = load_config()
+        for provider_id in ("ark", "minimax"):
+            model_name = _default_model_for(provider_id, cfg)
+            # The resolver must return a model name, not the provider_id itself
+            # (unless the catalog is truly empty for that provider).
+            cost = _model_cost_yuan(model_name, 5)
+            assert cost > 0, (
+                f"provider_id={provider_id!r} resolved to {model_name!r} "
+                f"with cost_per_sec=0 for 5s — the cost gate is silently "
+                f"broken. Check _PROVIDER_ID_TO_CATALOG_PREFIX in asset_router.py."
+            )
+            # And the resolved name must not be the bare provider_id
+            # (that means the resolver fell through to step 3 last-resort)
+            from model_router import MODEL_CATALOG
+            assert model_name in MODEL_CATALOG, (
+                f"resolver returned {model_name!r} which is not in MODEL_CATALOG; "
+                f"the prefix map is missing an entry for {provider_id!r}"
+            )
