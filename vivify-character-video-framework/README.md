@@ -85,6 +85,40 @@ On subsequent runs the migration step is a silent no-op.
 
 Output: `.tmp/renders/fengge-EP005.mp4` plus a full audit trail in the DB.
 
+### 4b. Generate individual assets (the L1 orchestrator)
+
+For per-asset calls outside the episode-render pipeline:
+
+```bash
+# Dry-run — show which provider would be picked, no API call
+./scripts/vivify asset generate \
+  --scene '{"scene_id":"smoke","type":"image","prompt":"red dot","options":{"size":"1024x1024"}}' \
+  --type image --dry-run
+
+# Real call — uses the router, writes a ledger row
+./scripts/vivify asset generate \
+  --scene '{"scene_id":"s1","type":"image","prompt":"red dot","options":{"size":"1024x1024","out_path":"/tmp/x.jpg"}}' \
+  --type image
+
+# Batch (one scene JSON per line)
+./scripts/vivify asset generate --batch scenes.jsonl --type image
+
+# Inspect the ledger (cost + status history)
+./scripts/vivify asset ledger --last 20
+./scripts/vivify asset ledger --filter status=budget-exceeded --as-json
+
+# Show / dry-run the provider-selection router
+./scripts/vivify asset router --show-config
+./scripts/vivify asset router --pick --type video --duration-sec 5
+```
+
+The orchestrator (`vivify.asset_orchestrator`) coordinates:
+router → cost-cap → provider → retry (5/15/45s backoff) → ledger.
+Every call writes a JSONL row to `~/.claude/agents/vivify-asset-ledger.jsonl`,
+whether it succeeds or fails. The router YAML at
+`~/.claude/config/vivify-providers.yaml` is auto-created on first
+`asset router` call (cost caps: ¥5/asset, ¥50/video, ¥60,000/month).
+
 ### 5. Publish + track
 
 ```bash
@@ -106,7 +140,8 @@ Output: `.tmp/renders/fengge-EP005.mp4` plus a full audit trail in the DB.
 vivify
 ├── character   Register/list/show/validate/refresh IP characters
 ├── lesson      Manage lessons (cross-IP + per-IP)
-├── asset       Manage asset library (canonical images, generated stills)
+├── asset       Asset library (list/register/show/register-canonical)
+│               + L1 orchestrator (generate/ledger/router)
 ├── episode     Render lifecycle: add / render / show / shots / status / delete
 ├── cost        Cost tracking + per-video ¥50/¥100 + monthly ¥60k cap
 ├── memory      Migrate memory/*.md to DB, list/show cross-IP lessons
@@ -114,6 +149,18 @@ vivify
 ├── workflow    Parallel rendering + smart retry (classifier)
 └── db          Migrations: status / migrate / inspect / schema-version
 ```
+
+The `asset` command now has **two layers**:
+
+- **Library layer** (DB-backed, character-agnostic):
+  `list / register / show / register-canonical` — queries the
+  `assets` table for what's already been generated.
+- **L1 orchestrator** (the G3 pipeline): `generate / ledger / router`
+  — drives router → cost-cap → retry → ledger for new calls.
+  Driven by the YAML config at `~/.claude/config/vivify-providers.yaml`
+  (auto-created on first `asset router` call). Ledger lives at
+  `~/.claude/agents/vivify-asset-ledger.jsonl` (auto-renames the
+  legacy `opc-asset-ledger.jsonl`).
 
 Full reference: each command has `--help`. Example:
 
@@ -135,10 +182,18 @@ vivify/                          Click-based CLI (this package)
 ├── pricing.py                   Cost estimator (¥/sec by model)
 ├── retry.py                     Error classifier (permanent vs transient)
 ├── cost_cap.py                  Per-video + monthly hard caps
+├── providers/                   L1 — vendor adapters
+│   ├── base.py                  ProviderAdapter ABC + request/result contracts
+│   ├── ark.py                   火山方舟 (image + video)
+│   ├── minimax.py               海螺 / mmx CLI (i2v / sef / s2v modes)
+│   └── stubs.py                 kling / suno / udio / jimeng placeholders
+├── asset_orchestrator.py        L1 — router → cost-cap → retry → ledger pipeline
+├── asset_router.py              L1 — YAML provider-selection algorithm
+├── asset_ledger.py              L1 — append-only JSONL cost + status ledger
 └── commands/
     ├── character.py             IP registry
     ├── lesson.py                Knowledge base
-    ├── asset.py                 Asset library
+    ├── asset.py                 Asset library + L1 orchestrator commands
     ├── episode.py               Render lifecycle
     ├── cost.py                  Cost status / history / estimate
     ├── memory.py                Migrate memory/*.md → DB
@@ -147,6 +202,7 @@ vivify/                          Click-based CLI (this package)
     └── db.py                    Migrations CLI
 
 scripts/vivify                   Shell entry (no `pip install` needed)
+pyproject.toml                   Package metadata + pytest config
 
 characters/<ip>/                 Per-IP data layer (mutable)
 ├── character.yaml              IP profile
@@ -339,6 +395,11 @@ MIT (same as parent framework).
 
 - `CLAUDE.md` — agent-facing instructions (add IP, fix quality, etc.)
 - `vivify/README.md` — detailed vivify CLI architecture
+- `~/.claude/skills/vivify-asset-orchestrator/SKILL.md` — L2 spec
+  (now backed by `vivify asset generate / ledger / router` — see
+  `vivify/asset_orchestrator.py`)
+- `~/.claude/skills/vivify-asset-router/SKILL.md` — L2 router spec
+  (backed by `vivify/asset_router.py` + `~/.claude/config/vivify-providers.yaml`)
 - `~/.claude/skills/mmx-video-gen/SKILL.md` — mmx CLI wrapper patterns
 - `~/.claude/skills/vivify-cost-cap/SKILL.md` — cost cap rules
 - `memory/prompt-engineering/seedance-formula.md` — Seedance 2.0 prompt formula

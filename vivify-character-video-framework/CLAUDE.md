@@ -69,11 +69,19 @@ Add at end:
 ```
 vivify-character-video-framework/
 ├── CLAUDE.md                    ← you are here (agent instructions)
-├── render_episode.py            ← main pipeline
+├── render_episode.py            ← legacy single-shot pipeline (still works)
 ├── make_episode.sh              ← scaffold tool
 ├── model_router.py              ← auto tier + fallback
 ├── qa_gate.py                   ← heuristic QA checks
 ├── character_loader.py          ← YAML loader
+├── vivify/                      ← Python CLI package (point of entry now)
+│   ├── cli.py                   ← `vivify` Click group
+│   ├── providers/               ← AI vendor adapters (ark / minimax / stubs)
+│   ├── asset_orchestrator.py    ← router → cost-cap → retry → ledger pipeline
+│   ├── asset_router.py          ← YAML provider-selection router
+│   ├── asset_ledger.py          ← JSONL cost + status ledger
+│   ├── commands/                ← CLI subcommand modules (one per group)
+│   └── ...                      ← db, migrator, pricing, retry, cost_cap
 ├── memory/                      ← CROSS-IP knowledge (general, reusable)
 │   ├── prompt-engineering/      ← Seedance 2.0 formula, etc.
 │   └── model-capabilities/      ← Seedream / Seedance / TTS capabilities
@@ -104,11 +112,33 @@ vivify-character-video-framework/
 ## Quick start
 
 ```bash
-# Render an episode with fengge
+# Render an episode with fengge (legacy single-shot path — still works)
 python3 render_episode.py --character-dir characters/fengge \
   --storyboard examples/panda-episode-004/STORYBOARD.md \
   --script examples/panda-episode-004/SCRIPT-douyin.md \
   --voice 治愈 --platform 抖音 --out /tmp/out
+
+# Or via the new `vivify` CLI (preferred — backed by the orchestrator + DB)
+./scripts/vivify episode render fengge EP005 \
+  --storyboard characters/fengge/examples/panda-episode-005/STORYBOARD.md \
+  --script     characters/fengge/examples/panda-episode-005/SCRIPT-douyin.md \
+  --voice 治愈 --platform 抖音 --target-dur 58 --parallel 4
+
+# Single-asset generation via the new L1 orchestrator
+./scripts/vivify asset generate \
+  --scene '{"scene_id":"smoke","type":"image","prompt":"red dot"}' \
+  --type image --dry-run           # see which provider would be picked
+./scripts/vivify asset generate \
+  --scene '{"scene_id":"smoke","type":"image","prompt":"red dot","options":{"size":"1024x1024","out_path":"/tmp/x.jpg"}}' \
+  --type image                     # real call → ledger row written
+
+# Read the cost + status ledger
+./scripts/vivify asset ledger --last 20
+./scripts/vivify asset ledger --filter status=budget-exceeded --as-json
+
+# Inspect / dry-run the provider-selection router
+./scripts/vivify asset router --show-config
+./scripts/vivify asset router --pick --type video --duration-sec 5
 ```
 
 ## CLI flags (must know)
