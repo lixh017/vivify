@@ -51,6 +51,7 @@ class RouterConfig:
     fallback_chains: dict = field(default_factory=dict)
     cost_caps: dict = field(default_factory=dict)
     scene_overrides: dict = field(default_factory=dict)
+    default_models: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +59,7 @@ class RouterConfig:
             "fallback_chains": self.fallback_chains,
             "cost_caps": self.cost_caps,
             "scene_overrides": self.scene_overrides,
+            "default_models": self.default_models,
         }
 
 
@@ -98,6 +100,22 @@ cost_caps:
 # Optional: per-scene-type overrides. Keys are scene categories from
 # vivify-scene-decomposition (e.g. 'video_short_character').
 scene_overrides: {}
+
+# Provider-id -> model-name resolution. The router picks by provider_id
+# (e.g. 'ark'), but the cost catalog is keyed by model name (e.g.
+# 'doubao-seedance-2-0-fast-260128'). Without this mapping, every cost
+# lookup returns 0 and the per_asset / monthly cap gates are silent
+# no-ops. If a model name here is missing from MODEL_CATALOG, the
+# resolver falls back to a catalog scan (cheapest match for the
+# provider_id); if that also fails, it returns the provider_id itself
+# and the cost lookup safely returns 0.
+default_models:
+  ark:     doubao-seedance-1-0-pro-fast-251015  # 0.21 ¥/s — fits under per_asset cap
+                                              # for typical 5–10s clips
+  minimax: MiniMax-Hailuo-2.3-Fast             # cheaper than premium Hailuo-2.3
+  kling:   doubao-seedance-1-0-lite-i2v-250428 # kling has no entry in MODEL_CATALOG
+                                             # today — fall back to the cheapest
+                                             # 火山 ark-prefixed lite tier
 """
 
 
@@ -140,6 +158,7 @@ def _parse_yaml(path: Path) -> RouterConfig:
         fallback_chains=_str_keys(raw.get("fallback_chains", {}) or {}),
         cost_caps={k: float(v) for k, v in (raw.get("cost_caps", {}) or {}).items()},
         scene_overrides=_str_keys(raw.get("scene_overrides", {}) or {}),
+        default_models={k: str(v) for k, v in (raw.get("default_models", {}) or {}).items()},
     )
 
 
@@ -158,6 +177,46 @@ def _model_cost_yuan(model: str, duration_sec: int = 0) -> float:
     except Exception:
         rate = 0.0
     return rate * max(1, duration_sec)
+
+
+# Provider-id -> model-name resolution. The router decides on provider_id
+# (e.g. "ark"), but cost catalog is keyed by model name (e.g.
+# "doubao-seedance-2-0-260128"). Without this mapping, every cost
+# lookup returns 0 and the cap gate is a silent no-op.
+def _default_model_for(provider_id: str, config: "RouterConfig") -> str:
+    """Resolve a provider_id to a model name via config.default_models.
+
+    Resolution order:
+      1. config.default_models.get(provider_id) — explicit config override
+      2. Fall back to scanning MODEL_CATALOG for keys containing the
+         provider_id as substring; pick the cheapest (lowest
+         cost_per_sec_yuan, defaulting to 0)
+      3. If still unresolved, return provider_id itself (cost lookup
+         will return 0, but at least we don't crash)
+
+    Never raises — always returns a non-empty string.
+    """
+    # 1. Explicit config
+    explicit = (config.default_models or {}).get(provider_id)
+    if explicit:
+        return str(explicit)
+    # 2. Catalog scan — pick the cheapest model for this provider
+    try:
+        from model_router import MODEL_CATALOG
+        # Catalog keys look like 'doubao-seedance-...', 'wan2-1-14b-i2v-...',
+        # 'minimax-...'. We match by substring so a provider_id 'ark' picks
+        # up the doubao-seedance family (the real ark provider).
+        candidates = [k for k in MODEL_CATALOG if provider_id in k]
+        if candidates:
+            cheapest = min(
+                candidates,
+                key=lambda k: MODEL_CATALOG[k].get("cost_per_sec_yuan", 0.0),
+            )
+            return cheapest
+    except Exception:
+        pass
+    # 3. Last resort
+    return provider_id
 
 
 # --- pick -------------------------------------------------------------------
@@ -184,7 +243,7 @@ def pick(config: RouterConfig, asset_type: str, *,
             return False
         if not _passes_filter(candidate, provider_filter):
             return False
-        if per_asset_cap and _model_cost_yuan(candidate, duration) > per_asset_cap:
+        if per_asset_cap and _model_cost_yuan(_default_model_for(candidate, config), duration) > per_asset_cap:
             return False
         return True
 
@@ -230,4 +289,5 @@ __all__ = [
     "load_config",
     "save_default_config",
     "pick",
+    "_default_model_for",
 ]

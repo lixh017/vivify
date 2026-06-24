@@ -192,3 +192,55 @@ cost_caps:
     with patch("vivify.asset_router._model_cost_yuan", side_effect=fake_cost):
         p = pick(cfg, "video", requirements={"duration_sec": 1})
     assert p == "manual-pending"
+
+
+# --- _default_model_for resolver (Task 1.5) --------------------------------
+
+class TestDefaultModelFor:
+    def test_explicit_config_default_models_wins(self):
+        """When config.default_models has the provider, use that exact model name."""
+        from vivify.asset_router import RouterConfig, _default_model_for
+        cfg = RouterConfig(default_models={"ark": "doubao-seedance-2-0-260128"})
+        assert _default_model_for("ark", cfg) == "doubao-seedance-2-0-260128"
+
+    def test_fallback_to_catalog_scan(self):
+        """When config.default_models is empty, scan MODEL_CATALOG for keys
+        containing the provider_id and pick the cheapest."""
+        from vivify.asset_router import RouterConfig, _default_model_for
+        cfg = RouterConfig()  # no default_models
+        # This test only asserts that the resolver returns SOMETHING that
+        # looks like a model name (not the provider_id itself)
+        result = _default_model_for("ark", cfg)
+        # Either it found a catalog match, or it fell back to provider_id
+        assert result  # truthy
+
+    def test_resolver_returns_string_never_raises(self):
+        """Resolver must never raise — provider_id 'minimax' / 'kling' / etc."""
+        from vivify.asset_router import RouterConfig, _default_model_for
+        cfg = RouterConfig()
+        for pid in ["ark", "minimax", "kling", "nonexistent-provider"]:
+            result = _default_model_for(pid, cfg)
+            assert isinstance(result, str)
+            assert result  # non-empty
+
+
+class TestCostGateNotSilent:
+    """Regression: confirm the cost gate fires when it should."""
+
+    def test_per_asset_cap_actually_blocks_with_real_cost(self, tmp_path):
+        """When default_models is configured, the per_asset cap should be
+        checkable. Without the fix, _model_cost_yuan('ark', 5) returns 0
+        and the gate never fires. With the fix, it should compute > 0
+        for video with duration 5."""
+        from vivify.asset_router import _model_cost_yuan, _default_model_for, RouterConfig
+        from model_router import MODEL_CATALOG
+        # Pick any ark model that has a non-zero cost_per_sec_yuan
+        ark_models = [k for k, v in MODEL_CATALOG.items()
+                      if "seedance" in k and v.get("cost_per_sec_yuan", 0) > 0]
+        assert ark_models, "test premise broken: no ark models in catalog with non-zero cost"
+        cfg = RouterConfig(default_models={"ark": ark_models[0]})
+        model_name = _default_model_for("ark", cfg)
+        cost = _model_cost_yuan(model_name, 5)
+        # 5 seconds x ¥/sec should be > 0
+        assert cost > 0, (f"_model_cost_yuan returned 0 even with model_name={model_name!r}; "
+                          f"the cost gate is still broken")

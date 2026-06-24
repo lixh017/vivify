@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .asset_router import RouterConfig, load_config, pick, _model_cost_yuan
+from .asset_router import RouterConfig, load_config, pick, _model_cost_yuan, _default_model_for
 from .asset_ledger import LedgerEntry, append as ledger_append, fnv1a_64
 from .providers.base import (
     AssetType,
@@ -171,7 +171,12 @@ def generate_asset(req: GenerateRequest, *,
 
     # 3. Pre-call cost gate (per_asset_cny from router config)
     per_asset_cap = cfg.cost_caps.get("per_asset_cny")
-    estimate = _model_cost_yuan(provider_id, duration)
+    # Resolve provider_id (e.g. "ark") to a model name (e.g.
+    # "doubao-seedance-2-0-fast-260128") so the cost catalog lookup
+    # actually returns a real rate. Without this, the cost gate is a
+    # silent no-op (catalog is keyed by model name, not provider_id).
+    model_name = _default_model_for(provider_id, cfg)
+    estimate = _model_cost_yuan(model_name, duration)
     if per_asset_cap and estimate > per_asset_cap:
         return _emit_failure(
             req,
