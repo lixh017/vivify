@@ -269,3 +269,126 @@ def test_cost_estimate_video_no_duration_is_zero(env):
     p = ArkProvider(env=env)
     req = GenerateRequest(scene_id="s1", asset_type="video", prompt="x")
     assert p.cost_estimate(req) == 0.0
+
+
+# --- character_ref passthrough (Task 3) ------------------------------------
+
+def test_generate_video_without_character_ref_has_one_image_entry(env, tmp_path, monkeypatch):
+    """When character_ref is None, content array has exactly 1 image_url entry
+    (the first-frame) — confirms the second-image path is opt-in, not always-on.
+    """
+    task_id = "cgt-NOREF"
+    captured_post_body = {}
+
+    def fake_run(cmd, *args, **kwargs):
+        is_download = "-o" in cmd
+        if is_download:
+            out_file = cmd[cmd.index("-o") + 1]
+            Path(out_file).write_bytes(b"\x00\x00\x00\x18ftypFAKE")
+            return _fake_curl(200, body="")
+        if "-d" in cmd:
+            d_idx = cmd.index("-d") + 1
+            captured_post_body.update(json.loads(cmd[d_idx]))
+            return _fake_curl(200, body=json.dumps({"id": task_id}))
+        if "--data-binary" in cmd:
+            body_path = cmd[cmd.index("--data-binary") + 1].lstrip("@")
+            captured_post_body.update(json.loads(Path(body_path).read_text()))
+            return _fake_curl(200, body=json.dumps({"id": task_id}))
+        return _fake_curl(200, body=json.dumps({
+            "status": "succeeded", "id": task_id,
+            "content": {"video_url": "https://ark-content/v.mp4"},
+        }))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *a, **k: None)
+
+    p = ArkProvider(env=env)
+    req = GenerateRequest(
+        scene_id="s1", asset_type="video", prompt="x",
+        reference_image="https://ark/first-frame.jpg",
+        duration_sec=5,
+    )
+    p.generate_video(
+        req, out_path=tmp_path / "v.mp4",
+        model="doubao-seedance-1-5-pro-251215",
+        # NO character_ref
+    )
+
+    content = captured_post_body["content"]
+    image_entries = [c for c in content if c.get("type") == "image_url"]
+    assert len(image_entries) == 1, (
+        f"expected 1 image_url entry (first-frame only), got {len(image_entries)}: {content}"
+    )
+
+
+def test_generate_video_with_character_ref_adds_second_image_to_content(env, tmp_path, monkeypatch):
+    """When character_ref is passed (in addition to reference_image first-frame),
+    the POST body must include TWO image_url content entries — one for the
+    first-frame and one for the canonical character ref. This is the ID-drift
+    fix path: Seedance gets both the per-shot frame AND the locked character
+    reference.
+
+    Without character_ref, content array has 1 image_url entry (the first-frame).
+    """
+    # Write a real canonical face jpeg so _resolve_reference can base64-encode it
+    canonical_face = tmp_path / "face.jpg"
+    canonical_face.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+
+    task_id = "cgt-CHARREF"
+    captured_post_body = {}
+
+    def fake_run(cmd, *args, **kwargs):
+        is_download = "-o" in cmd
+        if is_download:
+            out_file = cmd[cmd.index("-o") + 1]
+            Path(out_file).write_bytes(b"\x00\x00\x00\x18ftypFAKE")
+            return _fake_curl(200, body="")
+        # Read the JSON body — either via -d (small) or --data-binary @file (large)
+        if "-d" in cmd:
+            d_idx = cmd.index("-d") + 1
+            captured_post_body.update(json.loads(cmd[d_idx]))
+            return _fake_curl(200, body=json.dumps({"id": task_id}))
+        if "--data-binary" in cmd:
+            body_path = cmd[cmd.index("--data-binary") + 1].lstrip("@")
+            captured_post_body.update(json.loads(Path(body_path).read_text()))
+            return _fake_curl(200, body=json.dumps({"id": task_id}))
+        return _fake_curl(200, body=json.dumps({
+            "status": "succeeded", "id": task_id,
+            "content": {"video_url": "https://ark-content/v.mp4"},
+        }))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *a, **k: None)
+
+    p = ArkProvider(env=env)
+    req = GenerateRequest(
+        scene_id="s1", asset_type="video", prompt="a panda walks",
+        reference_image="https://ark/first-frame.jpg",
+        duration_sec=5,
+    )
+    p.generate_video(
+        req,
+        out_path=tmp_path / "v.mp4",
+        model="doubao-seedance-1-5-pro-251215",
+        character_ref=str(canonical_face),
+    )
+
+    # Content must have: text + 2 image_url entries (first-frame + character_ref)
+    content = captured_post_body["content"]
+    image_entries = [c for c in content if c.get("type") == "image_url"]
+    assert len(image_entries) == 2, (
+        f"expected 2 image_url entries (first-frame + character_ref), "
+        f"got {len(image_entries)}: {content}"
+    )
+    # The character_ref path should be the second one — verify it's NOT the first-frame
+    urls = [c["image_url"]["url"] for c in image_entries]
+    # face.jpg is base64-encoded so look for "data:image/" prefix
+    assert any("data:image/" in u for u in urls), (
+        f"character_ref base64 data URI not found in image entries: {urls}"
+    )
+    # The first-frame is still https:// — both should be present
+    assert any("https://" in u for u in urls), (
+        f"first-frame https URL missing from image entries: {urls}"
+    )

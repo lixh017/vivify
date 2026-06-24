@@ -217,19 +217,25 @@ def generate_asset(req: GenerateRequest, *,
     last_result: Optional[GenerateResult] = None
     last_error: str = ""
     # Pull vendor-specific kwargs from req.options. The orchestrator
-    # knows about `out_path` and `model` (used by the ark adapter);
-    # everything else stays on req.options and is the adapter's job to
-    # ignore / use as it sees fit.
+    # knows about `out_path`, `model`, and `character_ref` (used by the
+    # ark/minimax adapters); everything else stays on req.options and is
+    # the adapter's job to ignore / use as it sees fit.
     out_path_opt = (req.options or {}).get("out_path")
     model_opt = (req.options or {}).get("model")
+    character_ref_opt = (req.options or {}).get("character_ref")
     for attempt in range(policy.max_retries + 1):    # initial + N retries
         try:
-            if out_path_opt is not None or model_opt is not None:
-                result = adapter.generate(
-                    req,
-                    out_path=Path(out_path_opt) if out_path_opt else None,
-                    model=model_opt,
-                )
+            # Build kwargs only for the ones the orchestrator knows about.
+            # Adapters that don't accept character_ref simply ignore it.
+            gen_kwargs: dict = {}
+            if out_path_opt is not None:
+                gen_kwargs["out_path"] = Path(out_path_opt)
+            if model_opt is not None:
+                gen_kwargs["model"] = model_opt
+            if character_ref_opt:
+                gen_kwargs["character_ref"] = character_ref_opt
+            if gen_kwargs:
+                result = adapter.generate(req, **gen_kwargs)
             else:
                 result = adapter.generate(req)
         except Exception as e:

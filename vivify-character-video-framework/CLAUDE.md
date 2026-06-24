@@ -69,7 +69,7 @@ Add at end:
 ```
 vivify-character-video-framework/
 ├── CLAUDE.md                    ← you are here (agent instructions)
-├── render_episode.py            ← legacy single-shot pipeline (still works)
+├── render_episode.py            ← DEPRECATED legacy single-shot pipeline (escape hatch only — see file docstring)
 ├── make_episode.sh              ← scaffold tool
 ├── model_router.py              ← auto tier + fallback
 ├── qa_gate.py                   ← heuristic QA checks

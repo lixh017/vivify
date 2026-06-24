@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 """panda-episode-pipeline — render a panda IP episode end-to-end.
 
+⚠️  DEPRECATED (June 2026) — kept as the manual-escape path.
+
+The `vivify` CLI is the new entry point:
+    ./scripts/vivify episode render fengge EP005 \
+      --storyboard characters/fengge/examples/panda-episode-005/STORYBOARD.md \
+      --script     characters/fengge/examples/panda-episode-005/SCRIPT-douyin.md \
+      --voice 治愈 --platform 抖音 --target-dur 58 --parallel 4 \
+      --use-driver        # opt into the new in-process orchestrator path
+
+Why deprecated:
+  - Hardcoded provider calls (no fallback chain, no cost-cap gate)
+  - No per-shot DB row (just episode-level cost_yuan estimate)
+  - No retry classifier (raw curl on HTTP 500)
+  - One provider per asset_type (no multi-provider fallback)
+
+When to keep using this file:
+  - You need the proven 6-episode pipeline behavior exactly
+  - You're debugging and want to bypass the new `--use-driver` path
+  - You're contributing a regression test for the legacy behavior
+
+New work should land in `vivify/episode_driver.py` + `vivify/asset_orchestrator.py`.
+
+---
+
 Takes a STORYBOARD.md + SCRIPT-douyin.md pair and produces a finished
 L3 MP4: video clips (Seedance 1.5-pro) + TTS voiceover (海螺
 speech-02-hd) + ffmpeg-synthesized BGM + phone comments overlay,

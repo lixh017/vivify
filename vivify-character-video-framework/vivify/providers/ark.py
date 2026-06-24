@@ -147,7 +147,8 @@ class ArkProvider(ProviderAdapter):
         return asset_type in self._supported
 
     def generate(self, req: GenerateRequest, *, out_path: Optional[Path] = None,
-                 model: Optional[str] = None) -> GenerateResult:
+                 model: Optional[str] = None,
+                 character_ref: Optional[str] = None) -> GenerateResult:
         if req.asset_type == "image":
             if out_path is None:
                 return GenerateResult(ok=False, provider=self.name,
@@ -157,7 +158,8 @@ class ArkProvider(ProviderAdapter):
             if out_path is None:
                 return GenerateResult(ok=False, provider=self.name,
                                        error="out_path required for video generation")
-            return self.generate_video(req, out_path=out_path, model=model)
+            return self.generate_video(req, out_path=out_path, model=model,
+                                         character_ref=character_ref)
         return GenerateResult(ok=False, provider=self.name,
                               error=f"ark does not support asset_type={req.asset_type!r}")
 
@@ -233,8 +235,18 @@ class ArkProvider(ProviderAdapter):
                        model: Optional[str] = None,
                        ratio: str = "9:16",
                        resolution: str = "720p",
-                       audio_url: Optional[str] = None) -> GenerateResult:
-        """Video gen: POST task → poll → download."""
+                       audio_url: Optional[str] = None,
+                       character_ref: Optional[str] = None) -> GenerateResult:
+        """Video gen: POST task → poll → download.
+
+        Args:
+          character_ref: Optional path to a canonical character reference
+            image (e.g. the per-IP 大头照). When set, it is added as a SECOND
+            image_url entry in the Seedance content array, alongside the
+            first-frame reference_image. Seedance 2.0 supports up to N
+            reference images — adding the canonical face gives the model
+            an anchor for ID consistency across shots (ID-drift fix on Ark).
+        """
         model = model or req.options.get("model") or DEFAULT_VIDEO_MODEL
         duration = req.duration_sec or 5
 
@@ -248,6 +260,14 @@ class ArkProvider(ProviderAdapter):
             resolved = _resolve_reference(req.reference_image)
             if resolved:
                 content.append({"type": "image_url", "image_url": {"url": resolved}})
+
+        # Optional character reference (canonical face) — adds a 2nd image
+        # so Seedance can lock onto the IP character across shots.
+        if character_ref or req.options.get("character_ref"):
+            char_ref_path = character_ref or req.options.get("character_ref")
+            resolved_char = _resolve_reference(char_ref_path)
+            if resolved_char:
+                content.append({"type": "image_url", "image_url": {"url": resolved_char}})
 
         # Only add audio_url if model supports audio_input
         if audio_url and _model_supports_audio(model):

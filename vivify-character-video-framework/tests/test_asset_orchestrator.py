@@ -211,6 +211,77 @@ def test_generate_asset_respects_provider_filter(cfg_path, env, isolated_ledger)
     assert kwargs.get("provider_id") == "ark" or args[0] == "ark"
 
 
+# --- character_ref passthrough (Task 3) ------------------------------------
+
+def test_generate_asset_forwards_character_ref_to_adapter(cfg_path, env, isolated_ledger):
+    """When req.options['character_ref'] is set, generate_asset must pass it
+    as an explicit kwarg to adapter.generate(). Without this forwarding, the
+    canonical face ref set by episode_driver never reaches the adapter —
+    ID drift fix is silently dropped.
+
+    The adapter is mocked so this test pins the orchestrator's behavior, not
+    the adapter's."""
+    req = GenerateRequest(
+        scene_id="s1", asset_type="video", prompt="x",
+        duration_sec=5,
+        options={
+            "out_path": "/tmp/v.mp4",
+            "model": "doubao-seedance-1-5-pro-251215",
+            "character_ref": "/abs/canonical/face.jpg",
+        },
+    )
+    fake_result = GenerateResult(
+        ok=True, provider="ark", model="doubao-seedance-1-5-pro-251215",
+        local_path=Path("/tmp/v.mp4"), cost_yuan=2.0,
+    )
+    fake_adapter = MagicMock()
+    fake_adapter.generate.return_value = fake_result
+    with patch("vivify.asset_orchestrator._build_adapter",
+                return_value=fake_adapter) as mock_build:
+        result = generate_asset(req, env=env, config_path=cfg_path,
+                                  provider_filter="ark")
+    assert result.ok is True
+    mock_build.assert_called_once()
+    # The adapter's generate() must have been called with character_ref kwarg
+    fake_adapter.generate.assert_called_once()
+    call_kwargs = fake_adapter.generate.call_args.kwargs
+    assert call_kwargs.get("character_ref") == "/abs/canonical/face.jpg", (
+        f"character_ref not forwarded to adapter; kwargs={call_kwargs}"
+    )
+
+
+def test_generate_asset_omits_character_ref_kwarg_when_not_set(cfg_path, env, isolated_ledger):
+    """When req.options has no character_ref, adapter.generate() must NOT
+    receive a character_ref kwarg (avoid spamming adapters that don't support
+    it, e.g. Kling/Jimeng stubs)."""
+    req = GenerateRequest(
+        scene_id="s1", asset_type="video", prompt="x",
+        duration_sec=5,
+        options={
+            "out_path": "/tmp/v.mp4",
+            "model": "doubao-seedance-1-5-pro-251215",
+            # NO character_ref
+        },
+    )
+    fake_result = GenerateResult(
+        ok=True, provider="ark", model="doubao-seedance-1-5-pro-251215",
+        local_path=Path("/tmp/v.mp4"), cost_yuan=2.0,
+    )
+    fake_adapter = MagicMock()
+    fake_adapter.generate.return_value = fake_result
+    with patch("vivify.asset_orchestrator._build_adapter",
+                return_value=fake_adapter):
+        result = generate_asset(req, env=env, config_path=cfg_path,
+                                  provider_filter="ark")
+    assert result.ok is True
+    call_kwargs = fake_adapter.generate.call_args.kwargs
+    # character_ref should be absent (or None) — not a string
+    assert not call_kwargs.get("character_ref"), (
+        f"character_ref kwarg should be falsy when not in options; "
+        f"got {call_kwargs.get('character_ref')!r}"
+    )
+
+
 # --- monthly cap ------------------------------------------------------------
 
 class TestMonthlyCap:
