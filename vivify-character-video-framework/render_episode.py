@@ -23,7 +23,7 @@ Required env (see INSTALL.md):
     ARK_BASE_URL      default: https://ark.cn-beijing.volces.com/api/v3
     MINIMAX_API_KEY   海螺 MiniMax
     FFMPEG            path to ffmpeg binary (auto-detected if unset)
-    OPC_RENDER_DIR    default: /tmp/opc-render
+    VIVIFY_RENDER_DIR default: /tmp/vivify-render
 """
 
 import argparse
@@ -39,7 +39,7 @@ from pathlib import Path
 # ---- config ---------------------------------------------------------------
 
 DEFAULT_ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
-DEFAULT_RENDER_DIR = "/tmp/opc-render"
+DEFAULT_RENDER_DIR = "/tmp/vivify-render"
 DEFAULT_IMAGE_MODEL = "doubao-seedream-4-0-250828"
 DEFAULT_VIDEO_MODEL = "doubao-seedance-2-0-260128"  # Seedance 2.0: audio-video sync, better motion
 DEFAULT_TTS_MODEL = "speech-02-hd"
@@ -76,7 +76,7 @@ def require_env() -> dict:
         "ARK_BASE_URL":    os.environ.get("ARK_BASE_URL", DEFAULT_ARK_BASE),
         "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY"),
         "FFMPEG":          os.environ.get("FFMPEG") or find_ffmpeg(),
-        "RENDER_DIR":      os.environ.get("OPC_RENDER_DIR", DEFAULT_RENDER_DIR),
+        "RENDER_DIR":      os.environ.get("VIVIFY_RENDER_DIR", DEFAULT_RENDER_DIR),
     }
     if not env["ARK_API_KEY"]:
         fatal("ARK_API_KEY not set (火山引擎 Ark key — see INSTALL.md)")
@@ -120,7 +120,7 @@ def curl(method: str, url: str, headers: dict, body: dict = None,
         # If payload is large (e.g. base64 reference_image ≈1MB),
         # pass via --data-binary @tmpfile to avoid E2BIG on argv.
         if len(body_str) > 64_000:
-            body_tmp = Path("/tmp") / f"opc-render-body-{os.getpid()}-{id(body)}.json"
+            body_tmp = Path("/tmp") / f"vivify-render-body-{os.getpid()}-{id(body)}.json"
             body_tmp.write_text(body_str, encoding="utf-8")
             cmd += ["-H", "Content-Type: application/json",
                     "--data-binary", f"@{body_tmp}"]
@@ -495,7 +495,7 @@ def _gen_video_minimax(env: dict, model: str, catalog: dict,
             fatal(f"video[minimax]: unparseable data URI for first frame")
         ext = m.group(1)
         b64 = m.group(2)
-        tmp = Path("/tmp/opc-render") / f"mmx-first-frame-{os.getpid()}.{ext}"
+        tmp = Path("/tmp/vivify-render") / f"mmx-first-frame-{os.getpid()}.{ext}"
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_bytes(base64.b64decode(b64))
         first_frame_path = str(tmp)

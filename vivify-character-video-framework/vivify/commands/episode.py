@@ -686,10 +686,10 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     file_size = _file_size(out_path)
 
     # Update shot rows with computed file paths (best-effort)
-    # render_episode.py writes to $OPC_RENDER_DIR/work/ (default /tmp/opc-render/work/).
+    # render_episode.py writes to $VIVIFY_RENDER_DIR/work/ (default /tmp/vivify-render/work/).
     with connect(db_path) as conn:
         shots = _get_shots(conn, ep_pk)
-        render_work = Path(os.environ.get("OPC_RENDER_DIR", "/tmp/opc-render")) / "work"
+        render_work = Path(os.environ.get("VIVIFY_RENDER_DIR", "/tmp/vivify-render")) / "work"
         for shot in shots:
             img_p = render_work / "01-image" / f"shot-{shot['shot_number']:02d}.jpg"
             vid_p = render_work / "02-video" / f"shot-{shot['shot_number']:02d}.mp4"

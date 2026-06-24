@@ -96,7 +96,7 @@ vivify lesson
 | `characters/<ip>/lessons.md` | `lessons` table rows (per IP) |
 | `characters/<ip>/gotchas.md` | `lessons` table rows (category=ip-specific) |
 | `memory/prompt-engineering/*.md` | `lessons` table rows (character_id=NULL = cross-IP) |
-| `/tmp/opc-render/work/` (rendition intermediates) | DB records on each `episode.render_*` |
+| `/tmp/vivify-render/work/` (rendition intermediates) | DB records on each `episode.render_*` |
 | `docs/showcase/<episode>/` (final outputs) | DB record + filesystem |
 | git commit messages ("Render EP004 with X model") | DB row: `model_used`, `cost_yuan`, etc. |
 | `validators/*.py` (separate scripts) | `vivify character validate` wrapper |

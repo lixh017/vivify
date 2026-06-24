@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""zhujiao shell entry — installed to scripts/ directory.
+"""vivify shell entry — installed to scripts/ directory.
 
 Usage:
-    ./scripts/zhujiao character list
-    ./scripts/zhujiao episode list
+    ./scripts/vivify character list
+    ./scripts/vivify episode list
 """
 
 import sys
 from pathlib import Path
 
-# Add project root to sys.path so `zhujiao` package can be imported
+# Add project root to sys.path so `vivify` package can be imported
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 

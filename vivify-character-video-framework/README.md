@@ -324,7 +324,7 @@ Required:
 - `FFMPEG` — auto-detected via `/root/.openclaw/.../ffmpeg-installer/`
 
 Optional:
-- `OPC_RENDER_DIR` — where intermediate frames go (default `/tmp/vivify-render`)
+- `VIVIFY_RENDER_DIR` — where intermediate frames go (default `/tmp/vivify-render`)
 - `FFPROBE` — for actual duration detection (auto-detected too)
 
 ---
