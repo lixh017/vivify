@@ -120,9 +120,9 @@ def generate_asset(req: GenerateRequest, *,
                    env: dict,
                    config_path: Optional[Path] = None,
                    provider_filter: Optional[str] = None,
-                   db_path: Optional[str] = None,    # reserved for future monthly-cap check
-                   policy: Optional[RetryPolicy] = None,
-                   monthly_so_far: float = 0.0) -> GenerateResult:
+                   db_path: Optional[str] = None,
+                   monthly_hard: Optional[float] = None,
+                   policy: Optional[RetryPolicy] = None) -> GenerateResult:
     """End-to-end: pick provider → cost-cap check → adapter call → ledger.
 
     Args:
@@ -130,9 +130,10 @@ def generate_asset(req: GenerateRequest, *,
       env:             Dict of vendor credentials (ARK_API_KEY, ARK_BASE_URL, ...).
       config_path:     Optional override for router YAML path (else default).
       provider_filter: Restrict to one provider id (e.g. 'ark') — bypasses fallback.
-      db_path:         Reserved for future monthly-cap DB lookup. Not yet wired.
+      db_path:         SQLite path for monthly-cap lookup. When set + monthly_hard set,
+                       blocks the call if (monthly_total + this_estimate) > monthly_hard.
+      monthly_hard:    Monthly cost cap in ¥. Required for monthly-cap enforcement.
       policy:          RetryPolicy (default: 3 retries, 5/15/45s backoff).
-      monthly_so_far:  Already-spent-amount-in-month, for future monthly gate.
 
     Returns:
       GenerateResult with `ok=True` and `local_path`/`public_url` on success,
@@ -180,6 +181,21 @@ def generate_asset(req: GenerateRequest, *,
                    f"(model={provider_id}, duration_sec={duration})"),
             cost_yuan=estimate,
         )
+
+    # 3a. Monthly-cap check (only if db_path + monthly_hard are provided)
+    if db_path is not None and monthly_hard is not None:
+        import sqlite3
+        from .cost_cap import monthly_spend_yuan
+        with sqlite3.connect(db_path) as _conn:
+            spent = monthly_spend_yuan(_conn)
+        monthly_after = spent + estimate
+        if monthly_after > monthly_hard:
+            return _emit_failure(
+                req, provider=provider_id, status="budget-exceeded",
+                error=(f"monthly cap: already ¥{spent:.2f} + this ¥{estimate:.2f} "
+                       f"= ¥{monthly_after:.2f} > cap ¥{monthly_hard:.2f}"),
+                cost_yuan=estimate,
+            )
 
     # 4. Build the adapter (may raise NotImplementedError for stubs)
     try:

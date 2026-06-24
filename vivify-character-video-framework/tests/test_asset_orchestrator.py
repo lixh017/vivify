@@ -201,3 +201,68 @@ def test_generate_asset_respects_provider_filter(cfg_path, env, isolated_ledger)
     # Build was called with 'ark' exactly
     args, kwargs = mock_build.call_args
     assert kwargs.get("provider_id") == "ark" or args[0] == "ark"
+
+
+# --- monthly cap ------------------------------------------------------------
+
+class TestMonthlyCap:
+    def test_monthly_cap_blocks_when_db_total_plus_estimate_exceeds(self, monkeypatch, tmp_path):
+        """If db_path is given and this call's estimate would push monthly total
+        over the cap, generate_asset must write budget-exceeded and return ok=False."""
+        import sqlite3
+        db = tmp_path / "vivify.db"
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE episodes (cost_yuan REAL, render_completed_at TEXT)")
+        conn.execute("INSERT INTO episodes VALUES (?, ?)", (60001.0, "2026-06-15T10:00:00Z"))
+        conn.commit()
+        conn.close()
+
+        from vivify.asset_orchestrator import generate_asset
+        from vivify.providers.base import GenerateRequest
+
+        # Force-override the ledger path so we don't pollute real home
+        monkeypatch.setattr("vivify.asset_ledger.LEDGER_PATH", tmp_path / "ledger.jsonl")
+
+        req = GenerateRequest(
+            scene_id="s1", asset_type="video", prompt="test",
+            duration_sec=10,
+        )
+        result = generate_asset(
+            req, env={}, config_path=None, provider_filter="ark",
+            db_path=str(db), monthly_hard=60000.0,
+        )
+        assert result.ok is False
+        assert result.status_hint == "budget-exceeded"
+        assert "monthly" in (result.error or "").lower()
+
+    def test_monthly_cap_passes_when_db_total_low(self, monkeypatch, tmp_path):
+        """If monthly total is low, generate_asset proceeds and reaches adapter."""
+        import sqlite3
+        db = tmp_path / "vivify.db"
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE episodes (cost_yuan REAL, render_completed_at TEXT)")
+        conn.execute("INSERT INTO episodes VALUES (?, ?)", (100.0, "2026-06-01T00:00:00Z"))
+        conn.commit()
+        conn.close()
+        monkeypatch.setattr("vivify.asset_ledger.LEDGER_PATH", tmp_path / "ledger.jsonl")
+
+        from vivify.asset_orchestrator import generate_asset
+        from vivify.providers.base import GenerateRequest, GenerateResult
+        from unittest.mock import MagicMock
+
+        # Stub adapter that returns ok
+        fake = MagicMock()
+        fake.name = "ark"
+        fake.asset_type = "video"
+        fake.generate.return_value = GenerateResult(
+            ok=True, provider="ark", model="seedance", local_path=tmp_path / "x.mp4",
+            cost_yuan=10.0, duration_ms=1000,
+        )
+        monkeypatch.setattr("vivify.asset_orchestrator._build_adapter", lambda *a, **kw: fake)
+
+        req = GenerateRequest(scene_id="s1", asset_type="video",
+                              prompt="t", duration_sec=10)
+        result = generate_asset(req, env={}, provider_filter="ark",
+                                db_path=str(db), monthly_hard=60000.0)
+        assert result.ok is True
+        fake.generate.assert_called_once()
