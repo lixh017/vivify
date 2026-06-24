@@ -38,6 +38,11 @@ from ..pricing import (
     tts_cost_yuan,
     video_cost_yuan,
 )
+from ..episode_driver import (
+    render_episode_assets as _render_episode_assets,
+    _resolve_canonical_ref as _driver_resolve_canonical_ref,
+    _resolve_voice_profile as _driver_resolve_voice_profile,
+)
 
 
 # ---- helpers --------------------------------------------------------------
@@ -487,13 +492,24 @@ def add_cmd(obj, character_id, episode_id, storyboard, script, voice,
 @click.option("--retry-only", is_flag=True,
               help="Only re-run failed/queued jobs for this episode "
                    "(use after `workflow retry` requeues).")
+@click.option("--use-driver", is_flag=True,
+              help="Use the new in-process driver (vivify.episode_driver) "
+                   "instead of the legacy render_episode.py subprocess. "
+                   "Default: False (subprocess). Driver writes real per-asset "
+                   "cost to the DB and emits ledger rows; subprocess path "
+                   "still works as a manual escape.")
 @click.pass_obj
 def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                platform, quality_tier, video_provider, video_model, image_model,
                reference_image, target_dur, out_dir, require_lip_sync,
                qa_skip, title, next_episode, dry_run, force, per_video_cap,
-               parallel, max_retries, retry_only):
-    """Render an episode via render_episode.py, recording the full run in DB."""
+               parallel, max_retries, retry_only, use_driver):
+    """Render an episode via render_episode.py, recording the full run in DB.
+
+    With --use-driver, the per-shot assets are generated in-process via
+    vivify.episode_driver.render_episode_assets (which calls generate_asset
+    + TTS + DB update). Without it, falls back to the legacy subprocess.
+    """
     db_path = obj.get("db_path")
     init_db(db_path)
 
@@ -640,6 +656,92 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
             )
         click.echo(f"✓ DRY RUN complete — DB rows written for {character_id}/{episode_id}")
         click.echo(f"  run `vivify episode show {character_id} {episode_id}` to inspect")
+        return
+
+    # 6. Driver path (new — in-process per-shot asset pipeline)
+    if use_driver:
+        char_dir = Path(char["dir_path"])
+        char_yaml = char.get("character_yaml_path")
+        canonical_ref = _driver_resolve_canonical_ref(char_dir, char_yaml)
+        voice_profile_dict = _driver_resolve_voice_profile(char_yaml, voice)
+        env = obj.get("env") or _load_vendor_env()
+        click.echo(f"\n[vivify] driver path: "
+                   f"{n_shots} shots, parallel={parallel}, "
+                   f"canonical={'yes' if canonical_ref else 'no'}\n")
+        t0 = time.time()
+        asset_results = _render_episode_assets(
+            shots=shots,
+            voiceovers=_parse_voiceovers(script, storyboard),
+            episode_id=episode_id,
+            character_id=character_id,
+            env=env,
+            out_dir=Path(out_dir) / "work",
+            db_path=db_path,
+            voice_profile=voice_profile_dict,
+            canonical_ref=canonical_ref,
+            episode_pk=ep_pk,
+            monthly_hard=60000.0,
+        )
+        real_total_cost = sum(r.total_cost_yuan for r in asset_results)
+        elapsed = time.time() - t0
+        click.echo(f"\n[driver] {n_shots} shots done in {elapsed:.0f}s, "
+                   f"real cost ¥{real_total_cost:.2f}")
+
+        # 6a. Mux with ffmpeg
+        final_mp4 = Path(out_path)
+        mux_ok = _mux_episode(
+            asset_results,
+            voiceovers=_parse_voiceovers(script, storyboard),
+            env=env,
+            out_path=final_mp4,
+            target_dur=target_dur,
+            title=title,
+            next_episode=next_episode,
+            voice=voice,
+        )
+        # 6b. DB finalize with REAL cost
+        actual_dur = _ffprobe_duration(str(final_mp4)) if mux_ok else None
+        file_size = _file_size(str(final_mp4)) if mux_ok else None
+        with connect(db_path) as conn:
+            if mux_ok and final_mp4.exists():
+                conn.execute(
+                    """UPDATE episodes SET
+                        status = 'completed',
+                        output_path = ?, actual_dur_sec = ?,
+                        file_size_bytes = ?, cost_yuan = ?,
+                        render_completed_at = datetime('now')
+                       WHERE id = ?""",
+                    (str(final_mp4), actual_dur, file_size,
+                     real_total_cost, ep_pk),
+                )
+                conn.execute(
+                    """UPDATE render_jobs SET status = 'completed',
+                                              completed_at = datetime('now')
+                       WHERE id = ?""",
+                    (job_pk,),
+                )
+                click.echo(f"\n✅ driver render OK in {elapsed:.0f}s — "
+                           f"{final_mp4} (¥{real_total_cost:.2f})")
+            else:
+                err_msg = "ffmpeg mux produced no output (driver path)"
+                conn.execute(
+                    """UPDATE episodes SET status = 'failed',
+                        error_message = ?,
+                        render_completed_at = datetime('now')
+                       WHERE id = ?""",
+                    (err_msg, ep_pk),
+                )
+                conn.execute(
+                    """UPDATE render_jobs SET status = 'failed',
+                                              completed_at = datetime('now'),
+                                              error_message = ?
+                       WHERE id = ?""",
+                    (err_msg, job_pk),
+                )
+                conn.commit()
+                click.echo(f"\n❌ driver render FAILED — mux produced no output",
+                           err=True)
+                sys.exit(1)
         return
 
     # 6. Spawn render_episode.py as subprocess
@@ -821,6 +923,134 @@ def delete_cmd(obj, character_id, episode_id, yes):
         conn.execute("DELETE FROM episodes WHERE id = ?", (ep["id"],))
     click.echo(f"✓ deleted {character_id}/{episode_id} "
                f"({n_shots} shots, {n_jobs} jobs)")
+
+
+# --- driver-path helpers ----------------------------------------------------
+
+def _load_vendor_env() -> dict:
+    """Read vendor credentials from env. Returns dict with whatever the
+    parent process has in os.environ (ARK_API_KEY, MINIMAX_API_KEY, etc.).
+    Optionally overlays ~/.claude/config/vivify-volcengine.env if present.
+    """
+    env = dict(os.environ)
+    env_file = Path.home() / ".claude" / "config" / "vivify-volcengine.env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip().strip('"').strip("'")
+    return env
+
+
+def _parse_voiceovers(script_path: str | None, storyboard_path: str) -> list[dict]:
+    """Parse voiceovers from script via render_episode.parse_script.
+    Returns [] on missing script or parse error (best-effort)."""
+    if not script_path or not Path(script_path).exists():
+        return []
+    try:
+        import sys as _sys
+        fw_dir = str(Path(__file__).resolve().parent.parent.parent)
+        if fw_dir not in _sys.path:
+            _sys.path.insert(0, fw_dir)
+        from render_episode import parse_script  # type: ignore
+        return parse_script(script_path)
+    except Exception as e:
+        click.echo(f"[warn] could not parse script: {e}", err=True)
+        return []
+
+
+def _mux_episode(asset_results, *, voiceovers, env, out_path, target_dur,
+                 title, next_episode, voice) -> bool:
+    """Concatenate per-shot image+video+tts into the final MP4 using
+    render_episode.ff_* helpers. Best-effort: returns False if mux fails
+    (caller marks the episode as failed). Returns True on success."""
+    try:
+        import sys as _sys
+        fw_dir = str(Path(__file__).resolve().parent.parent.parent)
+        if fw_dir not in _sys.path:
+            _sys.path.insert(0, fw_dir)
+        from render_episode import (  # type: ignore
+            ff_concat, ff_apply_subtitles, ff_mix_audio, ff_mux_final,
+            ff_text_card, ff_synth_bgm,
+        )
+    except ImportError as e:
+        click.echo(f"[warn] render_episode helpers not importable: {e}; "
+                   f"skipping mux", err=True)
+        return False
+
+    out_path = Path(out_path)
+    work = out_path.parent / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    concat_list = work / "concat.txt"
+    audio_inputs = []
+    lines = []
+    cum_dur = 0.0
+
+    # Title card (optional)
+    if title:
+        title_path = work / "title.jpg"
+        try:
+            ff_text_card(env, title, dur=2, out_path=str(title_path))
+            lines.append(f"file '{title_path}'\nduration 2.0\n")
+            cum_dur += 2.0
+        except Exception as e:
+            click.echo(f"[warn] title card failed: {e}", err=True)
+
+    for r in asset_results:
+        if r.video_path and Path(r.video_path).exists():
+            lines.append(f"file '{r.video_path}'\n")
+            cum_dur += 5.0  # approximation; per-shot duration is in shot row
+        if r.tts_path and Path(r.tts_path).exists():
+            audio_inputs.append((int(cum_dur), str(r.tts_path)))
+
+    # End card
+    end_path = work / "end.jpg"
+    try:
+        ff_text_card(env, next_episode, dur=2, out_path=str(end_path))
+        lines.append(f"file '{end_path}'\nduration 2.0\n")
+    except Exception as e:
+        click.echo(f"[warn] end card failed: {e}", err=True)
+
+    if not lines:
+        click.echo("[warn] no per-shot assets to mux", err=True)
+        return False
+
+    concat_list.write_text("".join(lines))
+    raw_concat = work / "raw.mp4"
+    try:
+        ff_concat(env, str(concat_list), str(raw_concat))
+    except Exception as e:
+        click.echo(f"[warn] ff_concat failed: {e}", err=True)
+        return False
+
+    subbed = work / "subbed.mp4"
+    try:
+        vo_text = "\n".join(v.get("text", "") for v in voiceovers)
+        ff_apply_subtitles(env, str(raw_concat), str(subbed),
+                           voiceover_text=vo_text)
+    except Exception as e:
+        click.echo(f"[warn] ff_apply_subtitles failed: {e}", err=True)
+        # Fall back: just rename raw → subbed
+        subbed.write_bytes(raw_concat.read_bytes())
+
+    if audio_inputs:
+        try:
+            bgm_path = work / "bgm.mp3"
+            ff_synth_bgm(env, str(bgm_path),
+                         dur_sec=int(cum_dur + 4), tone=voice)
+            mixed = work / "mixed.mp3"
+            ff_mix_audio(env, str(bgm_path), audio_inputs, str(mixed))
+            ff_mux_final(env, str(subbed), str(mixed), str(out_path))
+        except Exception as e:
+            click.echo(f"[warn] audio mux failed: {e}; "
+                       f"writing video without audio", err=True)
+            out_path.write_bytes(subbed.read_bytes())
+    else:
+        out_path.write_bytes(subbed.read_bytes())
+
+    return out_path.exists()
 
 
 __all__ = ["cli"]
