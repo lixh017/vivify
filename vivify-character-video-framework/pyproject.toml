@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vivify"
+version = "0.1.0"
+description = "点睛 / Vivify — character video short-drama platform (Python CLI + SQLite + AI providers)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [
+    {name = "OPC Team"},
+]
+keywords = ["video", "ai", "character", "drama", "short-form", "volcengine", "ark", "minimax", "hailuo"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# Runtime dependencies. Keep this list small — what the CLI actually
+# imports at module-load time. Optional heavy deps (Pillow, mmx CLI)
+# live in optional-dependencies below.
+dependencies = [
+    "click>=8.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Image dimension probing (asset register --type image)
+image = ["Pillow>=10.0"]
+# BGM synthesis (numpy + scipy + simpleaudio)
+bgm = []
+# Real API calls (vendor SDKs not used today — curl/mm x wrappers preferred)
+video = []
+
+[project.scripts]
+vivify = "vivify.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/opc-team/vivify"
+
+# ---------------------------------------------------------------------------
+# Test configuration
+# ---------------------------------------------------------------------------
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vivify*"]
+exclude = ["tests*", "characters*", "examples*", "prompt_library*",
+            "validators*", "docs*", "data*", "scripts*", "memory*"]
+
+[tool.pytest.ini_options]
+# Run tests from the repo root; collect from the `tests/` dir.
+testpaths = ["tests"]
+# Show the slowest 10 tests at the end (helps spot accidental sleeps).
+addopts = "-ra --strict-markers"
+# Quiet output by default — pass `-v` for verbose.
+filterwarnings = [
+    "ignore::DeprecationWarning:click.*",
+]
+
+[tool.coverage.run]
+source = ["vivify"]
+omit = [
+    "vivify/__main__.py",
+    "vivify/migrations/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
