@@ -627,8 +627,11 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
             raise click.ClickException(
                 f"cost cap blocked this render (use --force to override)")
 
-    if dry_run:
+    if dry_run and not use_driver:
         # Mark as completed (dry-run), with estimated cost
+        # Note: when use_driver is set, dry-run takes the driver branch
+        # above (with generate_asset/_call_tts stubbed) and runs the full
+        # pipeline end-to-end without spending money.
         with connect(db_path) as conn:
             conn.execute(
                 """UPDATE episodes SET
@@ -669,19 +672,74 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                    f"{n_shots} shots, parallel={parallel}, "
                    f"canonical={'yes' if canonical_ref else 'no'}\n")
         t0 = time.time()
-        asset_results = _render_episode_assets(
-            shots=shots,
-            voiceovers=_parse_voiceovers(script, storyboard),
-            episode_id=episode_id,
-            character_id=character_id,
-            env=env,
-            out_dir=Path(out_dir) / "work",
-            db_path=db_path,
-            voice_profile=voice_profile_dict,
-            canonical_ref=canonical_ref,
-            episode_pk=ep_pk,
-            monthly_hard=60000.0,
-        )
+
+        # 6a. Dry-run-with-driver: stub generate_asset + _call_tts so the full
+        # per-shot pipeline runs end-to-end (DB writes, cost aggregation,
+        # driver ↔ orchestrator interface) without spending money.
+        # Without this, `--dry-run --use-driver` would still call real
+        # Ark/海螺 APIs.
+        _stub_active = False
+        _orig_generate_asset = None
+        _orig_call_tts = None
+        if dry_run:
+            from vivify.providers.base import GenerateResult
+            from vivify import episode_driver as _driver_mod
+
+            _work_dir = Path(out_dir) / "work"
+            _work_dir.mkdir(parents=True, exist_ok=True)
+
+            def _fake_generate_asset(req, **kwargs):
+                ext = "jpg" if req.asset_type == "image" else "mp4"
+                local = _work_dir / f"{req.scene_id}.{ext}"
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(b"fake")
+                cost = 0.20 if req.asset_type == "image" else 1.05
+                return GenerateResult(
+                    ok=True, provider="ark", model="fake",
+                    local_path=local, cost_yuan=cost, duration_ms=100,
+                )
+
+            def _fake_call_tts(req, env, voice_profile, out_path):
+                out_path = Path(out_path)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(b"fake-mp3")
+                return GenerateResult(
+                    ok=True, provider="minimax", model="fake-tts",
+                    local_path=out_path, cost_yuan=0.01, duration_ms=100,
+                )
+
+            # Save originals BEFORE patching so we can restore in finally.
+            _orig_generate_asset = _driver_mod.generate_asset
+            _orig_call_tts = _driver_mod._call_tts
+            _driver_mod.generate_asset = _fake_generate_asset
+            _driver_mod._call_tts = _fake_call_tts
+            _stub_active = True
+            click.echo("  [dry-run] generate_asset + _call_tts stubbed "
+                       "(no API calls, no spend)")
+
+        try:
+            asset_results = _render_episode_assets(
+                shots=shots,
+                voiceovers=_parse_voiceovers(script, storyboard),
+                episode_id=episode_id,
+                character_id=character_id,
+                env=env,
+                out_dir=Path(out_dir) / "work",
+                db_path=db_path,
+                voice_profile=voice_profile_dict,
+                canonical_ref=canonical_ref,
+                episode_pk=ep_pk,
+                monthly_hard=60000.0,
+            )
+        finally:
+            # Restore real generate_asset + _call_tts so the stubs don't
+            # leak into subsequent calls (pytest test ordering breaks if
+            # we don't).
+            if _stub_active:
+                from vivify import episode_driver as _dm
+                _dm.generate_asset = _orig_generate_asset
+                _dm._call_tts = _orig_call_tts
+
         real_total_cost = sum(r.total_cost_yuan for r in asset_results)
         elapsed = time.time() - t0
         click.echo(f"\n[driver] {n_shots} shots done in {elapsed:.0f}s, "

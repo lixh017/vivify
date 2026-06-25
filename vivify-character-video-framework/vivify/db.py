@@ -7,7 +7,7 @@ publishes, and render jobs. All CLI commands read/write through this layer.
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional
 
 DEFAULT_DB_PATH = ".tmp/data/vivify.db"
 
@@ -133,10 +133,34 @@ CREATE INDEX IF NOT EXISTS idx_lessons_character ON lessons(character_id);
 """
 
 
+def _ctx_db_path() -> Optional[str]:
+    """Read db_path from the active Click context if present.
+
+    Returns None when not in a Click command (library code, tests) or when
+    --db was not passed (default `.tmp/data/vivify.db`).
+    """
+    try:
+        import click
+        ctx = click.get_current_context(silent=True)
+    except Exception:
+        return None
+    if ctx is None:
+        return None
+    obj = ctx.obj or {}
+    return obj.get("db_path")
+
+
 def get_db_path(db_path: str = None) -> Path:
-    """Resolve DB path. Defaults to .tmp/data/vivify.db in cwd (gitignored)."""
+    """Resolve DB path. Precedence:
+      1. Explicit `db_path` arg
+      2. --db from active Click context (obj['db_path'])
+      3. .tmp/data/vivify.db in cwd (gitignored default)
+    """
     if db_path:
         return Path(db_path)
+    ctx_path = _ctx_db_path()
+    if ctx_path:
+        return Path(ctx_path)
     return Path.cwd() / DEFAULT_DB_PATH
 
 
@@ -152,7 +176,12 @@ def init_db(db_path: str = None) -> Path:
 
 @contextmanager
 def connect(db_path: str = None) -> Iterator[sqlite3.Connection]:
-    """Context manager for DB connection. Auto-commits on success."""
+    """Context manager for DB connection. Auto-commits on success.
+
+    When `db_path` is None, the active Click context's `obj['db_path']`
+    (set by `--db` global flag) is consulted. Library callers should pass
+    an explicit path.
+    """
     path = get_db_path(db_path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
