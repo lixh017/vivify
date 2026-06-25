@@ -249,7 +249,12 @@ def render_episode_assets(*,
     vo_by_n = {v.get("n", i + 1): v for i, v in enumerate(voiceovers)}
 
     for shot in shots:
-        n = shot["n"]
+        # Tolerate both render_episode.parse_storyboard ("n") and
+        # commands/episode._get_shots ("shot_number") shapes — they
+        # describe the same thing (the per-shot sequence number).
+        n = shot.get("n") or shot.get("shot_number")
+        if n is None:
+            raise KeyError(f"shot missing 'n' or 'shot_number': keys={list(shot.keys())}")
         scene_id = f"{character_id}-{episode_id}-shot{n}"
         dur = int(shot.get("duration_sec") or 5)
         prompt = shot.get("kling_prompt") or shot.get("prompt") or ""

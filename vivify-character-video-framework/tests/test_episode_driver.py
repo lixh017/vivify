@@ -205,6 +205,47 @@ def test_render_episode_assets_writes_per_shot_db_rows(
         assert cost == 2.0, f"shot {n} cost_yuan={cost} expected 2.0"
 
 
+def test_render_episode_assets_accepts_db_shaped_shot_dicts(empty_db, tmp_path, monkeypatch):
+    """commands/episode._get_shots returns dicts with keys like
+    'shot_number' (DB column), 'voiceover_text', etc. — NOT 'n' / 'kling_prompt'.
+    The driver must accept BOTH shapes (parse_storyboard-style and DB-style)
+    so the same driver works whether called from the CLI or from a script
+    that reads from SQLite.
+    """
+    monkeypatch.setattr("vivify.asset_ledger.LEDGER_PATH", tmp_path / "ledger.jsonl")
+
+    import vivify.episode_driver as driver_mod
+
+    def fake_generate_asset(req, **kwargs):
+        return GenerateResult(
+            ok=True, provider="ark", model="x",
+            local_path=tmp_path / f"x-{req.scene_id}", cost_yuan=1.0,
+        )
+    monkeypatch.setattr(driver_mod, "generate_asset", fake_generate_asset)
+    monkeypatch.setattr(driver_mod, "_call_tts", lambda *a, **k: GenerateResult(
+        ok=True, provider="minimax", model="tts", cost_yuan=0.0,
+    ))
+
+    db_shaped_shots = [
+        {"shot_number": 1, "duration_sec": 5,
+         "prompt": "镜头1: 推镜头 峰哥 走入竹林", "scene_id": "bamboo_1"},
+        {"shot_number": 2, "duration_sec": 5,
+         "prompt": "镜头2: 拉镜头 峰哥 转身回眸", "scene_id": "bamboo_2"},
+    ]
+    # No voiceovers → TTS skipped
+    results = render_episode_assets(
+        shots=db_shaped_shots, voiceovers=[],
+        episode_id="EP-DB", character_id="fengge", env={},
+        out_dir=tmp_path / "r", db_path=str(empty_db),
+        voice_profile={"voice_id": "x", "speed": 1.0, "pitch": 0,
+                       "emotion": "neutral", "vol": 1.0},
+        canonical_ref=None,
+    )
+    # Both shots processed
+    assert len(results) == 2
+    assert [r.shot_number for r in results] == [1, 2]
+
+
 def test_render_episode_assets_skips_tts_when_no_voiceover(
     empty_db, two_shot_storyboard, tmp_path, monkeypatch,
 ):
