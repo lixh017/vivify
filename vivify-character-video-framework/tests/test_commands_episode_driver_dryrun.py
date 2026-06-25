@@ -49,12 +49,18 @@ def _invoke(*args, db_path=None):
     return CliRunner().invoke(cli, argv)
 
 
+# Storyboards live in the repo-root showcase (docs/showcase), not in
+# characters/fengge/examples. The framework dir is one level below the
+# monorepo root, so parents[2] of this test file is the repo root.
+_SHOWCASE_DIR = Path(__file__).resolve().parents[2] / "docs" / "showcase" / "panda-episode-001"
+
+
 def _storyboard():
-    return Path("/root/workspace/opc/docs/showcase/panda-episode-001/STORYBOARD.md")
+    return _SHOWCASE_DIR / "STORYBOARD.md"
 
 
 def _script():
-    return Path("/root/workspace/opc/docs/showcase/panda-episode-001/SCRIPT-douyin.md")
+    return _SHOWCASE_DIR / "SCRIPT-douyin.md"
 
 
 # --- tests ------------------------------------------------------------------
