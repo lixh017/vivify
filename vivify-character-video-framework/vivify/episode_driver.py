@@ -19,6 +19,8 @@ Note: this module does NOT call ffmpeg. The muxer is a separate step
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -55,29 +57,50 @@ def _call_tts(req: GenerateRequest, env: dict, voice_profile: dict,
     """TTS adapter shim — separate from generate_asset because TTS is not
     a video model with router-managed fallback.
 
-    Implementation:
-      1. Try the new MiniMaxProvider adapter (Task 2: not yet shipped).
-      2. Fall back to the legacy render_episode.gen_tts (validated by
-         6 production panda episodes) by injecting voice_profile into
-         env['CHARACTER']['voice_profiles']['<tone-key>'] and passing
-         the tone through.
+    Implementation (June 2026):
+      1. Primary: shell out to `mmx speech synthesize` (the official
+         海螺 CLI; uses mmx's own auth, so NO MINIMAX_API_KEY env needed).
+      2. Fallback: legacy render_episode.gen_tts (validated by 6 production
+         panda episodes) when mmx binary is missing.
 
     Returns GenerateResult so the driver can read cost/ok/local_path.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Path 1: new adapter (if Task 2 has shipped and generate_tts exists)
+    # Path 1: mmx CLI (preferred — self-authenticated, no env key needed)
     try:
-        from .providers.minimax import MiniMaxProvider
-        p = MiniMaxProvider(env=env)
-        if hasattr(p, "generate_tts"):
-            return p.generate_tts(req, out_path=out_path,
-                                   voice_profile=voice_profile)
-    except (ImportError, Exception):
+        cmd = ["mmx", "speech", "synthesize",
+               "--text", req.prompt,
+               "--out", str(out_path)]
+        if voice_profile.get("voice_id"):
+            cmd += ["--voice", voice_profile["voice_id"]]
+        if voice_profile.get("speed") is not None:
+            cmd += ["--speed", str(voice_profile["speed"])]
+        if voice_profile.get("pitch") is not None:
+            cmd += ["--pitch", str(voice_profile["pitch"])]
+        if voice_profile.get("vol") is not None:
+            cmd += ["--volume", str(voice_profile["vol"])]
+        # mmx writes the mp3 to --out directly; default model is speech-2.8-hd
+        t0 = time.time()
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if r.returncode == 0 and out_path.exists():
+            return GenerateResult(
+                ok=True, provider="minimax", model="speech-02-hd",
+                local_path=out_path, cost_yuan=0.0,   # mmx doesn't expose cost per call
+                duration_ms=int((time.time() - t0) * 1000),
+            )
+        # mmx returned non-zero — fall through to legacy
+        err_msg = (r.stderr or r.stdout or "").strip()[:200]
+        # Path 2 below will be tried
+    except FileNotFoundError:
+        # mmx binary not on PATH — fall through to legacy
+        pass
+    except Exception as e:
+        # Other error (timeout, etc.) — try legacy
         pass
 
-    # Path 2: legacy render_episode.gen_tts (the fallback that ships today)
+    # Path 2: legacy render_episode.gen_tts (fallback when mmx unavailable)
     try:
         import sys as _sys
         from pathlib import Path as _P
@@ -88,8 +111,8 @@ def _call_tts(req: GenerateRequest, env: dict, voice_profile: dict,
     except Exception as e:
         return GenerateResult(
             ok=False, provider="tts", model="speech-02-hd",
-            error=f"no TTS adapter available (MiniMaxProvider.generate_tts "
-                  f"missing and render_episode.gen_tts not importable: {e})",
+            error=(f"no TTS adapter available (mmx CLI not on PATH and "
+                   f"render_episode.gen_tts not importable: {e})"),
         )
 
     # Build a tone-key that gen_tts will recognise. We don't have a tone

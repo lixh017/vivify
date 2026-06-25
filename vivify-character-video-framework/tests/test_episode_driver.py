@@ -312,36 +312,162 @@ def test_resolve_voice_profile_from_yaml(tmp_path):
 
 # --- tts adapter shim --------------------------------------------------------
 
-def test_call_tts_writes_mp3_file(tmp_path):
-    """The _call_tts shim must invoke MiniMaxProvider.generate_tts and
-    return its result. We mock the provider so no real API call."""
+def test_call_tts_uses_mmx_cli_when_available(tmp_path, monkeypatch):
+    """Preferred path: shell out to `mmx speech synthesize` (uses mmx's
+    self-managed auth, no MINIMAX_API_KEY env needed). Mock subprocess.run
+    to capture the argv and assert voice_profile fields map to flags.
+    """
     from vivify.episode_driver import _call_tts
     from vivify.providers.base import GenerateRequest
 
     out_path = tmp_path / "tts.mp3"
-    req = GenerateRequest(
-        scene_id="s1", asset_type="tts", prompt="嘿",
-    )
+    req = GenerateRequest(scene_id="s1", asset_type="tts", prompt="嘿")
+    profile = {"voice_id": "male-qn-jingying", "speed": 0.78,
+               "pitch": -2, "emotion": "neutral", "vol": 1.0}
+
+    captured_cmd = {}
+
+    def fake_run(cmd, *args, **kwargs):
+        captured_cmd["cmd"] = cmd
+        # Simulate mmx writing the mp3 to --out
+        out_idx = cmd.index("--out") + 1
+        Path(cmd[out_idx]).write_bytes(b"mp3-bytes-from-mmx")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("vivify.episode_driver.subprocess.run", fake_run)
+
+    result = _call_tts(req, env={},    # empty env — mmx handles its own auth
+                       voice_profile=profile, out_path=out_path)
+
+    assert result.ok is True, f"result.error: {result.error}"
+    assert result.provider == "minimax"
+    assert result.local_path == out_path
+    assert Path(out_path).read_bytes() == b"mp3-bytes-from-mmx"
+
+    # Verify mmx CLI was invoked with correct argv
+    cmd = captured_cmd["cmd"]
+    assert cmd[0:3] == ["mmx", "speech", "synthesize"], f"unexpected argv: {cmd}"
+    assert "--text" in cmd
+    text_idx = cmd.index("--text") + 1
+    assert cmd[text_idx] == "嘿"
+    assert "--voice" in cmd
+    voice_idx = cmd.index("--voice") + 1
+    assert cmd[voice_idx] == "male-qn-jingying"
+    assert "--speed" in cmd
+    speed_idx = cmd.index("--speed") + 1
+    assert float(cmd[speed_idx]) == 0.78
+    assert "--pitch" in cmd
+    pitch_idx = cmd.index("--pitch") + 1
+    assert int(cmd[pitch_idx]) == -2
+    assert "--volume" in cmd
+    vol_idx = cmd.index("--volume") + 1
+    assert float(cmd[vol_idx]) == 1.0
+    out_idx = cmd.index("--out") + 1
+    assert cmd[out_idx] == str(out_path)
+
+
+def test_call_tts_falls_back_to_legacy_when_mmx_missing(tmp_path, monkeypatch):
+    """When mmx binary is not on PATH (FileNotFoundError), the shim must
+    fall back to render_episode.gen_tts (the legacy path that needs
+    MINIMAX_API_KEY env). We mock the legacy function to avoid a real call.
+    """
+    from vivify.episode_driver import _call_tts
+    from vivify.providers.base import GenerateRequest
+
+    out_path = tmp_path / "tts.mp3"
+    req = GenerateRequest(scene_id="s1", asset_type="tts", prompt="嘿")
+    profile = {"voice_id": "male-qn-jingying", "speed": 0.78,
+               "pitch": -2, "emotion": "neutral", "vol": 1.0}
+
+    # Simulate mmx not on PATH
+    def fake_run_raises(cmd, *args, **kwargs):
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'mmx'")
+
+    monkeypatch.setattr("vivify.episode_driver.subprocess.run", fake_run_raises)
+
+    # Mock the legacy gen_tts as the fallback target
+    captured = {}
+
+    def fake_gen_tts(env_arg, text_arg, out_arg, tone=None):
+        captured["env"] = env_arg
+        captured["text"] = text_arg
+        captured["out"] = out_arg
+        captured["tone"] = tone
+        Path(out_arg).write_bytes(b"mp3-bytes-legacy")
+
+    import sys as _sys
+    fake_module = MagicMock()
+    fake_module.gen_tts = fake_gen_tts
+    monkeypatch.setitem(_sys.modules, "render_episode", fake_module)
+
+    result = _call_tts(req, env={"MINIMAX_API_KEY": "test"},
+                       voice_profile=profile, out_path=out_path)
+
+    assert result.ok is True
+    assert result.provider == "minimax"
+    assert Path(out_path).read_bytes() == b"mp3-bytes-legacy"
+    # Legacy gen_tts was called with our shimmed env
+    assert "CHARACTER" in captured["env"]
+    assert captured["text"] == "嘿"
+    assert captured["tone"] == "male-qn-jingying"
+
+
+def test_call_tts_returns_error_when_both_paths_fail(tmp_path, monkeypatch):
+    """If mmx is missing AND legacy gen_tts raises, return ok=False with
+    a clear error (don't crash the render)."""
+    from vivify.episode_driver import _call_tts
+    from vivify.providers.base import GenerateRequest
+
+    out_path = tmp_path / "tts.mp3"
+    req = GenerateRequest(scene_id="s1", asset_type="tts", prompt="嘿")
     profile = {"voice_id": "x", "speed": 1.0, "pitch": 0,
                "emotion": "neutral", "vol": 1.0}
 
-    # Simulate Task 2 having shipped: the provider has generate_tts
-    with patch("vivify.providers.minimax.MiniMaxProvider") as MockProvider:
-        mock_instance = MagicMock()
-        mock_instance.generate_tts.return_value = GenerateResult(
-            ok=True, provider="minimax", model="speech-02-hd",
-            local_path=out_path, cost_yuan=0.05, duration_ms=500,
-        )
-        MockProvider.return_value = mock_instance
+    monkeypatch.setattr("vivify.episode_driver.subprocess.run",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("no mmx")))
 
-        result = _call_tts(req, env={"MINIMAX_API_KEY": "test"},
-                           voice_profile=profile, out_path=out_path)
+    # No legacy gen_tts available
+    import sys as _sys
+    fake_module = MagicMock(spec=[])  # no gen_tts attr
+    monkeypatch.setitem(_sys.modules, "render_episode", fake_module)
 
+    result = _call_tts(req, env={}, voice_profile=profile, out_path=out_path)
+    assert result.ok is False
+    assert "TTS" in (result.error or "") or "tts" in (result.error or "")
+
+
+# --- legacy fallback tests (kept for regression) ----------------------------
+
+def test_call_tts_writes_mp3_file_legacy(tmp_path, monkeypatch):
+    """Legacy path: invoke render_episode.gen_tts (the original API)."""
+    from vivify.episode_driver import _call_tts
+    from vivify.providers.base import GenerateRequest
+
+    out_path = tmp_path / "tts.mp3"
+    req = GenerateRequest(scene_id="s1", asset_type="tts", prompt="嘿")
+    profile = {"voice_id": "x", "speed": 1.0, "pitch": 0,
+               "emotion": "neutral", "vol": 1.0}
+
+    # Force mmx missing + legacy present
+    monkeypatch.setattr("vivify.episode_driver.subprocess.run",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("no mmx")))
+
+    captured = {}
+
+    def fake_gen_tts(env_arg, text_arg, out_arg, tone=None):
+        captured["text"] = text_arg
+        captured["tone"] = tone
+        Path(out_arg).write_bytes(b"mp3")
+
+    import sys as _sys
+    fake_module = MagicMock()
+    fake_module.gen_tts = fake_gen_tts
+    monkeypatch.setitem(_sys.modules, "render_episode", fake_module)
+
+    result = _call_tts(req, env={"MINIMAX_API_KEY": "test"},
+                       voice_profile=profile, out_path=out_path)
     assert result.ok is True
-    mock_instance.generate_tts.assert_called_once()
-    call_kwargs = mock_instance.generate_tts.call_args.kwargs
-    assert call_kwargs["voice_profile"] == profile
-    assert call_kwargs["out_path"] == out_path
+    assert captured["text"] == "嘿"
 
 
 def test_call_tts_falls_back_to_legacy_gen_tts(tmp_path, monkeypatch):
@@ -357,29 +483,28 @@ def test_call_tts_falls_back_to_legacy_gen_tts(tmp_path, monkeypatch):
     profile = {"voice_id": "male-qn-jingying", "speed": 0.78,
                "pitch": -2, "emotion": "neutral", "vol": 1.0}
 
-    # Simulate Task 2 NOT done: MiniMaxProvider has no generate_tts attribute
-    with patch("vivify.providers.minimax.MiniMaxProvider") as MockProvider:
-        mock_instance = MagicMock(spec=[])  # spec=[] means no attrs/methods
-        MockProvider.return_value = mock_instance
+    # Simulate mmx binary missing (force fallback to legacy path)
+    monkeypatch.setattr("vivify.episode_driver.subprocess.run",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("no mmx")))
 
-        # Mock the legacy import path
-        captured = {}
+    # Mock the legacy import path
+    captured = {}
 
-        def fake_gen_tts(env_arg, text_arg, out_arg, tone=None):
-            captured["env"] = env_arg
-            captured["text"] = text_arg
-            captured["out"] = out_arg
-            captured["tone"] = tone
-            Path(out_arg).write_bytes(b"mp3-bytes")
+    def fake_gen_tts(env_arg, text_arg, out_arg, tone=None):
+        captured["env"] = env_arg
+        captured["text"] = text_arg
+        captured["out"] = out_arg
+        captured["tone"] = tone
+        Path(out_arg).write_bytes(b"mp3-bytes")
 
-        # Inject fake gen_tts into the module so the shim's import picks it up
-        import sys as _sys
-        fake_module = MagicMock()
-        fake_module.gen_tts = fake_gen_tts
-        monkeypatch.setitem(_sys.modules, "render_episode", fake_module)
+    # Inject fake gen_tts into the module so the shim's import picks it up
+    import sys as _sys
+    fake_module = MagicMock()
+    fake_module.gen_tts = fake_gen_tts
+    monkeypatch.setitem(_sys.modules, "render_episode", fake_module)
 
-        result = _call_tts(req, env={"MINIMAX_API_KEY": "test"},
-                           voice_profile=profile, out_path=out_path)
+    result = _call_tts(req, env={"MINIMAX_API_KEY": "test"},
+                       voice_profile=profile, out_path=out_path)
 
     assert result.ok is True
     assert result.provider == "minimax"
