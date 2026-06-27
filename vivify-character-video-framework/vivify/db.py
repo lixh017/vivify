@@ -93,13 +93,18 @@ CREATE TABLE IF NOT EXISTS publishes (
     episode_id      INTEGER NOT NULL,
     platform        TEXT NOT NULL,
     published_url   TEXT,
+    platform_video_id TEXT,
+    upload_status   TEXT DEFAULT 'pending',
     published_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    last_refreshed_at TEXT,
     title           TEXT,
     description     TEXT,
     hashtags        TEXT,
     view_count      INTEGER DEFAULT 0,
     like_count      INTEGER DEFAULT 0,
     comment_count   INTEGER DEFAULT 0,
+    share_count     INTEGER DEFAULT 0,
+    collect_count   INTEGER DEFAULT 0,
     completion_rate REAL,
     FOREIGN KEY (episode_id) REFERENCES episodes(id)
 );

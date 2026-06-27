@@ -65,7 +65,7 @@ def test_cli_auto_applies_pending_migrations(tmp_path: Path, monkeypatch):
     # Use --db to point the CLI at our throwaway DB.
     result = runner.invoke(main, ["--db", db, "db", "schema-version"])
     assert result.exit_code == 0, result.output
-    assert "schema version: 2" in result.output
+    assert "schema version: 3" in result.output
     # The auto-apply message should appear on first run (no quiet flag).
     assert "auto-applied" in result.output
 
@@ -78,7 +78,7 @@ def test_cli_quiet_init_suppresses_auto_migration_message(tmp_path: Path):
                                   "db", "schema-version"])
     assert result.exit_code == 0, result.output
     assert "auto-applied" not in result.output
-    assert "schema version: 2" in result.output
+    assert "schema version: 3" in result.output
 
 
 def test_cli_second_run_does_not_re_announce(tmp_path: Path):
@@ -91,4 +91,4 @@ def test_cli_second_run_does_not_re_announce(tmp_path: Path):
     # Second run — schema already current, no announcement.
     r2 = runner.invoke(main, ["--db", db, "db", "schema-version"])
     assert "auto-applied" not in r2.output
-    assert "schema version: 2" in r2.output
+    assert "schema version: 3" in r2.output
