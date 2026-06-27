@@ -1111,4 +1111,141 @@ def _mux_episode(asset_results, *, voiceovers, env, out_path, target_dur,
     return out_path.exists()
 
 
+# ---- prepare-publish -------------------------------------------------------
+
+@cli.command("prepare-publish")
+@click.argument("character_id")
+@click.argument("episode_id")
+@click.option("--platform", "-p", required=True,
+              type=click.Choice(["抖音", "小红书", "B站"]),
+              help="Target platform (tone + hashtag count tuned per platform).")
+@click.option("--voice", "-v", default=None,
+              type=click.Choice(["治愈", "御宅", "哲学", "国潮"]),
+              help="Voice/tone (drives title phrasing + posting window).")
+@click.option("--storyboard", default=None,
+              help="Override storyboard path (default: read from episodes row).")
+@click.option("--script", default=None,
+              help="Override script path (default: read from episodes row).")
+@click.option("--output", "-o", default=None,
+              help="Output .md path. "
+                   "Default: characters/<ip>/examples/<EP>/PUBLISH_PACKAGE_<platform>.md")
+@click.option("--dry-run", is_flag=True,
+              help="Print markdown to stdout instead of writing to disk.")
+@click.pass_obj
+def prepare_publish_cmd(obj, character_id, episode_id, platform, voice,
+                        storyboard, script, output, dry_run):
+    """Generate a copy-paste-ready markdown upload package.
+
+    Writes (or prints) a PUBLISH_PACKAGE_<platform>.md file with:
+      1. 3 title variants (emotional / comedic / mysterious)
+      2. 1-line description (≤ platform description_max)
+      3. Hashtag set (1 line, space-separated)
+      4. 3 cover timestamps (from emotion peaks)
+      5. Suggested posting window
+
+    This is the "人工发布" (human-publishes) workflow: the human opens
+    the markdown and pastes each section into the platform's upload UI.
+    No platform API is called.
+    """
+    import yaml as _yaml
+
+    from ..publish_package import (
+        build_publish_package,
+        format_publish_package_md,
+        default_output_path,
+    )
+
+    db_path = obj.get("db_path")
+    init_db(db_path)
+
+    # 1. Resolve character
+    with connect(db_path) as conn:
+        char = _resolve_character(conn, character_id)
+        if not char:
+            raise click.ClickException(
+                f"character '{character_id}' not registered "
+                f"(try `vivify character add {character_id} ...`)")
+        ep = _resolve_episode(conn, character_id, episode_id)
+        if not ep:
+            raise click.ClickException(
+                f"episode {character_id}/{episode_id} not found "
+                f"(try `vivify episode list`)")
+
+    # 2. Resolve paths from DB row if not given on CLI
+    storyboard = storyboard or ep.get("storyboard_path")
+    script = script or ep.get("script_path")
+    if not storyboard:
+        raise click.ClickException(
+            "no storyboard path — pass --storyboard or pre-register via "
+            "`vivify episode add ... --storyboard <path>`")
+    if not Path(storyboard).exists():
+        raise click.ClickException(f"storyboard not found: {storyboard}")
+
+    # 3. Read character.yaml (resolve from dir_path if not in DB row)
+    char_dir = Path(char["dir_path"])
+    char_yaml_path = char.get("character_yaml_path") or (char_dir / "character.yaml")
+    if not Path(char_yaml_path).exists():
+        raise click.ClickException(
+            f"character.yaml not found for '{character_id}': {char_yaml_path}")
+    with open(char_yaml_path, "r", encoding="utf-8") as f:
+        char_yaml = _yaml.safe_load(f) or {}
+    character_block = char_yaml.get("character", char_yaml)
+
+    # 4. Parse storyboard + script (best-effort, same parsers render_episode uses)
+    try:
+        sys.path.insert(0, str(Path.cwd()))
+        from render_episode import parse_storyboard, parse_script  # type: ignore
+        storyboard_shots = parse_storyboard(storyboard)
+        voiceovers = parse_script(script) if (script and Path(script).exists()) else []
+    except Exception as e:
+        click.echo(f"[warn] could not parse storyboard/script: {e}", err=True)
+        storyboard_shots, voiceovers = [], []
+
+    # 5. Build + format
+    pkg = build_publish_package(
+        episode_data=ep,
+        character_yaml=character_block,
+        storyboard=storyboard_shots,
+        script=voiceovers,
+        platform=platform,
+        voice=voice,
+    )
+    md = format_publish_package_md(pkg, ep, character_block)
+
+    # 6. Write (or print)
+    if dry_run:
+        click.echo(md)
+        return
+
+    if output:
+        out_path = Path(output).expanduser()
+    else:
+        # Derive characters_root from character.dir_path (one level up).
+        characters_root = char_dir.parent
+        out_path = default_output_path(
+            character_id, episode_id, platform,
+            characters_root=characters_root)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(md, encoding="utf-8")
+
+    click.echo(f"✓ wrote: {out_path}")
+    click.echo(f"  titles: {len([pkg.titles.emotional, pkg.titles.comedic, pkg.titles.mysterious])} variants")
+    click.echo(f"  description: {len(pkg.description)} chars (max {_platform_max(platform, 'description_max')})")
+    click.echo(f"  hashtags: {len(pkg.hashtags)} (target {_platform_max(platform, 'hashtag_count')})")
+    click.echo(f"  cover candidates: {len(pkg.cover_candidates)} timestamps")
+    if pkg.posting_window:
+        click.echo(f"  posting window: {pkg.posting_window.start_hour:02d}:00 - "
+                   f"{pkg.posting_window.end_hour:02d}:00")
+    click.echo("")
+    click.echo("Next: open the .md file and copy each section into the "
+               f"{platform} upload UI.")
+
+
+def _platform_max(platform: str, key: str) -> int:
+    """Helper: read a numeric limit from publish_package's tone table."""
+    # Imported lazily to avoid module-load circulars in tests.
+    from ..publish_package import _platform_tone
+    return _platform_tone(platform)[key]
+
+
 __all__ = ["cli"]
