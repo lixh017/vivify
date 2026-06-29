@@ -26,6 +26,7 @@ from .commands import memory as memory_cmd
 from .commands import publish as publish_cmd
 from .commands import workflow as workflow_cmd
 from .commands import db as db_cmd
+from .commands import doctor as doctor_cmd
 
 
 @click.group()
@@ -67,6 +68,7 @@ main.add_command(memory_cmd.cli)
 main.add_command(publish_cmd.cli)
 main.add_command(workflow_cmd.cli)
 main.add_command(db_cmd.cli)
+main.add_command(doctor_cmd.cli)
 
 
 if __name__ == "__main__":
