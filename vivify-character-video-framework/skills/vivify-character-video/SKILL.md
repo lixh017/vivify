@@ -26,6 +26,11 @@ User wants a video
 ├─ After render, does the user want to publish?
 │   └─ YES  → vivify-panda-episode-publish (currently stub; real 抖音 API not available)
 │
+└─ Anything broken / "doesn't work" / first time user?
+    └─ Run `vivify doctor`  ← ALWAYS run this first
+       ├─ doctor reports ✗ on anything → tell user the fix from doctor output
+       └─ doctor passes but render still broken? → see references/02-recovery.md
+│
 └─ At any point: cost / status / questions?
     └─ vivify cost status / vivify episode status <char> <ep>
        (read-only CLI; no scenario skill needed)
@@ -35,6 +40,11 @@ User wants a video
 
 Read `references/01-questions.md` for the 5-question template.
 Always ask — don't assume.
+
+**Preflight check (before any build):** run `vivify doctor`. If any
+✗ appears, tell the user the fix and STOP. Don't start storyboard /
+script generation with a broken env — the render will fail anyway.
+See `references/04-doctor.md` for what each check means.
 
 ## What NOT to do here
 
@@ -56,6 +66,7 @@ Tell the user:
 - `references/01-questions.md` — exact wording for the 5 user questions
 - `references/02-recovery.md` — common errors and what to tell the user
 - `references/03-output-formats.md` — how to present results to the user
+- `references/04-doctor.md` — what `vivify doctor` checks and how to fix each
 
 ## Examples
 
