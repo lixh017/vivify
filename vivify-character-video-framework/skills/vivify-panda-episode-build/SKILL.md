@@ -121,6 +121,10 @@ If `vivify episode render` exits 0 but prints
    images and videos are safe in `<out_dir>/work/shot-NN/`
 5. Use `vivify episode show <ip> <ep>` to see the manifest path
 
+**Pre-baked user messages** for this exact scenario live in
+`vivify-character-video/references/02-recovery.md` under
+`mux_produced_no_output`. Copy-paste from there, don't improvise.
+
 ### 6. Report to user
 
 > 渲染成功！

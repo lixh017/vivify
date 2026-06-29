@@ -46,6 +46,17 @@ Always ask — don't assume.
 script generation with a broken env — the render will fail anyway.
 See `references/04-doctor.md` for what each check means.
 
+**Intake vs defaults:** if the user gave 4+ of {ip, tone, platform,
+duration, topic}, skip the 5-question intake and use sensible defaults
+for the missing one. If the user said "现在做" / "做" / "build", infer
+from context — they want speed, not friction.
+
+**If user insists on proceeding despite ✗:** confirm explicitly. "你
+确认现在烧 ¥2-5 跑吗?per-shot 资产会生成,但最终拼接会因为 ✗ffmpeg
+失败,episode 会标 assets_only 不是 completed。装好 ffmpeg 后可以
+`vivify episode mux <ip> <ep>` 续跑。" If they confirm, proceed — the
+fallback path catches the assets.
+
 ## What NOT to do here
 
 - ❌ Don't call Ark / MiniMax / Suno APIs directly. Use `vivify` CLI.
