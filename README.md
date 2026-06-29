@@ -8,6 +8,16 @@ Phase 1：跑"熊猫"AI IP + 5 页面 web UI MVP（内部用）+ MCP server。
 
 详见 `docs/superpowers/specs/2026-06-03-opc-phase1-ip-design.md`
 
+## 子项目
+
+- **`vivify-character-video-framework/`** — 点睛 / Vivify Python 引擎。
+  点睛 = "画龙点睛"：把静态 IP 角色（峰哥 panda 为示例）变成抖音短剧。
+  核心 CLI:`./scripts/vivify episode render fengge EP001 --use-driver ...`
+  文档:见 `vivify-character-video-framework/README.md`、`INSTALL.md`、`CLAUDE.md`、`CHANGELOG.md`。
+  197 单元测试覆盖 orchestrator / router / ledger / providers / driver / TTS / doctor / mux-fallback / publish package。
+
+  新用户从 `vivify-character-video-framework/INSTALL.md` 开始,5 步走完首渲。
+
 ## 快速开始
 
 ```bash
@@ -40,6 +50,7 @@ cd apps/api && go build -o ../bin/opc-api ./cmd/server
 
 - `apps/web/` — Next.js 前端（5 个页面）
 - `apps/api/` — Go 后端（Gin + GORM）
+- `vivify-character-video-framework/` — 点睛 Python 引擎（独立子项目）
 - `docs/superpowers/` — 设计与实施文档
 - `scripts/` — 运维脚本
 
