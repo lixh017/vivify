@@ -34,6 +34,30 @@ _FFMPEG_HINT = {
     "  Arch:          sudo pacman -S ffmpeg"))
 
 
+def _auto_install_ffmpeg_cmd() -> str:
+    """Pick the right shell command to install ffmpeg on this OS, for
+    `vivify doctor --self-install`. Best-effort: returns the first
+    command that we *think* will work; the actual `attempt_install` may
+    still fail (needs sudo, network, package manager).
+    """
+    sysname = platform.system().lower()
+    if sysname == "darwin":
+        return "brew install ffmpeg"
+    if sysname == "windows":
+        return "choco install ffmpeg"  # may not be on PATH; user can fix
+    # Linux: try to detect the family
+    apt = shutil.which("apt")
+    dnf = shutil.which("dnf")
+    pacman = shutil.which("pacman")
+    if apt:
+        return "sudo apt install -y ffmpeg"
+    if dnf:
+        return "sudo dnf install -y ffmpeg"
+    if pacman:
+        return "sudo pacman -S --noconfirm ffmpeg"
+    return "sudo apt install -y ffmpeg"  # best guess
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -41,6 +65,7 @@ class CheckResult:
     detail: str
     fix_hint: Optional[str] = None
     critical: bool = False  # True if failure should produce exit code 1
+    install_cmd: Optional[str] = None  # shell command for `vivify doctor --self-install`
 
 
 def _safe(name: str, fn: Callable[[], CheckResult], critical: bool = False) -> CheckResult:
@@ -97,14 +122,16 @@ def check_ffmpeg() -> CheckResult:
         except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             continue
     return CheckResult(name="ffmpeg", ok=False, detail="NOT FOUND",
-                       fix_hint=_FFMPEG_HINT, critical=True)
+                       fix_hint=_FFMPEG_HINT, critical=True,
+                       install_cmd=_auto_install_ffmpeg_cmd())
 
 
 def check_mmx() -> CheckResult:
     path = shutil.which("mmx")
     if not path:
         return CheckResult(name="mmx", ok=False, detail="NOT FOUND on PATH",
-                           fix_hint="Install: `pip install minimax-media` (provides `mmx`).")
+                           fix_hint="Install: `pip install minimax-media` (provides `mmx`).",
+                           install_cmd="pip install minimax-media")
     try:
         r = subprocess.run(["mmx", "--version"], capture_output=True, text=True, timeout=3)
     except (subprocess.TimeoutExpired, OSError) as e:

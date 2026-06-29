@@ -37,12 +37,36 @@ def _render_line(result: CheckResult) -> list[str]:
               help="Show full detail for passing checks too.")
 @click.option("--out-dir", default=None,
               help="Disk-space check path (default: /tmp).")
+@click.option("--self-install", "-i", is_flag=True,
+              help="Attempt to install missing critical deps before reporting.")
 @click.pass_obj
-def doctor_cmd(obj, verbose, out_dir):
-    """Diagnose your vivify environment. Run this first if anything is broken."""
+def doctor_cmd(obj, verbose, out_dir, self_install):
+    """Diagnose your vivify environment. Run this first if anything is broken.
+
+    With --self-install, doctor will try `apt install ffmpeg` / `pip install
+    minimax-mmx` / etc. for each missing dep before re-checking. Best-effort:
+    requires sudo on Linux, may fail without network access.
+    """
     db_path = obj.get("db_path") if obj else None
     results = run_all_checks(out_dir=Path(out_dir) if out_dir else None,
                              db_path=db_path)
+
+    if self_install:
+        from vivify.doctor_install import attempt_install
+        # Only attempt install for critical failures
+        for r in results:
+            if not r.ok and r.critical and r.install_cmd:
+                click.echo(f"\n[install] attempting: {r.install_cmd}")
+                ok, msg = attempt_install(r.install_cmd)
+                if ok:
+                    click.echo(click.style(f"  ✓ installed {r.name}",
+                                            **_style_kwargs("green")))
+                else:
+                    click.echo(click.style(f"  ✗ install failed: {msg}",
+                                            **_style_kwargs("red")))
+        # Re-check after install attempts
+        results = run_all_checks(out_dir=Path(out_dir) if out_dir else None,
+                                 db_path=db_path)
 
     click.echo("═══ vivify doctor ═══")
     for r in results:
