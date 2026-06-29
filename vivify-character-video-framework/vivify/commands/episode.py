@@ -512,6 +512,12 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     """
     db_path = obj.get("db_path")
     init_db(db_path)
+    # Resolve None → default path. Without this, --db not passed means
+    # the driver receives db_path=None and sqlite3.connect(None) opens
+    # an in-memory DB with no shots/episodes tables — every driver run
+    # crashes with "no such table: shots".
+    from vivify.db import get_db_path as _gdp
+    db_path = str(_gdp(db_path))
 
     # 1. Resolve character
     with connect(db_path) as conn:

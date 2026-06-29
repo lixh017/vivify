@@ -277,9 +277,18 @@ def render_episode_assets(*,
 
         # 2. Video (image → video)
         vid_out = shot_work / f"shot-{n:02d}.mp4"
+        # Resolve model via router so the config's default_models block
+        # wins. Hardcoding "doubao-seedance-2-0-260128" was the wrong
+        # default — accounts that haven't activated Seedance 2.0 see
+        # "ModelNotOpen" 404. Use _default_model_for() which reads
+        # `default_models[video_provider_filter]` from the YAML config
+        # (e.g. ark → doubao-seedance-1-0-pro-fast-251015).
+        from .asset_router import load_config, _default_model_for
+        _cfg = load_config(path=config_path)
+        _vid_model = _default_model_for(video_provider_filter, _cfg)
         vid_options = {
             "out_path": str(vid_out),
-            "model": "doubao-seedance-2-0-260128",
+            "model": _vid_model,
         }
         if canonical_ref:
             vid_options["character_ref"] = canonical_ref

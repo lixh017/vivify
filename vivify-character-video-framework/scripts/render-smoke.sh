@@ -143,7 +143,8 @@ echo "[smoke] running: vivify episode render $CHARACTER $EPISODE_ID --use-driver
 echo ""
 
 # Always pass --force since this is a smoke + cost is already pre-estimated
-"$VIVIFY" episode render "$CHARACTER" "$EPISODE_ID" \
+# Note: --quiet-init is a GLOBAL option (must come before the subcommand)
+"$VIVIFY" --quiet-init episode render "$CHARACTER" "$EPISODE_ID" \
   --storyboard "$STORYBOARD" \
   --script "$SCRIPT" \
   --voice 治愈 \
@@ -151,8 +152,7 @@ echo ""
   --target-dur "$TARGET_DUR" \
   --use-driver \
   --out "$OUT_DIR" \
-  --force \
-  --quiet-init 2>&1 | tail -40
+  --force 2>&1 | tail -40
 
 EXIT_CODE=${PIPESTATUS[0]}
 
