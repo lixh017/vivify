@@ -31,6 +31,10 @@ from pathlib import Path
 import click
 
 from ..db import connect, init_db
+from ..episode_mux_fallback import (
+    mark_episode_assets_only as _mark_episode_assets_only,
+    write_manifest as _write_mux_manifest,
+)
 from ..pricing import (
     estimate_episode_cost,
     format_yuan,
@@ -231,7 +235,7 @@ def cli():
 @cli.command("list")
 @click.option("--character", "-c", default=None, help="Filter by character id.")
 @click.option("--status", "-s", default=None,
-              type=click.Choice(["pending", "rendering", "completed", "failed"]),
+              type=click.Choice(["pending", "rendering", "completed", "failed", "assets_only"]),
               help="Filter by status.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_obj
@@ -512,6 +516,12 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
     """
     db_path = obj.get("db_path")
     init_db(db_path)
+    # Resolve None → default path. Without this, --db not passed means
+    # the driver receives db_path=None and sqlite3.connect(None) opens
+    # an in-memory DB with no shots/episodes tables — every driver run
+    # crashes with "no such table: shots".
+    from vivify.db import get_db_path as _gdp
+    db_path = str(_gdp(db_path))
 
     # 1. Resolve character
     with connect(db_path) as conn:
@@ -627,8 +637,11 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
             raise click.ClickException(
                 f"cost cap blocked this render (use --force to override)")
 
-    if dry_run:
+    if dry_run and not use_driver:
         # Mark as completed (dry-run), with estimated cost
+        # Note: when use_driver is set, dry-run takes the driver branch
+        # above (with generate_asset/_call_tts stubbed) and runs the full
+        # pipeline end-to-end without spending money.
         with connect(db_path) as conn:
             conn.execute(
                 """UPDATE episodes SET
@@ -669,19 +682,74 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                    f"{n_shots} shots, parallel={parallel}, "
                    f"canonical={'yes' if canonical_ref else 'no'}\n")
         t0 = time.time()
-        asset_results = _render_episode_assets(
-            shots=shots,
-            voiceovers=_parse_voiceovers(script, storyboard),
-            episode_id=episode_id,
-            character_id=character_id,
-            env=env,
-            out_dir=Path(out_dir) / "work",
-            db_path=db_path,
-            voice_profile=voice_profile_dict,
-            canonical_ref=canonical_ref,
-            episode_pk=ep_pk,
-            monthly_hard=60000.0,
-        )
+
+        # 6a. Dry-run-with-driver: stub generate_asset + _call_tts so the full
+        # per-shot pipeline runs end-to-end (DB writes, cost aggregation,
+        # driver ↔ orchestrator interface) without spending money.
+        # Without this, `--dry-run --use-driver` would still call real
+        # Ark/海螺 APIs.
+        _stub_active = False
+        _orig_generate_asset = None
+        _orig_call_tts = None
+        if dry_run:
+            from vivify.providers.base import GenerateResult
+            from vivify import episode_driver as _driver_mod
+
+            _work_dir = Path(out_dir) / "work"
+            _work_dir.mkdir(parents=True, exist_ok=True)
+
+            def _fake_generate_asset(req, **kwargs):
+                ext = "jpg" if req.asset_type == "image" else "mp4"
+                local = _work_dir / f"{req.scene_id}.{ext}"
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(b"fake")
+                cost = 0.20 if req.asset_type == "image" else 1.05
+                return GenerateResult(
+                    ok=True, provider="ark", model="fake",
+                    local_path=local, cost_yuan=cost, duration_ms=100,
+                )
+
+            def _fake_call_tts(req, env, voice_profile, out_path):
+                out_path = Path(out_path)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(b"fake-mp3")
+                return GenerateResult(
+                    ok=True, provider="minimax", model="fake-tts",
+                    local_path=out_path, cost_yuan=0.01, duration_ms=100,
+                )
+
+            # Save originals BEFORE patching so we can restore in finally.
+            _orig_generate_asset = _driver_mod.generate_asset
+            _orig_call_tts = _driver_mod._call_tts
+            _driver_mod.generate_asset = _fake_generate_asset
+            _driver_mod._call_tts = _fake_call_tts
+            _stub_active = True
+            click.echo("  [dry-run] generate_asset + _call_tts stubbed "
+                       "(no API calls, no spend)")
+
+        try:
+            asset_results = _render_episode_assets(
+                shots=shots,
+                voiceovers=_parse_voiceovers(script, storyboard),
+                episode_id=episode_id,
+                character_id=character_id,
+                env=env,
+                out_dir=Path(out_dir) / "work",
+                db_path=db_path,
+                voice_profile=voice_profile_dict,
+                canonical_ref=canonical_ref,
+                episode_pk=ep_pk,
+                monthly_hard=60000.0,
+            )
+        finally:
+            # Restore real generate_asset + _call_tts so the stubs don't
+            # leak into subsequent calls (pytest test ordering breaks if
+            # we don't).
+            if _stub_active:
+                from vivify import episode_driver as _dm
+                _dm.generate_asset = _orig_generate_asset
+                _dm._call_tts = _orig_call_tts
+
         real_total_cost = sum(r.total_cost_yuan for r in asset_results)
         elapsed = time.time() - t0
         click.echo(f"\n[driver] {n_shots} shots done in {elapsed:.0f}s, "
@@ -702,8 +770,8 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
         # 6b. DB finalize with REAL cost
         actual_dur = _ffprobe_duration(str(final_mp4)) if mux_ok else None
         file_size = _file_size(str(final_mp4)) if mux_ok else None
-        with connect(db_path) as conn:
-            if mux_ok and final_mp4.exists():
+        if mux_ok and final_mp4.exists():
+            with connect(db_path) as conn:
                 conn.execute(
                     """UPDATE episodes SET
                         status = 'completed',
@@ -720,28 +788,41 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                        WHERE id = ?""",
                     (job_pk,),
                 )
-                click.echo(f"\n✅ driver render OK in {elapsed:.0f}s — "
-                           f"{final_mp4} (¥{real_total_cost:.2f})")
-            else:
-                err_msg = "ffmpeg mux produced no output (driver path)"
-                conn.execute(
-                    """UPDATE episodes SET status = 'failed',
-                        error_message = ?,
-                        render_completed_at = datetime('now')
-                       WHERE id = ?""",
-                    (err_msg, ep_pk),
-                )
-                conn.execute(
-                    """UPDATE render_jobs SET status = 'failed',
-                                              completed_at = datetime('now'),
-                                              error_message = ?
-                       WHERE id = ?""",
-                    (err_msg, job_pk),
-                )
-                conn.commit()
-                click.echo(f"\n❌ driver render FAILED — mux produced no output",
-                           err=True)
-                sys.exit(1)
+            click.echo(f"\n✅ driver render OK in {elapsed:.0f}s — "
+                       f"{final_mp4} (¥{real_total_cost:.2f})")
+            return
+
+        # Mux failed — DON'T mark the episode as 'failed'. The per-shot
+        # assets are still on disk and represent real spend. Fall back
+        # to 'assets_only' + a MANIFEST.json so the user can install
+        # ffmpeg and retry with `vivify episode mux <ip> <ep>`.
+        err_msg = "ffmpeg mux produced no output (driver path)"
+        out_dir_for_manifest = Path(out_dir)
+        manifest_path = _write_mux_manifest(
+            out_dir_for_manifest,
+            asset_results,
+            mux_failure_reason=err_msg,
+            episode_id=episode_id,
+            character_id=character_id,
+        )
+        _mark_episode_assets_only(
+            db_path, ep_pk, manifest_path, err_msg,
+        )
+        click.echo(
+            f"\n⚠️  per-shot assets written, but final MP4 mux failed",
+            err=True,
+        )
+        click.echo(f"    reason:   {err_msg}", err=True)
+        click.echo(f"    manifest: {manifest_path}", err=True)
+        click.echo(
+            f"    to complete: install ffmpeg, then re-run "
+            f"`vivify episode mux {character_id} {episode_id}`",
+            err=True,
+        )
+        click.echo(
+            "    exit code 0 — partial success recorded (status=assets_only)",
+            err=True,
+        )
         return
 
     # 6. Spawn render_episode.py as subprocess
@@ -872,7 +953,7 @@ def status_cmd(obj, character_id, episode_id):
         ).fetchone()
 
     color = {"pending": "yellow", "rendering": "blue", "completed": "green",
-             "failed": "red"}.get(ep["status"], "white")
+             "failed": "red", "assets_only": "magenta"}.get(ep["status"], "white")
     click.echo(click.style(f"{ep['status']}", fg=color, bold=True) +
                f"  {character_id}/{episode_id}")
     click.echo(f"  shots:      {n_shots}")
@@ -923,6 +1004,60 @@ def delete_cmd(obj, character_id, episode_id, yes):
         conn.execute("DELETE FROM episodes WHERE id = ?", (ep["id"],))
     click.echo(f"✓ deleted {character_id}/{episode_id} "
                f"({n_shots} shots, {n_jobs} jobs)")
+
+
+# ---- mux -----------------------------------------------------------------
+
+@cli.command("mux")
+@click.argument("character_id")
+@click.argument("episode_id")
+@click.option("--manifest", default=None,
+              help="Override manifest path. Default: read from "
+                   "episodes.output_path when status='assets_only'.")
+@click.pass_obj
+def mux_cmd(obj, character_id, episode_id, manifest):
+    """Re-run only the final-mux step for an episode that failed at mux.
+
+    Reads the MANIFEST.json that was written by a previous render whose
+    mux step failed, then calls ffmpeg directly to produce the final
+    MP4. Useful after installing ffmpeg or to retry a transient failure.
+
+    On success, flips the episode status to 'completed'.
+    """
+    from ..episode_mux_fallback import run_mux_from_manifest
+
+    db_path = obj.get("db_path")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        ep = _resolve_episode(conn, character_id, episode_id)
+        if not ep:
+            raise click.ClickException(
+                f"episode {character_id}/{episode_id} not found")
+        if manifest is None:
+            manifest = ep.get("output_path") if ep.get("status") == "assets_only" else None
+        ep_pk = ep["id"]
+
+    if not manifest:
+        raise click.ClickException(
+            f"episode {character_id}/{episode_id} is in status "
+            f"'{ep.get('status')}', not 'assets_only' — nothing to mux. "
+            f"Pass --manifest <path>/MANIFEST.json to retry by hand.")
+
+    final_mp4 = Path(manifest).expanduser().parent / f"{character_id}-{episode_id}.mp4"
+    result = run_mux_from_manifest(
+        manifest,
+        final_mp4=final_mp4,
+        db_path=db_path,
+        episode_pk=ep_pk,
+    )
+    if not result["ok"]:
+        click.echo(f"\n❌ mux retry failed: {result['error']}", err=True)
+        if "ffmpeg not found" in (result["error"] or ""):
+            click.echo("    install ffmpeg, then re-run this command.",
+                       err=True)
+        sys.exit(1)
+    click.echo(f"\n✅ mux OK — {result['output_path']}")
+    click.echo(f"    episode {character_id}/{episode_id} marked 'completed'")
 
 
 # --- driver-path helpers ----------------------------------------------------
@@ -1051,6 +1186,143 @@ def _mux_episode(asset_results, *, voiceovers, env, out_path, target_dur,
         out_path.write_bytes(subbed.read_bytes())
 
     return out_path.exists()
+
+
+# ---- prepare-publish -------------------------------------------------------
+
+@cli.command("prepare-publish")
+@click.argument("character_id")
+@click.argument("episode_id")
+@click.option("--platform", "-p", required=True,
+              type=click.Choice(["抖音", "小红书", "B站"]),
+              help="Target platform (tone + hashtag count tuned per platform).")
+@click.option("--voice", "-v", default=None,
+              type=click.Choice(["治愈", "御宅", "哲学", "国潮"]),
+              help="Voice/tone (drives title phrasing + posting window).")
+@click.option("--storyboard", default=None,
+              help="Override storyboard path (default: read from episodes row).")
+@click.option("--script", default=None,
+              help="Override script path (default: read from episodes row).")
+@click.option("--output", "-o", default=None,
+              help="Output .md path. "
+                   "Default: characters/<ip>/examples/<EP>/PUBLISH_PACKAGE_<platform>.md")
+@click.option("--dry-run", is_flag=True,
+              help="Print markdown to stdout instead of writing to disk.")
+@click.pass_obj
+def prepare_publish_cmd(obj, character_id, episode_id, platform, voice,
+                        storyboard, script, output, dry_run):
+    """Generate a copy-paste-ready markdown upload package.
+
+    Writes (or prints) a PUBLISH_PACKAGE_<platform>.md file with:
+      1. 3 title variants (emotional / comedic / mysterious)
+      2. 1-line description (≤ platform description_max)
+      3. Hashtag set (1 line, space-separated)
+      4. 3 cover timestamps (from emotion peaks)
+      5. Suggested posting window
+
+    This is the "人工发布" (human-publishes) workflow: the human opens
+    the markdown and pastes each section into the platform's upload UI.
+    No platform API is called.
+    """
+    import yaml as _yaml
+
+    from ..publish_package import (
+        build_publish_package,
+        format_publish_package_md,
+        default_output_path,
+    )
+
+    db_path = obj.get("db_path")
+    init_db(db_path)
+
+    # 1. Resolve character
+    with connect(db_path) as conn:
+        char = _resolve_character(conn, character_id)
+        if not char:
+            raise click.ClickException(
+                f"character '{character_id}' not registered "
+                f"(try `vivify character add {character_id} ...`)")
+        ep = _resolve_episode(conn, character_id, episode_id)
+        if not ep:
+            raise click.ClickException(
+                f"episode {character_id}/{episode_id} not found "
+                f"(try `vivify episode list`)")
+
+    # 2. Resolve paths from DB row if not given on CLI
+    storyboard = storyboard or ep.get("storyboard_path")
+    script = script or ep.get("script_path")
+    if not storyboard:
+        raise click.ClickException(
+            "no storyboard path — pass --storyboard or pre-register via "
+            "`vivify episode add ... --storyboard <path>`")
+    if not Path(storyboard).exists():
+        raise click.ClickException(f"storyboard not found: {storyboard}")
+
+    # 3. Read character.yaml (resolve from dir_path if not in DB row)
+    char_dir = Path(char["dir_path"])
+    char_yaml_path = char.get("character_yaml_path") or (char_dir / "character.yaml")
+    if not Path(char_yaml_path).exists():
+        raise click.ClickException(
+            f"character.yaml not found for '{character_id}': {char_yaml_path}")
+    with open(char_yaml_path, "r", encoding="utf-8") as f:
+        char_yaml = _yaml.safe_load(f) or {}
+    character_block = char_yaml.get("character", char_yaml)
+
+    # 4. Parse storyboard + script (best-effort, same parsers render_episode uses)
+    try:
+        sys.path.insert(0, str(Path.cwd()))
+        from render_episode import parse_storyboard, parse_script  # type: ignore
+        storyboard_shots = parse_storyboard(storyboard)
+        voiceovers = parse_script(script) if (script and Path(script).exists()) else []
+    except Exception as e:
+        click.echo(f"[warn] could not parse storyboard/script: {e}", err=True)
+        storyboard_shots, voiceovers = [], []
+
+    # 5. Build + format
+    pkg = build_publish_package(
+        episode_data=ep,
+        character_yaml=character_block,
+        storyboard=storyboard_shots,
+        script=voiceovers,
+        platform=platform,
+        voice=voice,
+    )
+    md = format_publish_package_md(pkg, ep, character_block)
+
+    # 6. Write (or print)
+    if dry_run:
+        click.echo(md)
+        return
+
+    if output:
+        out_path = Path(output).expanduser()
+    else:
+        # Derive characters_root from character.dir_path (one level up).
+        characters_root = char_dir.parent
+        out_path = default_output_path(
+            character_id, episode_id, platform,
+            characters_root=characters_root)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(md, encoding="utf-8")
+
+    click.echo(f"✓ wrote: {out_path}")
+    click.echo(f"  titles: {len([pkg.titles.emotional, pkg.titles.comedic, pkg.titles.mysterious])} variants")
+    click.echo(f"  description: {len(pkg.description)} chars (max {_platform_max(platform, 'description_max')})")
+    click.echo(f"  hashtags: {len(pkg.hashtags)} (target {_platform_max(platform, 'hashtag_count')})")
+    click.echo(f"  cover candidates: {len(pkg.cover_candidates)} timestamps")
+    if pkg.posting_window:
+        click.echo(f"  posting window: {pkg.posting_window.start_hour:02d}:00 - "
+                   f"{pkg.posting_window.end_hour:02d}:00")
+    click.echo("")
+    click.echo("Next: open the .md file and copy each section into the "
+               f"{platform} upload UI.")
+
+
+def _platform_max(platform: str, key: str) -> int:
+    """Helper: read a numeric limit from publish_package's tone table."""
+    # Imported lazily to avoid module-load circulars in tests.
+    from ..publish_package import _platform_tone
+    return _platform_tone(platform)[key]
 
 
 __all__ = ["cli"]

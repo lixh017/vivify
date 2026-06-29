@@ -8,6 +8,18 @@
 - Character-agnostic: any IP via character.yaml config
 - Currently showcase IP: 峰哥 (panda)
 
+## Episode status values
+
+Episodes move through these states (column `episodes.status`):
+- `pending` — registered, not yet rendered
+- `rendering` — driver is producing per-shot assets
+- `completed` — final MP4 muxed and on disk
+- `failed` — render errored before any useful output (no API calls billed)
+- `assets_only` — per-shot assets exist (real spend), but final MP4 mux
+  failed (e.g. ffmpeg not installed). The episode's `output_path`
+  points at a `<out_dir>/MANIFEST.json` describing the surviving
+  artifacts. Run `vivify episode mux <ip> <ep>` to retry the mux step.
+
 ## Workflow: Adding a new IP character
 
 1. Read `memory/INDEX.md` for relevant **cross-IP** lessons (prompt engineering, model capabilities)

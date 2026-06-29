@@ -37,8 +37,19 @@ coverage.txt
 # Database
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Claude Code experiment/leftover settings
+.claude/settings.local.json.*
 
 # Docker
 .env.docker

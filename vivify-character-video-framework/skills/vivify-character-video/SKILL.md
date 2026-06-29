@@ -26,6 +26,11 @@ User wants a video
 ├─ After render, does the user want to publish?
 │   └─ YES  → vivify-panda-episode-publish (currently stub; real 抖音 API not available)
 │
+└─ Anything broken / "doesn't work" / first time user?
+    └─ Run `vivify doctor`  ← ALWAYS run this first
+       ├─ doctor reports ✗ on anything → tell user the fix from doctor output
+       └─ doctor passes but render still broken? → see references/02-recovery.md
+│
 └─ At any point: cost / status / questions?
     └─ vivify cost status / vivify episode status <char> <ep>
        (read-only CLI; no scenario skill needed)
@@ -35,6 +40,22 @@ User wants a video
 
 Read `references/01-questions.md` for the 5-question template.
 Always ask — don't assume.
+
+**Preflight check (before any build):** run `vivify doctor`. If any
+✗ appears, tell the user the fix and STOP. Don't start storyboard /
+script generation with a broken env — the render will fail anyway.
+See `references/04-doctor.md` for what each check means.
+
+**Intake vs defaults:** if the user gave 4+ of {ip, tone, platform,
+duration, topic}, skip the 5-question intake and use sensible defaults
+for the missing one. If the user said "现在做" / "做" / "build", infer
+from context — they want speed, not friction.
+
+**If user insists on proceeding despite ✗:** confirm explicitly. "你
+确认现在烧 ¥2-5 跑吗?per-shot 资产会生成,但最终拼接会因为 ✗ffmpeg
+失败,episode 会标 assets_only 不是 completed。装好 ffmpeg 后可以
+`vivify episode mux <ip> <ep>` 续跑。" If they confirm, proceed — the
+fallback path catches the assets.
 
 ## What NOT to do here
 
@@ -56,6 +77,7 @@ Tell the user:
 - `references/01-questions.md` — exact wording for the 5 user questions
 - `references/02-recovery.md` — common errors and what to tell the user
 - `references/03-output-formats.md` — how to present results to the user
+- `references/04-doctor.md` — what `vivify doctor` checks and how to fix each
 
 ## Examples
 

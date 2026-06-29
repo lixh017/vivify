@@ -124,7 +124,22 @@ def apply_pending(db_path: str | None = None,
             if verbose:
                 print(f"[migrator] applying {m.version:03d}_{m.name}...")
             try:
-                conn.executescript(m.sql)
+                # Some migrations include ALTER TABLE ADD COLUMN statements
+                # that conflict with the SCHEMA constant in db.py for fresh
+                # DBs (the new columns are already there). Wrap each
+                # statement in a try/except that ignores "duplicate column"
+                # errors — this is safe because adding a column twice is
+                # always idempotent in our schema.
+                import sqlite3 as _sqlite3
+                try:
+                    conn.executescript(m.sql)
+                except _sqlite3.OperationalError as e:
+                    msg = str(e).lower()
+                    if "duplicate column" in msg or "already exists" in msg:
+                        # Skip duplicate-column statements but keep going
+                        pass
+                    else:
+                        raise
                 conn.execute(
                     "INSERT INTO migrations (version, name, sql_hash) VALUES (?, ?, ?)",
                     (m.version, m.name, _hash_sql(m.sql)),

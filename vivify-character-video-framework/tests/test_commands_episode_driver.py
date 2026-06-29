@@ -49,15 +49,18 @@ def db_path(tmp_path):
     return db
 
 
+# Storyboards live in the repo-root showcase (docs/showcase), not in
+# characters/fengge/examples. The framework dir is one level below the
+# monorepo root, so parents[2] of this test file is the repo root.
+_SHOWCASE_DIR = Path(__file__).resolve().parents[2] / "docs" / "showcase" / "panda-episode-001"
+
+
 def _ep_storyboard_path() -> Path:
-    # Storyboards live in /root/workspace/opc/docs/showcase (the repo-root
-    # showcase, not characters/fengge/examples). Test runs from the framework
-    # dir so we resolve via the parent.
-    return Path("/root/workspace/opc/docs/showcase/panda-episode-001/STORYBOARD.md")
+    return _SHOWCASE_DIR / "STORYBOARD.md"
 
 
 def _ep_script_path() -> Path:
-    return Path("/root/workspace/opc/docs/showcase/panda-episode-001/SCRIPT-douyin.md")
+    return _SHOWCASE_DIR / "SCRIPT-douyin.md"
 
 
 # --- tests ------------------------------------------------------------------
@@ -65,12 +68,22 @@ def _ep_script_path() -> Path:
 def test_driver_dry_run_writes_db_rows_and_no_subprocess(
     db_path, tmp_path, monkeypatch,
 ):
-    """--use-driver --dry-run: must write episode + shot rows; must NOT
-    call subprocess; must NOT call render_episode_assets (dry-run is a
-    cost-only estimate pass, not a real asset gen)."""
-    # Mock _parse_voiceovers to return 0 voiceovers (skip TTS path)
+    """--use-driver --dry-run (after B2 fix): the driver pipeline runs with
+    generate_asset/_call_tts stubbed so it exercises the full per-shot
+    plumbing (DB writes, cost aggregation) without burning money. Must
+    NOT call subprocess (no legacy fallback)."""
     import vivify.commands.episode as ep_mod
     monkeypatch.setattr(ep_mod, "_parse_voiceovers", lambda *a, **kw: [])
+    # After driver runs, mux is attempted (ffmpeg). Mock it so dry-run
+    # doesn't require a real ffmpeg binary. The mux_ok=True branch in
+    # production checks `final_mp4.exists()` to mark the episode as
+    # 'completed' — write a tiny file to satisfy that.
+    def _fake_mux(asset_results, *, voiceovers, env, out_path, target_dur,
+                  title, next_episode, voice):
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_bytes(b"fake-mp4")
+        return True
+    monkeypatch.setattr(ep_mod, "_mux_episode", _fake_mux)
 
     runner = CliRunner()
     with patch("subprocess.call") as mock_subproc:

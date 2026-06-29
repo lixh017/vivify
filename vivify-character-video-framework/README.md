@@ -75,6 +75,18 @@ On subsequent runs the migration step is a silent no-op.
 ### 4. Render an episode
 
 ```bash
+# New in-process pipeline (Phase A, recommended) — per-shot asset gen,
+# DB row writes, mmx TTS, cost gate, retry, ledger all in one driver.
+./scripts/vivify episode render fengge EP005 \
+  --storyboard characters/fengge/examples/panda-episode-005/STORYBOARD.md \
+  --script     characters/fengge/examples/panda-episode-005/SCRIPT-douyin.md \
+  --voice 治愈 --platform 抖音 --target-dur 58 \
+  --use-driver --parallel 4
+```
+
+Or the legacy subprocess path (escape hatch — marked DEPRECATED):
+
+```bash
 ./scripts/vivify episode render fengge EP005 \
   --storyboard characters/fengge/examples/panda-episode-005/STORYBOARD.md \
   --script     characters/fengge/examples/panda-episode-005/SCRIPT-douyin.md \
@@ -84,6 +96,13 @@ On subsequent runs the migration step is a silent no-op.
 ```
 
 Output: `.tmp/renders/fengge-EP005.mp4` plus a full audit trail in the DB.
+
+Dry-run works for the new driver path too — adapters are stubbed in-process
+so the full per-shot plumbing runs without spending money:
+
+```bash
+./scripts/vivify episode render fengge EP005 --use-driver --dry-run ...
+```
 
 ### 4b. Generate individual assets (the L1 orchestrator)
 

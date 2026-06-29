@@ -1,0 +1,26 @@
+# Drop 3 jpgs here before rendering.
+#
+# Required:
+#   primary.jpg      — close-up FACE shot (the identity anchor)
+#   alternate-1.jpg  — full-body shot, outfit 1
+#   alternate-2.jpg  — full-body shot, outfit 2
+#
+# CRITICAL: the face shot MUST be a separate file from the full-body shots.
+# Seedream uses whichever file is in `reference_image` to extract the
+# face embedding — if you give it a full-body shot, face identity drifts
+# between shots. See characters/fengge/lessons.md for the EP001 ID-drift
+# incident that motivated this rule.
+#
+# Spec:
+#   - Format: .jpg (NOT .png — Seedream is tuned for jpg)
+#   - Size:   ≥ 50KB (lint check), 1:1 or 3:4 aspect ratio
+#   - Pose:   neutral, no props, plain background, no text/watermarks
+#   - Lighting: even, no dramatic shadows
+#   - Outfit in face shot: should match `character.yaml.canonical.primary`
+#     description (the IP's most-recognizable look)
+#
+# After dropping the jpgs:
+#   1. Update `character.yaml` → `character.canonical.alternates` with
+#      the actual filenames (the template ships with placeholder names).
+#   2. Run `python3 validators/canonical_image_check.py characters/<name>/canonical`
+#   3. Then run your first test episode.
