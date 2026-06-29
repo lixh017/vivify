@@ -41,6 +41,12 @@ User wants to produce ONE episode. Orchestrates the CLI to:
 
 If user answers fewer than 3 questions, ask the rest yourself.
 
+**After user provides inputs, your FIRST action is `vivify doctor`.**
+Don't proceed to step 1 (storyboard generation) until doctor passes
+(all ✓ or at least no ✗ blocking image/video gen). If doctor fails,
+tell the user the fix from `vivify-character-video/references/04-doctor.md`
+and stop.
+
 ## Steps (run via `vivify` CLI)
 
 ### 1. Generate storyboard
@@ -102,6 +108,18 @@ Use the LLM with same inputs to produce `SCRIPT-douyin.md` matching the
 
 If status=failed, check error_message and consult
 `vivify-character-video/references/02-recovery.md`.
+
+### 5b. If render reports mux failure
+
+If `vivify episode render` exits 0 but prints
+`⚠️  per-shot assets written, but final MP4 mux failed`, do NOT panic:
+
+1. Run `vivify doctor` to check if ffmpeg is installed
+2. If ffmpeg missing → install it (`apt install ffmpeg` or `brew install ffmpeg`)
+3. Run `vivify episode mux <ip> <ep>` to retry just the mux step
+4. The episode status is `assets_only`, NOT `failed` — your per-shot
+   images and videos are safe in `<out_dir>/work/shot-NN/`
+5. Use `vivify episode show <ip> <ep>` to see the manifest path
 
 ### 6. Report to user
 

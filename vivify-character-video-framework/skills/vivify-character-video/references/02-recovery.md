@@ -3,6 +3,48 @@
 The vivify CLI surfaces raw errors. **Your job is to translate them**
 into action items the user understands.
 
+> **Always run `vivify doctor` first** — many "errors" are just missing
+> tools or unset env vars. Doctor catches them up front. See
+> `references/04-doctor.md`.
+
+## doctor_says_ffmpeg_missing
+
+**Raw CLI output:**
+```
+vivify doctor
+✗ ffmpeg: NOT FOUND   (mux step will fail)
+```
+
+**Tell the user:**
+> 你的 ffmpeg 没装。装好后重跑 mux 即可：
+> - Ubuntu / Debian: `apt install ffmpeg`
+> - macOS: `brew install ffmpeg`
+>
+> 装完跑 `vivify episode mux <ip> <ep>` 完成上次渲染（per-shot 资产已经生成）。
+
+## mux_produced_no_output (per-shot 成功,但最终拼接失败)
+
+**Raw CLI output:**
+```
+[render] ✓ shot 01/04 written
+[render] ✓ shot 02/04 written
+[render] ✓ shot 03/04 written
+[render] ✓ shot 04/04 written
+[mux]    ⚠️  per-shot assets written, but final MP4 mux failed: <reason>
+[render] episode status = assets_only
+```
+
+**Tell the user:**
+> 渲染命令退出 0,但最终 MP4 拼接失败。**别慌** —— per-shot 资产已经生成:
+> - episode 状态是 `assets_only`(不是 `failed`)
+> - 资产位置:`<out_dir>/work/shot-NN/`(图片 / 视频 / 音轨)
+> - 重试手段(两条路):
+>   1. 装 ffmpeg 后跑 `vivify episode mux <ip> <ep>` 重试拼接
+>   2. 看 `<out_dir>/MANIFEST.json` 拿 per-shot 文件自己 ffmpeg
+>
+> 失败原因:<reason>。常见:ffmpeg 缺失、磁盘满、字体路径错误。
+> 跑 `vivify doctor` 可以立刻诊断 ffmpeg / 磁盘问题。
+
 ## 403 / permission_denied
 
 **Raw CLI output:**

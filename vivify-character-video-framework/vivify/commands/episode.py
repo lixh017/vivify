@@ -31,6 +31,10 @@ from pathlib import Path
 import click
 
 from ..db import connect, init_db
+from ..episode_mux_fallback import (
+    mark_episode_assets_only as _mark_episode_assets_only,
+    write_manifest as _write_mux_manifest,
+)
 from ..pricing import (
     estimate_episode_cost,
     format_yuan,
@@ -231,7 +235,7 @@ def cli():
 @cli.command("list")
 @click.option("--character", "-c", default=None, help="Filter by character id.")
 @click.option("--status", "-s", default=None,
-              type=click.Choice(["pending", "rendering", "completed", "failed"]),
+              type=click.Choice(["pending", "rendering", "completed", "failed", "assets_only"]),
               help="Filter by status.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 @click.pass_obj
@@ -766,8 +770,8 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
         # 6b. DB finalize with REAL cost
         actual_dur = _ffprobe_duration(str(final_mp4)) if mux_ok else None
         file_size = _file_size(str(final_mp4)) if mux_ok else None
-        with connect(db_path) as conn:
-            if mux_ok and final_mp4.exists():
+        if mux_ok and final_mp4.exists():
+            with connect(db_path) as conn:
                 conn.execute(
                     """UPDATE episodes SET
                         status = 'completed',
@@ -784,28 +788,41 @@ def render_cmd(obj, character_id, episode_id, storyboard, script, voice,
                        WHERE id = ?""",
                     (job_pk,),
                 )
-                click.echo(f"\n✅ driver render OK in {elapsed:.0f}s — "
-                           f"{final_mp4} (¥{real_total_cost:.2f})")
-            else:
-                err_msg = "ffmpeg mux produced no output (driver path)"
-                conn.execute(
-                    """UPDATE episodes SET status = 'failed',
-                        error_message = ?,
-                        render_completed_at = datetime('now')
-                       WHERE id = ?""",
-                    (err_msg, ep_pk),
-                )
-                conn.execute(
-                    """UPDATE render_jobs SET status = 'failed',
-                                              completed_at = datetime('now'),
-                                              error_message = ?
-                       WHERE id = ?""",
-                    (err_msg, job_pk),
-                )
-                conn.commit()
-                click.echo(f"\n❌ driver render FAILED — mux produced no output",
-                           err=True)
-                sys.exit(1)
+            click.echo(f"\n✅ driver render OK in {elapsed:.0f}s — "
+                       f"{final_mp4} (¥{real_total_cost:.2f})")
+            return
+
+        # Mux failed — DON'T mark the episode as 'failed'. The per-shot
+        # assets are still on disk and represent real spend. Fall back
+        # to 'assets_only' + a MANIFEST.json so the user can install
+        # ffmpeg and retry with `vivify episode mux <ip> <ep>`.
+        err_msg = "ffmpeg mux produced no output (driver path)"
+        out_dir_for_manifest = Path(out_dir)
+        manifest_path = _write_mux_manifest(
+            out_dir_for_manifest,
+            asset_results,
+            mux_failure_reason=err_msg,
+            episode_id=episode_id,
+            character_id=character_id,
+        )
+        _mark_episode_assets_only(
+            db_path, ep_pk, manifest_path, err_msg,
+        )
+        click.echo(
+            f"\n⚠️  per-shot assets written, but final MP4 mux failed",
+            err=True,
+        )
+        click.echo(f"    reason:   {err_msg}", err=True)
+        click.echo(f"    manifest: {manifest_path}", err=True)
+        click.echo(
+            f"    to complete: install ffmpeg, then re-run "
+            f"`vivify episode mux {character_id} {episode_id}`",
+            err=True,
+        )
+        click.echo(
+            "    exit code 0 — partial success recorded (status=assets_only)",
+            err=True,
+        )
         return
 
     # 6. Spawn render_episode.py as subprocess
@@ -936,7 +953,7 @@ def status_cmd(obj, character_id, episode_id):
         ).fetchone()
 
     color = {"pending": "yellow", "rendering": "blue", "completed": "green",
-             "failed": "red"}.get(ep["status"], "white")
+             "failed": "red", "assets_only": "magenta"}.get(ep["status"], "white")
     click.echo(click.style(f"{ep['status']}", fg=color, bold=True) +
                f"  {character_id}/{episode_id}")
     click.echo(f"  shots:      {n_shots}")
@@ -987,6 +1004,60 @@ def delete_cmd(obj, character_id, episode_id, yes):
         conn.execute("DELETE FROM episodes WHERE id = ?", (ep["id"],))
     click.echo(f"✓ deleted {character_id}/{episode_id} "
                f"({n_shots} shots, {n_jobs} jobs)")
+
+
+# ---- mux -----------------------------------------------------------------
+
+@cli.command("mux")
+@click.argument("character_id")
+@click.argument("episode_id")
+@click.option("--manifest", default=None,
+              help="Override manifest path. Default: read from "
+                   "episodes.output_path when status='assets_only'.")
+@click.pass_obj
+def mux_cmd(obj, character_id, episode_id, manifest):
+    """Re-run only the final-mux step for an episode that failed at mux.
+
+    Reads the MANIFEST.json that was written by a previous render whose
+    mux step failed, then calls ffmpeg directly to produce the final
+    MP4. Useful after installing ffmpeg or to retry a transient failure.
+
+    On success, flips the episode status to 'completed'.
+    """
+    from ..episode_mux_fallback import run_mux_from_manifest
+
+    db_path = obj.get("db_path")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        ep = _resolve_episode(conn, character_id, episode_id)
+        if not ep:
+            raise click.ClickException(
+                f"episode {character_id}/{episode_id} not found")
+        if manifest is None:
+            manifest = ep.get("output_path") if ep.get("status") == "assets_only" else None
+        ep_pk = ep["id"]
+
+    if not manifest:
+        raise click.ClickException(
+            f"episode {character_id}/{episode_id} is in status "
+            f"'{ep.get('status')}', not 'assets_only' — nothing to mux. "
+            f"Pass --manifest <path>/MANIFEST.json to retry by hand.")
+
+    final_mp4 = Path(manifest).expanduser().parent / f"{character_id}-{episode_id}.mp4"
+    result = run_mux_from_manifest(
+        manifest,
+        final_mp4=final_mp4,
+        db_path=db_path,
+        episode_pk=ep_pk,
+    )
+    if not result["ok"]:
+        click.echo(f"\n❌ mux retry failed: {result['error']}", err=True)
+        if "ffmpeg not found" in (result["error"] or ""):
+            click.echo("    install ffmpeg, then re-run this command.",
+                       err=True)
+        sys.exit(1)
+    click.echo(f"\n✅ mux OK — {result['output_path']}")
+    click.echo(f"    episode {character_id}/{episode_id} marked 'completed'")
 
 
 # --- driver-path helpers ----------------------------------------------------
